@@ -432,7 +432,6 @@ LPVOID FindRealCode(LPVOID pCode)
     {
         // we need to make sure we can read the first 3 ULONG_PTRs
         DWORD old_protect;
-        // make sure we can read the first 3 pointers
         if (VirtualProtect(pCode, sizeof(ULONG_PTR) * 3, PAGE_EXECUTE_READ, &old_protect))
         {
             if (*(WORD*)pCode == 0x25ff) // JMP r/m32
@@ -444,10 +443,11 @@ LPVOID FindRealCode(LPVOID pCode)
 
                 // now that we got the offset, make sure we can read the code at the offset
                 DWORD old_protect_2;
-                if (VirtualProtect(pCode, sizeof(LPVOID), PAGE_EXECUTE_READ, &old_protect_2))
+                PBYTE addr = pNextInst + offset;
+                if (VirtualProtect(addr, sizeof(LPVOID), PAGE_EXECUTE_READ, &old_protect_2))
                 {
-                    result = *(LPVOID*)(pNextInst + offset);
-                    (void)VirtualProtect(pCode, sizeof(LPVOID), old_protect_2, &old_protect_2);
+                    result = *(LPVOID*)(addr);
+                    (void)VirtualProtect(addr, sizeof(LPVOID), old_protect_2, &old_protect_2);
                 }
                 else
                 {
@@ -472,8 +472,8 @@ LPVOID FindRealCode(LPVOID pCode)
             else if (*(BYTE*)pCode == 0xE9) // JMP rel32
             {
                 // Relative next instruction
-                PBYTE	pNextInst = (PBYTE)((ULONG_PTR)pCode + 5);
-                LONG	offset = *((LONG*)((ULONG_PTR)pCode + 1));
+                PBYTE pNextInst = (PBYTE)((ULONG_PTR)pCode + 5);
+                LONG offset = *((LONG*)((ULONG_PTR)pCode + 1));
                 pCode = (LPVOID*)(pNextInst + offset);
                 result = FindRealCode(pCode);
             }
@@ -560,7 +560,9 @@ BOOL PatchImport (HMODULE importmodule, moduleentry_t *patchModule)
 	DWORD dwLength = ::GetModuleFileNameA(importmodule, pszBuffer, dwMaxChars);
 #endif
 
-    // have a stack local array of the addresses, don;t want to use malloc for this
+    // have a stack local array of the addresses, don't want to use malloc for this
+    // The reason to precompute and cache these is because VirtualProtect is expensive
+    // Thus first we compute *only* once the real addresses for the export module
     LPVOID realAddresses[MAX_PATCH_ENTRY_COUNT];
     patchentry_t* patchEntry = patchModule->patchTable;
     int i = 0;
@@ -584,6 +586,7 @@ BOOL PatchImport (HMODULE importmodule, moduleentry_t *patchModule)
         {
             // we only process MAX_PATCH_ENTRY_COUNT, if we exceed it crash
             // if this abort is ever hit, it means that MAX_PATCH_ENTRY_COUNT should be bumped up
+            Report(L"MAX_PATCH_ENTRY_COUNT is set to %zu, but has been exceeded, MAX_PATCH_ENTRY_COUNT needs to be increased.\n", MAX_PATCH_ENTRY_COUNT);
             abort();
             break;
         }
