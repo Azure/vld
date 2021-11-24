@@ -447,7 +447,13 @@ LPVOID FindRealCode(LPVOID pCode)
                 if (VirtualProtect(addr, sizeof(LPVOID), PAGE_EXECUTE_READ, &old_protect_2))
                 {
                     result = *(LPVOID*)(addr);
-                    (void)VirtualProtect(addr, sizeof(LPVOID), old_protect_2, &old_protect_2);
+                    if (!VirtualProtect(addr, sizeof(LPVOID), old_protect_2, &old_protect_2))
+                    {
+                        Report(L"VirtualProtect failed for address=%p, size=%zu, with %lu, old_protect_2=%lu",
+                            addr, sizeof(LPVOID),
+                            GetLastError(), old_protect_2);
+                        abort();
+                    }
                 }
                 else
                 {
@@ -461,7 +467,13 @@ LPVOID FindRealCode(LPVOID pCode)
                 {
                     pCode = *(LPVOID*)(addr);
                     result = FindRealCode(pCode);
-                    (void)VirtualProtect((LPVOID*)addr, sizeof(LPVOID), old_protect_2, &old_protect_2);
+                    if (!VirtualProtect((LPVOID*)addr, sizeof(LPVOID), old_protect_2, &old_protect_2))
+                    {
+                        Report(L"VirtualProtect failed for address=%p, size=%zu, with %lu, old_protect_2=%lu",
+                            addr, sizeof(LPVOID),
+                            GetLastError(), old_protect_2);
+                        abort();
+                    }
                 }
                 else
                 {
@@ -483,7 +495,13 @@ LPVOID FindRealCode(LPVOID pCode)
             }
 
             // restore the page protection state
-            (void)VirtualProtect(pCode, sizeof(ULONG_PTR) * 3, old_protect, &old_protect);
+            if (!VirtualProtect(pCode, sizeof(ULONG_PTR) * 3, old_protect, &old_protect))
+            {
+                Report(L"VirtualProtect failed for address=%p, size=%zu, with %lu, old_protect=%lu",
+                    pCode, sizeof(ULONG_PTR) * 3,
+                    GetLastError(), old_protect);
+                abort();
+            }
         }
         else
         {
