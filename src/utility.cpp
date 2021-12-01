@@ -436,7 +436,7 @@ LPVOID FindRealCode(LPVOID pCode)
         //static volatile size_t fail_line;
         //Report(L"%zu: Calling VirtualProtect(address=%p, size=%zu, PAGE_EXECUTE_READ)\r\n",
         //    __LINE__, pCode, sizeof(ULONG_PTR) * 3);
-        if (((uintptr_t)pCode & 0xFFFFFFFFFFFFF000) == 0x00007ffa4e0e4000) abort();
+        //if (((uintptr_t)pCode & 0xFFFFFFFFFFFFF000) == 0x00007ffa4e0e4000) abort();
         if (VirtualProtect(pCode, sizeof(ULONG_PTR) * 3, PAGE_EXECUTE_READ, &old_protect))
         {
             if (*(WORD*)pCode == 0x25ff) // JMP r/m32
@@ -476,7 +476,7 @@ LPVOID FindRealCode(LPVOID pCode)
                 DWORD old_protect_2;
                 //Report(L"%zu: Calling VirtualProtect(address=%p, size=%zu, PAGE_EXECUTE_READ)\r\n",
                 //    __LINE__, pCode, sizeof(ULONG_PTR) * 3);
-                if ((addr & 0xFFFFFFFFFFFFF000) == 0x00007ffa4e0e4000) abort();
+                //if ((addr & 0xFFFFFFFFFFFFF000) == 0x00007ffa4e0e4000) abort();
                 if (VirtualProtect((LPVOID*)addr, sizeof(LPVOID), PAGE_EXECUTE_READ, &old_protect_2))
                 {
                     pCode = *(LPVOID*)(addr);
@@ -640,6 +640,8 @@ BOOL PatchImport (HMODULE importmodule, moduleentry_t *patchModule)
     while (idte->FirstThunk != 0x0) {
         PCHAR importdllname = (PCHAR)R2VA(importmodule, idte->Name);
         UNREFERENCED_PARAMETER(importdllname);
+        HMODULE importdllbaseaddress = GetModuleHandleA(importdllname);
+        UNREFERENCED_PARAMETER(importdllbaseaddress);
 
         // Locate the import's IAT entry.
         IMAGE_THUNK_DATA *thunk = (IMAGE_THUNK_DATA*)R2VA(importmodule, idte->FirstThunk);
