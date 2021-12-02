@@ -425,19 +425,97 @@ BOOL IsModulePatched (HMODULE importmodule, moduleentry_t patchtable [], UINT ta
     return FALSE;
 }
 
+#define MAX_PAGES_PROTECT 2
+
+typedef struct PROTECT_INSTANCE_TAG
+{
+    DWORD old_protect[MAX_PAGES_PROTECT];
+    LPVOID address;
+    SIZE_T size;
+} PROTECT_INSTANCE;
+
+typedef struct PROTECT_INSTANCE_TAG* PROTECT_HANDLE;
+
+#ifdef _WIN64
+#define PAGE_MASK 0xFFFFFFFFFFFFF000
+#else
+#define PAGE_MASK 0xFFFFF000
+#endif
+
+static BOOL VLDVirtualProtect(PROTECT_HANDLE protect_handle, LPVOID address, SIZE_T size, DWORD protect)
+{
+    BOOL result = TRUE;
+    size_t page_count = 0;
+
+    // save the address and size so that we can restore in the same way
+    protect_handle->address = address;
+    protect_handle->size = size;
+
+    uintptr_t current_address = (uintptr_t)address;
+
+    // walk all pages while we still have size > 0
+    while ((size > 0) && (page_count < MAX_PAGES_PROTECT))
+    {
+        uintptr_t page_address = current_address & PAGE_MASK;
+        SIZE_T size_in_page = page_address + 0x1000 - current_address;
+        SIZE_T size_to_protect = (size_in_page < size) ? size_in_page : size;
+
+        BOOL result = VirtualProtect((LPVOID)current_address, size_to_protect, protect, &protect_handle->old_protect[page_count]);
+        if (!result)
+        {
+            Report(L"%zu: !!! VirtualProtect FAILED when protecting for address=%p, size=%zu, with GetLastError()=%lu, protect_handle->address=%p, protect_handle->size=%zu",
+                __LINE__, current_address, size_to_protect,
+                GetLastError(),
+                protect_handle->address, protect_handle->size);
+        }
+        page_count++;
+        current_address += size_to_protect;
+        size -= size_to_protect;
+    }
+
+    return result;
+}
+
+static void VLDVirtualRestore(PROTECT_HANDLE protect_handle)
+{
+    size_t page_count = 0;
+    SIZE_T size = protect_handle->size;
+    uintptr_t current_address = (uintptr_t)protect_handle->address;
+
+    // walk all pages while we still have size > 0
+    while ((size > 0) && (page_count < MAX_PAGES_PROTECT))
+    {
+        uintptr_t page_address = current_address & PAGE_MASK;
+        SIZE_T size_in_page = page_address + 0x1000 - current_address;
+        SIZE_T size_to_protect = (size_in_page < size) ? size_in_page : size;
+
+        DWORD dont_care;
+        if (!VirtualProtect((LPVOID)current_address, size_to_protect, protect_handle->old_protect[page_count], &dont_care))
+        {
+            static volatile DWORD lastError = GetLastError();
+            Report(L"%zu: !!! VirtualProtect FAILED when restoring for address=%p, size=%zu, with GetLastError()=%lu, protect_handle->old_protect[page_count]=%lu, protect_handle->address=%p, protect_handle->size=%zu",
+                __LINE__, current_address, size_to_protect,
+                GetLastError(), protect_handle->old_protect[page_count],
+                protect_handle->address, protect_handle->size);
+            abort();
+        }
+
+        page_count++;
+        current_address += size_to_protect;
+        size -= size_to_protect;
+    }
+
+}
+
 LPVOID FindRealCode(LPVOID pCode)
 {
     LPVOID result;
     if (pCode != NULL)
     {
         // we need to make sure we can read the first 3 ULONG_PTRs
-        DWORD old_protect;
-        static void* original_address = pCode;
-        //static volatile size_t fail_line;
-        //Report(L"%zu: Calling VirtualProtect(address=%p, size=%zu, PAGE_EXECUTE_READ)\r\n",
-        //    __LINE__, pCode, sizeof(ULONG_PTR) * 3);
-        //if (((uintptr_t)pCode & 0xFFFFFFFFFFFFF000) == 0x00007ffa4e0e4000) abort();
-        if (VirtualProtect(pCode, sizeof(ULONG_PTR) * 3, PAGE_EXECUTE_READ, &old_protect))
+        PROTECT_INSTANCE protect_1;
+
+        if (VLDVirtualProtect(&protect_1, pCode, sizeof(ULONG_PTR) * 6, PAGE_EXECUTE_READ))
         {
             if (*(WORD*)pCode == 0x25ff) // JMP r/m32
             {
@@ -447,24 +525,14 @@ LPVOID FindRealCode(LPVOID pCode)
                 PBYTE pNextInst = (PBYTE)((ULONG_PTR)pCode + 6);
 
                 // now that we got the offset, make sure we can read the code at the offset
-                DWORD old_protect_2;
+                PROTECT_INSTANCE protect_2;
                 PBYTE addr = pNextInst + offset;
-                //Report(L"%zu: Calling VirtualProtect(address=%p, size=%zu, PAGE_EXECUTE_READ)\r\n",
-                //    __LINE__, addr, sizeof(LPVOID));
-                if (((uintptr_t)addr & 0xFFFFFFFFFFFFF000) == 0x00007ffa4e0e4000) abort();
-                if (VirtualProtect(addr, sizeof(LPVOID), PAGE_EXECUTE_READ, &old_protect_2))
+
+                if (VLDVirtualProtect(&protect_2, (LPVOID*)addr, sizeof(LPVOID), PAGE_EXECUTE_READ))
                 {
                     result = *(LPVOID*)(addr);
-                    //Report(L"%zu: Calling VirtualProtect(address=%p, size=%zu, old_protect_2=%lu)\r\n",
-                    //    __LINE__, addr, sizeof(LPVOID), old_protect_2);
-                    if (!VirtualProtect(addr, sizeof(LPVOID), old_protect_2, &old_protect_2))
-                    {
-                        Report(L"%zu: !!! VirtualProtect FAILED for address=%p, size=%zu, with %lu, old_protect_2=%lu",
-                            __LINE__, addr, sizeof(LPVOID),
-                            GetLastError(), old_protect_2);
-                        //fail_line = __LINE__;
-                        abort();
-                    }
+
+                    VLDVirtualRestore(&protect_2);
                 }
                 else
                 {
@@ -473,24 +541,12 @@ LPVOID FindRealCode(LPVOID pCode)
 #else
                 DWORD addr = *((DWORD*)((ULONG_PTR)pCode + 2));
                 // now that we got the address to read, make sure we can read the code at the offset
-                DWORD old_protect_2;
-                //Report(L"%zu: Calling VirtualProtect(address=%p, size=%zu, PAGE_EXECUTE_READ)\r\n",
-                //    __LINE__, pCode, sizeof(ULONG_PTR) * 3);
-                //if ((addr & 0xFFFFFFFFFFFFF000) == 0x00007ffa4e0e4000) abort();
-                if (VirtualProtect((LPVOID*)addr, sizeof(LPVOID), PAGE_EXECUTE_READ, &old_protect_2))
+                PROTECT_INSTANCE protect_2;
+                if (VLDVirtualProtect(&protect_2, (LPVOID)addr, sizeof(LPVOID), PAGE_EXECUTE_READ))
                 {
                     pCode = *(LPVOID*)(addr);
                     result = FindRealCode(pCode);
-                    //Report(L"%zu: Calling VirtualProtect(address=%p, size=%zu, old_protect_2=%lu)\r\n",
-                    //    __LINE__, addr, sizeof(LPVOID), old_protect_2);
-                    if (!VirtualProtect((LPVOID*)addr, sizeof(LPVOID), old_protect_2, &old_protect_2))
-                    {
-                        Report(L"%zu: !!! VirtualProtect FAILED for address=%p, size=%zu, with %lu, old_protect_2=%lu",
-                            __LINE__, addr, sizeof(LPVOID),
-                            GetLastError(), old_protect_2);
-                        //fail_line = __LINE__;
-                        abort();
-                    }
+                    VLDVirtualRestore(&protect_2);
                 }
                 else
                 {
@@ -501,10 +557,15 @@ LPVOID FindRealCode(LPVOID pCode)
             else if (*(BYTE*)pCode == 0xE9) // JMP rel32
             {
                 // Relative next instruction
+                PROTECT_INSTANCE protect_2;
                 PBYTE pNextInst = (PBYTE)((ULONG_PTR)pCode + 5);
                 LONG offset = *((LONG*)((ULONG_PTR)pCode + 1));
-                pCode = (LPVOID*)(pNextInst + offset);
-                result = FindRealCode(pCode);
+                if (VLDVirtualProtect(&protect_2, pNextInst + offset, sizeof(LPVOID), PAGE_EXECUTE_READ))
+                {
+                    pCode = (LPVOID*)(pNextInst + offset);
+                    result = FindRealCode(pCode);
+                    VLDVirtualRestore(&protect_2);
+                }
             }
             else
             {
@@ -512,22 +573,7 @@ LPVOID FindRealCode(LPVOID pCode)
             }
 
             // restore the page protection state
-            //Report(L"%zu: Calling VirtualProtect(address=%p, size=%zu, old_protect=%lu)\r\n",
-            //    __LINE__, pCode, sizeof(ULONG_PTR) * 3, old_protect);
-            //if (pCode != original_address)
-            //{
-            //    fail_line = __LINE__;
-            //    abort();
-            //}
-            if (!VirtualProtect((void*)pCode, sizeof(ULONG_PTR) * 3, old_protect, &old_protect))
-            {
-                static volatile DWORD lastError = GetLastError();
-                Report(L"%zu: !!! VirtualProtect FAILED for address=%p, size=%zu, with %lu, old_protect=%lu",
-                    __LINE__, pCode, sizeof(ULONG_PTR) * 3,
-                    GetLastError(), old_protect);
-                //fail_line = __LINE__;
-                abort();
-            }
+            VLDVirtualRestore(&protect_1);
         }
         else
         {
