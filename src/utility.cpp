@@ -460,7 +460,7 @@ static BOOL VLDVirtualProtect(PROTECT_HANDLE protect_handle, LPVOID address, SIZ
         SIZE_T size_in_page = page_address + 0x1000 - current_address;
         SIZE_T size_to_protect = (size_in_page < size) ? size_in_page : size;
 
-        BOOL result = VirtualProtect((LPVOID)current_address, size_to_protect, protect, &protect_handle->old_protect[page_count]);
+        result = VirtualProtect((LPVOID)current_address, size_to_protect, protect, &protect_handle->old_protect[page_count]);
         if (!result)
         {
             Report(L"%zu: !!! VirtualProtect FAILED when protecting for address=%p, size=%zu, with GetLastError()=%lu, protect_handle->address=%p, protect_handle->size=%zu",
@@ -530,8 +530,8 @@ LPVOID FindRealCode(LPVOID pCode)
 
                 if (VLDVirtualProtect(&protect_2, (LPVOID*)addr, sizeof(LPVOID), PAGE_EXECUTE_READ))
                 {
-                    result = *(LPVOID*)(addr);
-
+                    pCode = *(LPVOID*)(addr);
+                    result = FindRealCode(pCode);
                     VLDVirtualRestore(&protect_2);
                 }
                 else
@@ -565,6 +565,10 @@ LPVOID FindRealCode(LPVOID pCode)
                     pCode = (LPVOID*)(pNextInst + offset);
                     result = FindRealCode(pCode);
                     VLDVirtualRestore(&protect_2);
+                }
+                else
+                {
+                    result = NULL;
                 }
             }
             else
