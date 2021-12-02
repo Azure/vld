@@ -514,7 +514,7 @@ LPVOID FindRealCode(LPVOID pCode)
     LPVOID result;
     if (pCode != NULL)
     {
-        // we need to make sure we can read the first 3 ULONG_PTRs
+        // we need to make sure we can read the first 7 ULONG_PTRs
         PROTECT_INSTANCE protect_1;
 
         if (VLDVirtualProtect(&protect_1, pCode, sizeof(ULONG_PTR) * 7, PAGE_EXECUTE_READ))
