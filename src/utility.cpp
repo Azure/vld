@@ -442,6 +442,8 @@ typedef struct PROTECT_INSTANCE_TAG* PROTECT_HANDLE;
 #define PAGE_MASK 0xFFFFF000
 #endif
 
+#define PAGE_SIZE 0x1000
+
 static BOOL VLDVirtualProtect(PROTECT_HANDLE protect_handle, LPVOID address, SIZE_T size, DWORD protect)
 {
     BOOL result = TRUE;
@@ -457,7 +459,7 @@ static BOOL VLDVirtualProtect(PROTECT_HANDLE protect_handle, LPVOID address, SIZ
     while ((size > 0) && (page_count < MAX_PAGES_PROTECT))
     {
         uintptr_t page_address = current_address & PAGE_MASK;
-        SIZE_T size_in_page = page_address + 0x1000 - current_address;
+        SIZE_T size_in_page = page_address + PAGE_SIZE - current_address;
         SIZE_T size_to_protect = (size_in_page < size) ? size_in_page : size;
 
         result = VirtualProtect((LPVOID)current_address, size_to_protect, protect, &protect_handle->old_protect[page_count]);
@@ -486,7 +488,7 @@ static void VLDVirtualRestore(PROTECT_HANDLE protect_handle)
     while ((size > 0) && (page_count < MAX_PAGES_PROTECT))
     {
         uintptr_t page_address = current_address & PAGE_MASK;
-        SIZE_T size_in_page = page_address + 0x1000 - current_address;
+        SIZE_T size_in_page = page_address + PAGE_SIZE - current_address;
         SIZE_T size_to_protect = (size_in_page < size) ? size_in_page : size;
 
         DWORD dont_care;
@@ -515,7 +517,7 @@ LPVOID FindRealCode(LPVOID pCode)
         // we need to make sure we can read the first 3 ULONG_PTRs
         PROTECT_INSTANCE protect_1;
 
-        if (VLDVirtualProtect(&protect_1, pCode, sizeof(ULONG_PTR) * 6, PAGE_EXECUTE_READ))
+        if (VLDVirtualProtect(&protect_1, pCode, sizeof(ULONG_PTR) * 7, PAGE_EXECUTE_READ))
         {
             if (*(WORD*)pCode == 0x25ff) // JMP r/m32
             {
