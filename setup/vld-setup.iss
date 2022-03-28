@@ -2,7 +2,7 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "Visual Leak Detector"
-#define MyAppVersion "2.5.8"
+#define MyAppVersion "2.5.9"
 #define MyAppPublisher "VLD Team"
 #define MyAppURL "http://vld.codeplex.com/"
 #define MyAppRegKey "Software\Visual Leak Detector"
@@ -311,11 +311,30 @@ begin
   Log(dirList);
 end;
 
-procedure ModifyProps(filename: string; libfolder: string);
+function OpenOrCreate(XMLDocument: Variant; baseNode : Variant; nodeId: string) : Variant;
+var
+  nodePath: string;
+  XMLNodes: Variant;
+  XMLNode: Variant; // temp for creation
+begin
+  UpdateString(nodePath, '//b:', nodeId);
+  XMLNodes := baseNode.SelectNodes(nodePath);
+  if XMLNodes.Length > 0 then
+    Result := XMLNodes.Item[0]
+  else
+  begin
+    XMLNode := XMLDocument.CreateNode(1, nodeId, 'http://schemas.microsoft.com/developer/msbuild/2003');
+    Result := baseNode.AppendChild(XMLNode);
+  end;
+end;
+
+procedure ModifyProps(filename: string; libfolder: string; arch: string);
 var
   XMLDocument: Variant;
   XMLParent, IdgNode, XMLNode, XMLNodes: Variant;
+  ProjNode, PropNode, IpNode, LpNode: Variant; // use the VC Directories options
   IncludeDirectoriesNode: Variant;
+  propAttr: string;
   AdditionalIncludeDirectories: string;
   DynamicLibraryDirectoriesNode: Variant;
   AdditionalDynamicLibraryDirectories: string;
@@ -332,91 +351,86 @@ begin
     begin
       XMLDocument.setProperty('SelectionLanguage', 'XPath');
       XMLDocument.setProperty('SelectionNamespaces', 'xmlns:b=''http://schemas.microsoft.com/developer/msbuild/2003''');
-      XMLNodes := XMLDocument.SelectNodes('//b:Project');
-      if XMLNodes.Length = 0 then
+      ProjNode := XMLDocument.SelectNodes('//b:Project');
+      // if project node doesn't exist, then bail
+      if ProjNode.Length = 0 then
         Exit;
-      IdgNode := XMLNodes.Item[0];
-      XMLNodes := IdgNode.SelectNodes('//b:ItemDefinitionGroup');
-      if XMLNodes.Length > 0 then
-        IdgNode := XMLNodes.Item[0]
-      else
-      begin
-        XMLNode := XMLDocument.CreateNode(1, 'ItemDefinitionGroup',
-                    'http://schemas.microsoft.com/developer/msbuild/2003');
-        IdgNode := IdgNode.AppendChild(XMLNode);
-      end;
 
-      XMLNodes := IdgNode.SelectNodes('//b:ClCompile');
-      if XMLNodes.Length > 0 then
-        XMLParent := XMLNodes.Item[0]
-      else
-      begin
-        XMLNode := XMLDocument.CreateNode(1, 'ClCompile',
-                    'http://schemas.microsoft.com/developer/msbuild/2003');
-        XMLParent := IdgNode.AppendChild(XMLNode);
-      end;
-      XMLNodes := XMLParent.SelectNodes('//b:ClCompile/b:AdditionalIncludeDirectories');
-      if XMLNodes.Length > 0 then
-        IncludeDirectoriesNode := XMLNodes.Item[0]
-      else
-      begin
-        XMLNode := XMLDocument.CreateNode(1, 'AdditionalIncludeDirectories',
-                    'http://schemas.microsoft.com/developer/msbuild/2003');
-        IncludeDirectoriesNode := XMLParent.AppendChild(XMLNode);
-      end;
+      // ItemDefinitionGroup
+      IdgNode := OpenOrCreate(XMLDocument, projNode.Item[0], 'ItemDefinitionGroup');
 
-      XMLNodes := IdgNode.SelectNodes('//b:Link');
-      if XMLNodes.Length > 0 then
-        XMLParent := XMLNodes.Item[0]
-      else
+      // PropertyGroup - might have the label on it, so look for one without a label, and create if needed
+      XMLParent := ProjNode.Item[0].SelectNodes('//b:PropertyGroup');
+      if XMLParent.Length > 0 then
       begin
-        XMLNode := XMLDocument.CreateNode(1, 'Link',
-                    'http://schemas.microsoft.com/developer/msbuild/2003');
-        XMLParent := IdgNode.AppendChild(XMLNode);
-      end;
-      XMLNodes := XMLParent.SelectNodes('//b:Link/b:AdditionalLibraryDirectories');
-      if XMLNodes.Length > 0 then
-        DynamicLibraryDirectoriesNode := XMLNodes.Item[0]
-      else
+        PropNode := XMLParent.Item[0];
+        propAttr := PropNode.GetAttribute('Label');
+        if not VarIsNull(propAttr) then
+        begin
+          if XMLParent.Length > 1 then
+          begin
+            PropNode := XMLParent.Item[1];
+          end
+        end
+      end
+      if VarIsNull(PropNode) then
       begin
-        XMLNode := XMLDocument.CreateNode(1, 'AdditionalLibraryDirectories',
-                    'http://schemas.microsoft.com/developer/msbuild/2003');
-        DynamicLibraryDirectoriesNode := XMLParent.AppendChild(XMLNode);
-      end;
+        XMLNode := XMLDocument.CreateNode(1, 'PropertyGroup','http://schemas.microsoft.com/developer/msbuild/2003');
+        PropNode := ProjNode.AppendChild(XMLNode);
+      end
 
-      XMLNodes := IdgNode.SelectNodes('//b:Lib');
-      if XMLNodes.Length > 0 then
-        XMLParent := XMLNodes.Item[0]
-      else
-      begin
-        XMLNode := XMLDocument.CreateNode(1, 'Lib',
-                    'http://schemas.microsoft.com/developer/msbuild/2003');
-        XMLParent := IdgNode.AppendChild(XMLNode);
-      end;
+      // IncludePath
+      IpNode := OpenOrCreate(XMLDocument, PropNode, 'IncludePath');
+      // LibraryPath
+      LpNode := OpenOrCreate(XMLDocument, PropNode, 'LibraryPath');
+
+//      // ClCompile -> puts the directory in the compiler section of the properties
+//      XMLParent := OpenOrCreate(XMLDocument, IdgNode, 'ClCompile');
+//      XMLNodes := XMLParent.SelectNodes('//b:ClCompile/b:AdditionalIncludeDirectories');
+//      if XMLNodes.Length > 0 then
+//        IncludeDirectoriesNode := XMLNodes.Item[0]
+//      else
+//      begin
+//        XMLNode := XMLDocument.CreateNode(1, 'AdditionalIncludeDirectories', 'http://schemas.microsoft.com/developer/msbuild/2003');
+//        IncludeDirectoriesNode := XMLParent.AppendChild(XMLNode);
+//      end;
+
+//      // Link -> puts the directory in the linker section of the properties
+//      XMLParent := OpenOrCreate(XMLDocument, IdgNode, 'Link');
+//      XMLNodes := XMLParent.SelectNodes('//b:Link/b:AdditionalLibraryDirectories');
+//      if XMLNodes.Length > 0 then
+//        DynamicLibraryDirectoriesNode := XMLNodes.Item[0]
+//      else
+//      begin
+//        XMLNode := XMLDocument.CreateNode(1, 'AdditionalLibraryDirectories', 'http://schemas.microsoft.com/developer/msbuild/2003');
+//        DynamicLibraryDirectoriesNode := XMLParent.AppendChild(XMLNode);
+//      end;
+
+      // Lib (static lib)
+      XMLParent := OpenOrCreate(XMLDocument, IdgNode, 'Lib');
       XMLNodes := XMLParent.SelectNodes('//b:Lib/b:AdditionalLibraryDirectories');
       if XMLNodes.Length > 0 then
         StaticLibraryDirectoriesNode := XMLNodes.Item[0]
       else
       begin
-        XMLNode := XMLDocument.CreateNode(1, 'AdditionalLibraryDirectories',
-                    'http://schemas.microsoft.com/developer/msbuild/2003');
+        XMLNode := XMLDocument.CreateNode(1, 'AdditionalLibraryDirectories', 'http://schemas.microsoft.com/developer/msbuild/2003');
         StaticLibraryDirectoriesNode := XMLParent.AppendChild(XMLNode);
       end;
 
       AdditionalIncludeDirectories := '';
-      if not VarIsNull(IncludeDirectoriesNode) then
-        AdditionalIncludeDirectories := IncludeDirectoriesNode.Text;
+      if not VarIsNull(IpNode) then
+        AdditionalIncludeDirectories := IpNode.Text;
       AdditionalDynamicLibraryDirectories := '';;
-      if not VarIsNull(DynamicLibraryDirectoriesNode) then
-        AdditionalDynamicLibraryDirectories := DynamicLibraryDirectoriesNode.Text;
+      if not VarIsNull(LpNode) then
+        AdditionalDynamicLibraryDirectories := LpNode.Text;
       AdditionalStaticLibraryDirectories := '';;
       if not VarIsNull(StaticLibraryDirectoriesNode) then
         AdditionalStaticLibraryDirectories := StaticLibraryDirectoriesNode.Text;
-      UpdateString(AdditionalIncludeDirectories, ExpandConstant('{app}\include;'), '%(AdditionalIncludeDirectories)');
-      UpdateString(AdditionalDynamicLibraryDirectories, ExpandConstant('{app}\lib\' + libfolder + ';'), '%(AdditionalLibraryDirectories)');
-      UpdateString(AdditionalStaticLibraryDirectories, ExpandConstant('{app}\lib\' + libfolder + ';'), '%(AdditionalLibraryDirectories)');
-      IncludeDirectoriesNode.Text := AdditionalIncludeDirectories;
-      DynamicLibraryDirectoriesNode.Text := AdditionalDynamicLibraryDirectories;
+      UpdateString(AdditionalIncludeDirectories, '$(IncludePath)', ExpandConstant('{app}\include;'));
+      UpdateString(AdditionalDynamicLibraryDirectories, '$(LibraryPath)', ExpandConstant('{app}\lib\' + libfolder + ';'));
+      UpdateString(AdditionalStaticLibraryDirectories, ExpandConstant('{app}\lib\' + libfolder + ';'), '$(AdditionalLibraryDirectories)');
+      IpNode.Text := AdditionalIncludeDirectories;
+      LpNode.Text := AdditionalDynamicLibraryDirectories;
       StaticLibraryDirectoriesNode.Text := AdditionalStaticLibraryDirectories;
       XMLDocument.save(filename);
     end;
@@ -432,8 +446,8 @@ begin
   Path := GetEnv('LOCALAPPDATA')+'\Microsoft\MSBuild\v4.0\';
   if DirExists(Path) then
   begin
-    ModifyProps(Path + 'Microsoft.Cpp.Win32.user.props', 'Win32');
-    ModifyProps(Path + 'Microsoft.Cpp.x64.user.props', 'Win64');
+    ModifyProps(Path + 'Microsoft.Cpp.Win32.user.props', 'Win32', 'x86');
+    ModifyProps(Path + 'Microsoft.Cpp.x64.user.props', 'Win64', 'x64');
   end;
 end;
 

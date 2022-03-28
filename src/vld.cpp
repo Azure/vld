@@ -646,6 +646,9 @@ VisualLeakDetector::~VisualLeakDetector ()
                 Report(L"No memory leaks detected.\n");
             }
             else {
+                if (m_options & VLD_OPT_AUDIO_ALERT_ON_LEAK) {
+                    ::Beep(5000, 450);
+                }
                 Report(L"Visual Leak Detector detected %Iu memory leak", leaks_count);
                 Report((leaks_count > 1) ? L"s (%Iu bytes).\n" : L" (%Iu bytes).\n", m_curAlloc);
                 Report(L"Largest number used: %Iu bytes.\n", m_maxAlloc);
@@ -1204,6 +1207,10 @@ VOID VisualLeakDetector::configure ()
 
     if (LoadBoolOption(L"ValidateHeapAllocs", L"", inipath)) {
         m_options |= VLD_OPT_VALIDATE_HEAPFREE;
+    }
+
+    if (LoadBoolOption(L"AudioAlertOnLeak", L"", inipath)) {
+        m_options |= VLD_OPT_AUDIO_ALERT_ON_LEAK;
     }
 }
 
