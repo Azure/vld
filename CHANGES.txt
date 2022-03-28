@@ -8,10 +8,10 @@ Visual Leak Detector (VLD) Version 2.5.7
   Enhancements:
   + New option to beep if leaks found (mrphiltx)
   + Installer puts VLD directories in VC Directories option in the .props (mrphiltx)
-  + Support for Visual Studio 2022 (avadae)
+  + Support for Visual Studio 2022 (avadae/grrava)
 
   Bugs Fixed:
-  + Reverted change in utility.cpp that prevented leaks from being reported in x86 builds (avadae)
+  + Reverted change in utility.cpp that prevented leaks from being reported in x86 builds (avadae/grrava)
 
 2.5.8 (1 December 2021)
 ----------------------------
