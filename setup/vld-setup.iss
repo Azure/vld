@@ -426,8 +426,8 @@ begin
       AdditionalStaticLibraryDirectories := '';;
       if not VarIsNull(StaticLibraryDirectoriesNode) then
         AdditionalStaticLibraryDirectories := StaticLibraryDirectoriesNode.Text;
-      UpdateString(AdditionalIncludeDirectories, '$(IncludePath)', ExpandConstant('{app}\include;'));
-      UpdateString(AdditionalDynamicLibraryDirectories, '$(LibraryPath)', ExpandConstant('{app}\lib\' + libfolder + ';'));
+      UpdateString(AdditionalIncludeDirectories, ExpandConstant('{app}\include;'), '$(IncludePath)');
+      UpdateString(AdditionalDynamicLibraryDirectories, ExpandConstant('{app}\lib\' + libfolder + ';'), '$(LibraryPath)');
       UpdateString(AdditionalStaticLibraryDirectories, ExpandConstant('{app}\lib\' + libfolder + ';'), '$(AdditionalLibraryDirectories)');
       IpNode.Text := AdditionalIncludeDirectories;
       LpNode.Text := AdditionalDynamicLibraryDirectories;
