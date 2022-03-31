@@ -5,7 +5,7 @@ TITLE Building VLD...
 SETLOCAL ENABLEDELAYEDEXPANSION
 
 REM Check if the needed files are present
-IF "%VS160COMNTOOLS%"=="" GOTO :BadPaths
+IF "%VS170COMNTOOLS%"=="" GOTO :BadPaths
 
 CD %~dp0/..
 

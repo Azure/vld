@@ -1283,19 +1283,19 @@ HMODULE GetCallingModule(UINT_PTR pCaller )
 {
     HMODULE hModule = NULL;
 
-    /*MEMORY_BASIC_INFORMATION mbi;
+    MEMORY_BASIC_INFORMATION mbi;
     if (VirtualQuery((LPCVOID)pCaller, &mbi, sizeof(MEMORY_BASIC_INFORMATION)) == sizeof(MEMORY_BASIC_INFORMATION))
     {
         // the allocation base is the beginning of a PE file
         hModule = (HMODULE)mbi.AllocationBase;
-    }*/
-
-    WIN32_MEMORY_REGION_INFORMATION memoryRegionInfo;
-    if ( QueryVirtualMemoryInformation(GetCurrentProcess(), (LPCVOID)pCaller, MemoryRegionInfo, &memoryRegionInfo, sizeof(memoryRegionInfo), NULL) )
-    {
-        // the allocation base is the beginning of a PE file
-        hModule = (HMODULE)memoryRegionInfo.AllocationBase;
     }
+
+    //WIN32_MEMORY_REGION_INFORMATION memoryRegionInfo;
+    //if ( QueryVirtualMemoryInformation(GetCurrentProcess(), (LPCVOID)pCaller, MemoryRegionInfo, &memoryRegionInfo, sizeof(memoryRegionInfo), NULL) )
+    //{
+    //    // the allocation base is the beginning of a PE file
+    //    hModule = (HMODULE)memoryRegionInfo.AllocationBase;
+    //}
     return hModule;
 }
 
