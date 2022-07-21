@@ -457,7 +457,7 @@ VisualLeakDetector::VisualLeakDetector ()
     // we got a valid TLS index.
     if (m_tlsIndex == TLS_OUT_OF_INDEXES) {
         Report(L"ERROR: Visual Leak Detector could not be installed because thread local"
-            L"  storage could not be allocated.");
+            L"  storage could not be allocated.\n");
         return;
     }
 

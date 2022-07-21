@@ -465,7 +465,7 @@ static BOOL VLDVirtualProtect(PROTECT_HANDLE protect_handle, LPVOID address, SIZ
         result = VirtualProtect((LPVOID)current_address, size_to_protect, protect, &protect_handle->old_protect[page_count]);
         if (!result)
         {
-            Report(L"%zu: !!! VirtualProtect FAILED when protecting for address=%p, size=%zu, with GetLastError()=%lu, protect_handle->address=%p, protect_handle->size=%zu",
+            Report(L"%zu: !!! VirtualProtect FAILED when protecting for address=%p, size=%zu, with GetLastError()=%lu, protect_handle->address=%p, protect_handle->size=%zu\n",
                 __LINE__, current_address, size_to_protect,
                 GetLastError(),
                 protect_handle->address, protect_handle->size);
@@ -495,7 +495,7 @@ static void VLDVirtualRestore(PROTECT_HANDLE protect_handle)
         if (!VirtualProtect((LPVOID)current_address, size_to_protect, protect_handle->old_protect[page_count], &dont_care))
         {
             static volatile DWORD lastError = GetLastError();
-            Report(L"%zu: !!! VirtualProtect FAILED when restoring for address=%p, size=%zu, with GetLastError()=%lu, protect_handle->old_protect[page_count]=%lu, protect_handle->address=%p, protect_handle->size=%zu",
+            Report(L"%zu: !!! VirtualProtect FAILED when restoring for address=%p, size=%zu, with GetLastError()=%lu, protect_handle->old_protect[page_count]=%lu, protect_handle->address=%p, protect_handle->size=%zu\n",
                 __LINE__, current_address, size_to_protect,
                 GetLastError(), protect_handle->old_protect[page_count],
                 protect_handle->address, protect_handle->size);
