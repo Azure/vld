@@ -343,6 +343,8 @@ VisualLeakDetector::VisualLeakDetector ()
 
     // Initialize configuration options and related private data.
     _wcsnset_s(m_forcedModuleList, MAXMODULELISTLENGTH, '\0', _TRUNCATE);
+    _wcsnset_s(m_ignoreFunctionsList, MAXIGNOREFUNCTIONLISTLENGTH, '\0', _TRUNCATE);
+
     m_maxDataDump    = 0xffffffff;
     m_maxTraceFrames = 0xffffffff;
     m_options        = 0x0;
@@ -451,6 +453,16 @@ VisualLeakDetector::VisualLeakDetector ()
         // output. (For working around a bug in VC6 where data sent to the
         // debugger gets lost if it's sent too fast).
         InsertReportDelay();
+    }
+    if (m_options & VLD_OPT_IGNORE_FUNCTIONS) {
+        // Delimit each function name with "," and insert these into IgnoreFunctionsSet.
+        LPCWSTR pwc;
+        wchar_t* buffer;
+        pwc = wcstok_s(m_ignoreFunctionsList, L",", &buffer);
+        while (pwc != NULL) {
+            m_ignoreFunctions.insert(pwc);
+            pwc = wcstok_s(NULL, L",", &buffer);
+        }
     }
 
     // This is highly unlikely to happen, but just in case, check to be sure
@@ -1160,6 +1172,13 @@ VOID VisualLeakDetector::configure ()
     else
         m_options |= VLD_OPT_MODULE_LIST_INCLUDE;
 
+    // Read the ignore function list.
+    LoadStringOption(L"IgnoreFunctionsList", m_ignoreFunctionsList, MAXIGNOREFUNCTIONLISTLENGTH, inipath);
+    if (wcscmp(m_ignoreFunctionsList, L"*") == 0)
+        m_ignoreFunctionsList[0] = '\0';
+    else
+        m_options |= VLD_OPT_IGNORE_FUNCTIONS;
+
     // Read the report destination (debugger, file, or both).
     WCHAR filename [MAX_PATH] = {0};
     LoadStringOption(L"ReportFile", filename, MAX_PATH, inipath);
@@ -1675,6 +1694,9 @@ VOID VisualLeakDetector::reportConfig ()
     }
     if (m_options & VLD_OPT_TRACE_INTERNAL_FRAMES) {
         Report(L"    Including heap and VLD internal frames in stack traces.\n");
+    }
+    if (m_options & VLD_OPT_IGNORE_FUNCTIONS) {
+        Report(L"    Ignorning these functions from leak detection: %s\n", m_ignoreFunctionsList);
     }
 }
 
@@ -2353,6 +2375,12 @@ bool VisualLeakDetector::isModuleExcluded(UINT_PTR address)
     return false;
 }
 
+
+bool VisualLeakDetector::isFunctionIgnored(LPCWSTR functionName)
+{
+    return g_vld.m_ignoreFunctions.find(functionName) != g_vld.m_ignoreFunctions.end();
+}
+
 SIZE_T VisualLeakDetector::GetLeaksCount()
 {
     if (m_options & VLD_OPT_VLDOFF) {
@@ -2604,7 +2632,7 @@ void VisualLeakDetector::GlobalEnableLeakDetection ()
 CONST UINT32 OptionsMask = VLD_OPT_AGGREGATE_DUPLICATES | VLD_OPT_MODULE_LIST_INCLUDE |
     VLD_OPT_SAFE_STACK_WALK | VLD_OPT_SLOW_DEBUGGER_DUMP | VLD_OPT_START_DISABLED |
     VLD_OPT_TRACE_INTERNAL_FRAMES | VLD_OPT_SKIP_HEAPFREE_LEAKS | VLD_OPT_VALIDATE_HEAPFREE |
-    VLD_OPT_SKIP_CRTSTARTUP_LEAKS;
+    VLD_OPT_SKIP_CRTSTARTUP_LEAKS | VLD_OPT_IGNORE_FUNCTIONS;
 
 UINT32 VisualLeakDetector::GetOptions()
 {

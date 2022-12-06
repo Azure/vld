@@ -35,6 +35,7 @@
 #include <string>
 #include <memory>
 #pragma pop_macro("new")
+#include <set>
 #include <windows.h>
 #include "vld_def.h"
 #include "version.h"
@@ -46,6 +47,7 @@
 #include "vldallocator.h"   // Provides internal allocator.
 
 #define MAXMODULELISTLENGTH 512     // Maximum module list length, in characters.
+#define MAXIGNOREFUNCTIONLISTLENGTH 512     // Maximum module list length, in characters.
 #define SELFTESTTEXTA       "Memory Leak Self-Test"
 #define SELFTESTTEXTW       L"Memory Leak Self-Test"
 #define VLDREGKEYPRODUCT    L"Software\\Visual Leak Detector"
@@ -155,6 +157,14 @@ struct moduleinfo_t {
 typedef Set<moduleinfo_t> ModuleSet;
 
 typedef Set<VLD_REPORT_HOOK> ReportHookSet;
+
+
+struct LPCWSTRComparator {
+    bool operator()(LPCWSTR a, LPCWSTR b) const {
+        return lstrcmpW(a, b) > 0;
+    }
+};
+typedef std::set<LPCWSTR, LPCWSTRComparator> IgnoreFunctionsSet;
 
 // Thread local storage structure. Every thread in the process gets its own copy
 // of this structure. Thread specific information, such as the current leak
@@ -324,6 +334,7 @@ private:
 
     // Utils
     static bool isModuleExcluded (UINT_PTR returnaddress);
+    static bool isFunctionIgnored(LPCWSTR functionName);
     blockinfo_t* findAllocedBlock(LPCVOID, __out HANDLE& heap);
     blockinfo_t* getAllocationBlockInfo(void* alloc);
     void setupReporting();
@@ -362,6 +373,7 @@ private:
     // Private data
     ////////////////////////////////////////////////////////////////////////////////
     WCHAR                m_forcedModuleList [MAXMODULELISTLENGTH]; // List of modules to be forcefully included in leak detection.
+    WCHAR                m_ignoreFunctionsList [MAXIGNOREFUNCTIONLISTLENGTH]; // List of functions to be ignored in leak detection.
     HeapMap             *m_heapMap;           // Map of all active heaps in the process.
     IMalloc             *m_iMalloc;           // Pointer to the system implementation of IMalloc.
 
@@ -375,6 +387,7 @@ private:
     CriticalSection      m_modulesLock;       // Protects accesses to the "loaded modules" ModuleSet.
     CriticalSection      m_optionsLock;       // Serializes access to the heap and block maps.
     UINT32               m_options;           // Configuration options.
+    IgnoreFunctionsSet   m_ignoreFunctions;   // Contains information about all the functions that needs to be ignored.
 
     static patchentry_t  m_kernelbasePatch [];
     static patchentry_t  m_kernel32Patch [];

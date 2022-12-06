@@ -310,6 +310,10 @@ bool CallStack::isCrtStartupAlloc()
         } else if (m_status & CALLSTACK_STATUS_NOTSTARTUPCRT) {
             return false;
         }
+
+        if (isIgnoreFunction(functionName)) {
+            return true;
+        }
     }
 
     m_status |= CALLSTACK_STATUS_NOTSTARTUPCRT;
@@ -571,6 +575,14 @@ UINT CallStack::isCrtStartupFunction( LPCWSTR functionName ) const
     }
 
     return NULL;
+}
+
+bool CallStack::isIgnoreFunction(LPCWSTR functionName) const
+{
+    if (VisualLeakDetector::isFunctionIgnored(functionName)) {
+        return true;
+    }
+    return false;
 }
 
 bool CallStack::isInternalModule( const PWSTR filename ) const
