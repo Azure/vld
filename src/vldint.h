@@ -47,7 +47,7 @@
 #include "vldallocator.h"   // Provides internal allocator.
 
 #define MAXMODULELISTLENGTH 512     // Maximum module list length, in characters.
-#define MAXIGNOREFUNCTIONLISTLENGTH 512     // Maximum module list length, in characters.
+#define MAXIGNOREFUNCTIONLISTLENGTH 2048     // Maximum module list length, in characters.
 #define SELFTESTTEXTA       "Memory Leak Self-Test"
 #define SELFTESTTEXTW       L"Memory Leak Self-Test"
 #define VLDREGKEYPRODUCT    L"Software\\Visual Leak Detector"

@@ -343,7 +343,6 @@ VisualLeakDetector::VisualLeakDetector ()
 
     // Initialize configuration options and related private data.
     _wcsnset_s(m_forcedModuleList, MAXMODULELISTLENGTH, '\0', _TRUNCATE);
-    _wcsnset_s(m_ignoreFunctionsList, MAXIGNOREFUNCTIONLISTLENGTH, '\0', _TRUNCATE);
 
     m_maxDataDump    = 0xffffffff;
     m_maxTraceFrames = 0xffffffff;
@@ -1174,7 +1173,7 @@ VOID VisualLeakDetector::configure ()
 
     // Read the ignore function list.
     LoadStringOption(L"IgnoreFunctionsList", m_ignoreFunctionsList, MAXIGNOREFUNCTIONLISTLENGTH, inipath);
-    if (wcscmp(m_ignoreFunctionsList, L"*") == 0)
+    if (wcscmp(m_ignoreFunctionsList, L"") == 0)
         m_ignoreFunctionsList[0] = '\0';
     else
         m_options |= VLD_OPT_IGNORE_FUNCTIONS;

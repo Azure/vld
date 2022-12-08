@@ -24,12 +24,12 @@ int main(int argc, char** argv)
     int leaks = static_cast<int>(VLDGetLeaksCount());
     if (0 != leaks)
     {
-        printf("!!! FAILED - Leaks detected: %i\n", leaks);
+        (void)printf("!!! FAILED - Leaks detected: %i\n", leaks);
         VLDReportLeaks();
     }
     else
     {
-        printf("PASSED\n");
+        (void)printf("PASSED\n");
     }
 
 

@@ -35,6 +35,10 @@ ECHO [ RUNNING  ] %tests_path%\static_string_test.exe
 ECHO -------------------------------------------------------------------------------
 !tests_path!\static_string_test.exe --gtest_output="xml:!tests_path!\static_string_test.exe.xml"
 ECHO -------------------------------------------------------------------------------
+ECHO [ RUNNING  ] %tests_path%\ignore_functions_test.exe
+ECHO -------------------------------------------------------------------------------
+!tests_path!\static_string_test.exe --gtest_output="xml:!tests_path!\ignore_functions_test.exe.xml"
+ECHO -------------------------------------------------------------------------------
 EXIT /b 0
 
 :nodir
