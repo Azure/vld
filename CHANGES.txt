@@ -3,6 +3,12 @@ Visual Leak Detector (VLD) Version 2.5.7
 
   Change Log / Release Notes
 
+2.5.9 (1 January 2023)
+----------------------------
+  Enhancements:
+  + Add option to ignore functions in vld.ini to skip checking for memory leaks.
+
+
 2.5.8 (1 December 2021)
 ----------------------------
   Bugs Fixed:
