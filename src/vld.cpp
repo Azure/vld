@@ -427,6 +427,7 @@ VisualLeakDetector::VisualLeakDetector ()
     m_tlsIndex        = TlsAlloc();
     m_tlsLock.Initialize();
     m_tlsMap          = new TlsMap;
+    m_ignoreFunctions = new IgnoreFunctionsSet();
 
     if (m_options & VLD_OPT_SELF_TEST) {
         // Self-test mode has been enabled. Intentionally leak a small amount of
@@ -459,7 +460,8 @@ VisualLeakDetector::VisualLeakDetector ()
         wchar_t* buffer;
         pwc = wcstok_s(m_ignoreFunctionsList, L",", &buffer);
         while (pwc != NULL) {
-            m_ignoreFunctions.insert(pwc);
+            functioninfo_t funtioninfo = { pwc };
+            m_ignoreFunctions->insert(funtioninfo);
             pwc = wcstok_s(NULL, L",", &buffer);
         }
     }
@@ -684,6 +686,7 @@ VisualLeakDetector::~VisualLeakDetector ()
             delete m_heapMap;
         }
         delete m_loadedModules;
+        delete m_ignoreFunctions;
 
         {
             // Free internally allocated resources used for thread local storage.
@@ -2377,7 +2380,8 @@ bool VisualLeakDetector::isModuleExcluded(UINT_PTR address)
 
 bool VisualLeakDetector::isFunctionIgnored(LPCWSTR functionName)
 {
-    return g_vld.m_ignoreFunctions.find(functionName) != g_vld.m_ignoreFunctions.end();
+    functioninfo_t functioninfo = { functionName };
+    return g_vld.m_ignoreFunctions->find(functioninfo) != g_vld.m_ignoreFunctions->end();
 }
 
 SIZE_T VisualLeakDetector::GetLeaksCount()

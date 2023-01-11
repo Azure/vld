@@ -158,13 +158,18 @@ typedef Set<moduleinfo_t> ModuleSet;
 
 typedef Set<VLD_REPORT_HOOK> ReportHookSet;
 
-
-struct LPCWSTRComparator {
-    bool operator()(LPCWSTR a, LPCWSTR b) const {
-        return lstrcmpW(a, b) > 0;
+struct functioninfo_t {
+    BOOL operator < (const struct functioninfo_t& other) const {
+        if (lstrcmpW(name, other.name) == -1) {
+            return TRUE;
+        }
+        else {
+            return FALSE;
+        }
     }
+    LPCWSTR name;
 };
-typedef std::set<LPCWSTR, LPCWSTRComparator> IgnoreFunctionsSet;
+typedef Set<functioninfo_t> IgnoreFunctionsSet;
 
 // Thread local storage structure. Every thread in the process gets its own copy
 // of this structure. Thread specific information, such as the current leak
@@ -387,7 +392,7 @@ private:
     CriticalSection      m_modulesLock;       // Protects accesses to the "loaded modules" ModuleSet.
     CriticalSection      m_optionsLock;       // Serializes access to the heap and block maps.
     UINT32               m_options;           // Configuration options.
-    IgnoreFunctionsSet   m_ignoreFunctions;   // Contains information about all the functions that needs to be ignored.
+    IgnoreFunctionsSet   *m_ignoreFunctions;   // Contains information about all the functions that needs to be ignored.
 
     static patchentry_t  m_kernelbasePatch [];
     static patchentry_t  m_kernel32Patch [];
