@@ -37,6 +37,7 @@ TEST_F(StaticStringTest, StaticStringsSuccess)
 
     access_strings();
 
+    leaks = static_cast<int>(VLDGetLeaksCount());
     ASSERT_EQ(0, leaks);
 
 }
