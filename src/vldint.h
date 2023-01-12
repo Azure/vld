@@ -160,7 +160,8 @@ typedef Set<VLD_REPORT_HOOK> ReportHookSet;
 
 struct functioninfo_t {
     BOOL operator < (const struct functioninfo_t& other) const {
-        if (lstrcmpW(name, other.name) == -1) {
+
+        if (lstrcmpW(name, other.name) < 0) {
             return TRUE;
         }
         else {
