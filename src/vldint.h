@@ -163,8 +163,7 @@ struct functioninfo_t {
 
         if (lstrcmpW(name, other.name) < 0) {
             return TRUE;
-        }
-        else {
+        } else {
             return FALSE;
         }
     }

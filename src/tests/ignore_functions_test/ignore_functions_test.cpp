@@ -20,27 +20,32 @@ class TestIgnoreFunctions : public ::testing::Test
     }
 };
 
-std::string GetOSVersion() {
+std::string GetOSVersion() 
+{
     std::string osVersion = "Windows";
     return osVersion;
 }
 
-std::string SomeOtherString() {
+std::string SomeOtherString() 
+{
     std::string osVersion = "Windows";
     return osVersion;
 }
 
-std::string abcdefg() {
+std::string abcdefg() 
+{
     std::string osVersion = "Windows";
     return osVersion;
 }
 
-std::string testOtherString() {
+std::string testOtherString() 
+{
     std::string osVersion = "Windows";
     return osVersion;
 }
 
-std::string NotInTheList() {
+std::string NotInTheList() 
+{
     std::string osVersion = "NotListed";
     return osVersion;
 }
