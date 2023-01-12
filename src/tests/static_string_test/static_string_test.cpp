@@ -5,6 +5,21 @@
 #include "vld.h"
 #include "static_string.h"
 
+#include <gtest/gtest.h>
+
+class StaticStringTest : public ::testing::Test
+{
+    virtual void SetUp()
+    {
+        VLDMarkAllLeaksAsReported();
+    }
+    virtual void TearDown()
+    {
+        // Check that callstack resolved without unresolved functions (required symbols for all dll's)
+        EXPECT_EQ(0, VLDResolveCallstacks());
+    }
+};
+
 void access_strings()
 {
     // Just do something with the string so it isn't optimized away
@@ -15,21 +30,21 @@ void access_strings()
     printf("Copied string %s\n", copied_string2.c_str());
 }
 
-int main(int argc, char **argv)
+TEST_F(StaticStringTest, StaticStringsSuccess)
 {
+    int leaks = static_cast<int>(VLDGetLeaksCount());
+    ASSERT_EQ(0, leaks);
+
     access_strings();
 
-    int leaks = static_cast<int>(VLDGetLeaksCount());
-    if (0 != leaks)
-    {
-        printf("!!! FAILED - Leaks detected: %i\n", leaks);
-        VLDReportLeaks();
-    }
-    else
-    {
-        printf("PASSED\n");
-    }
+    ASSERT_EQ(0, leaks);
 
+}
 
-    return leaks;
+int main(int argc, char **argv)
+{
+    ::testing::InitGoogleTest(&argc, argv);
+    int res = RUN_ALL_TESTS();
+    VLDMarkAllLeaksAsReported();
+    return res;
 }
