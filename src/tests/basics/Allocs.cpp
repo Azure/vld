@@ -14,7 +14,6 @@
 #include <gtest/gtest.h>
 
 #include <comdef.h>
-//#include <atlsafe.h>
 
 // Name of the debug C Runtime Library DLL on this system
 #ifdef _DEBUG
@@ -339,65 +338,56 @@ void allocIMalloc(bool bFree)
         imalloc->Free(leaked_memory);
     }
 }
-    else if (type == eSysAllocString)
+
+void allocSysAllocString(bool bFree)
+{
+    BSTR bstr1 = SysAllocString(L"SysAllocString");
+    BSTR bstr2 = SysAllocStringLen(L"SysAllocStringLen", _countof(L"SysAllocStringLen"));
+    BSTR bstr3 = SysAllocStringByteLen("SysAllocStringByteLen", _countof("SysAllocStringByteLen"));
+    SysReAllocString(&bstr1, L"SysReAllocString");
+    SysReAllocStringLen(&bstr2, L"SysReAllocStringLen", _countof(L"SysReAllocStringLen"));
+    BSTR bstr4 = NULL;
+    VarBstrFromUI4(100, NULL, NULL, &bstr4);
+
+    _bstr_t bstr("_bstr_t");// 5th for new and 6th for SysAllocString
+    BSTR bstr5 = bstr.Detach();
+
+    if (bFree)
     {
-        BSTR bstr1 = SysAllocString(L"SysAllocString");
-        BSTR bstr2 = SysAllocStringLen(L"SysAllocStringLen", _countof(L"SysAllocStringLen"));
-        BSTR bstr3 = SysAllocStringByteLen("SysAllocStringByteLen", _countof("SysAllocStringByteLen"));
-        SysReAllocString(&bstr1, L"SysReAllocString");
-        SysReAllocStringLen(&bstr2, L"SysReAllocStringLen", _countof(L"SysReAllocStringLen"));
-        BSTR bstr4 = NULL;
-        VarBstrFromUI4(100, NULL, NULL, &bstr4);
-
-        _bstr_t bstr("_bstr_t");// 5th for new and 6th for SysAllocString
-        BSTR bstr5 = bstr.Detach();
-
-        //CComBSTR cbstr("CComBSTR");// 7th for SysAllocString
-        //cbstr += "+CComBSTR"; 
-        //BSTR bstr6 = cbstr.Detach();
-
-        if (bFree)
-        {
-            SysFreeString(bstr1);
-            SysFreeString(bstr2);
-            SysFreeString(bstr3);
-            SysFreeString(bstr4);
-            SysFreeString(bstr5);
-            //SysFreeString(bstr6);
-        }
+        SysFreeString(bstr1);
+        SysFreeString(bstr2);
+        SysFreeString(bstr3);
+        SysFreeString(bstr4);
+        SysFreeString(bstr5);
     }
-    else if (type == eSafeArray)
+}
+
+void allocSafeArrayCreate(bool bFree)
+{
+    SAFEARRAYBOUND rgsabound[1];
+    rgsabound[0].lLbound = 0;
+    rgsabound[0].cElements = 5;
+
+    SAFEARRAYBOUND rgsanewbound[1];
+    rgsanewbound[0].lLbound = 0;
+    rgsanewbound[0].cElements = 10;
+
+    LPSAFEARRAY psa1 = SafeArrayCreate(VT_INT, 1, rgsabound);
+    LPSAFEARRAY psa2 = SafeArrayCreateEx(VT_INT, 1, rgsabound, NULL);
+    LPSAFEARRAY psa3 = SafeArrayCreate(VT_INT, 1, rgsabound);
+    SafeArrayRedim(psa3, rgsanewbound);
+    LPSAFEARRAY psa4 = SafeArrayCreateEx(VT_INT, 1, rgsabound, NULL);
+    SafeArrayRedim(psa4, rgsanewbound);
+
+    if (bFree)
     {
-        //CComSafeArray<int> sa1(5); // 1st for SafeArrayCreate
-        //LPSAFEARRAY psa1 = sa1.Detach();
-
-        //CComSafeArray<int> sa2(5); // 2nd for SafeArrayCreate
-        //sa2.Add(1);                // 2nd is replaced by SafeArrayRedim
-        //LPSAFEARRAY psa2 = sa2.Detach();
-
-        SAFEARRAYBOUND rgsabound[1];
-        rgsabound[0].lLbound = 0;
-        rgsabound[0].cElements = 5;
-
-        SAFEARRAYBOUND rgsanewbound[1];
-        rgsanewbound[0].lLbound = 0;
-        rgsanewbound[0].cElements = 10;
-
-        LPSAFEARRAY psa1 = SafeArrayCreate(VT_INT, 1, rgsabound);
-        LPSAFEARRAY psa2 = SafeArrayCreateEx(VT_INT, 1, rgsabound, NULL);
-        LPSAFEARRAY psa3 = SafeArrayCreate(VT_INT, 1, rgsabound);
-        SafeArrayRedim(psa3, rgsanewbound);
-        LPSAFEARRAY psa4 = SafeArrayCreateEx(VT_INT, 1, rgsabound, NULL);
-        SafeArrayRedim(psa4, rgsanewbound);
-
-        if (bFree)
-        {
-            SafeArrayDestroy(psa1);
-            SafeArrayDestroy(psa2);
-            SafeArrayDestroy(psa3);
-            SafeArrayDestroy(psa4);
-        }
+        SafeArrayDestroy(psa1);
+        SafeArrayDestroy(psa2);
+        SafeArrayDestroy(psa3);
+        SafeArrayDestroy(psa4);
     }
+}
+
 void allocGetProcMalloc(bool bFree)
 {
     malloc_t pmalloc = NULL;
@@ -542,5 +532,21 @@ void LeakMemoryGetProcMalloc(int repeat, bool bFree)
     for (int i = 0; i < repeat; i++)
     {
         alloc(allocGetProcMalloc, bFree);
+    }
+}
+
+void LeakMemorySysAllocString(int repeat, bool bFree)
+{
+    for (int i = 0; i < repeat; i++)
+    {
+        alloc(allocSysAllocString, bFree);
+    }
+}
+
+void LeakMemorySafeArrayCreate(int repeat, bool bFree)
+{
+    for (int i = 0; i < repeat; i++)
+    {
+        alloc(allocSafeArrayCreate, bFree);
     }
 }

@@ -2339,6 +2339,21 @@ VOID VisualLeakDetector::RefreshModules()
     if (m_options & VLD_OPT_VLDOFF)
         return;
 
+    static bool caching_disabled = FALSE;
+
+    if (!caching_disabled) {
+        // Disable memory caching in ole interfaces
+        typedef void (WINAPI* SETOANOCACHE)();
+        HINSTANCE oleaut32 = LoadLibrary(L"oleaut32.dll");
+        if (oleaut32) {
+            SETOANOCACHE SetOaNoCachePtr = (SETOANOCACHE)GetProcAddress(oleaut32, "SetOaNoCache");
+            if (SetOaNoCachePtr) {
+                SetOaNoCachePtr();
+            }
+        }
+        caching_disabled = TRUE;
+    }
+
     ModuleSet* newmodules = new ModuleSet();
     newmodules->reserve(MODULE_SET_RESERVE);
     {

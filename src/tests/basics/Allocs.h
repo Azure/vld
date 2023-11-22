@@ -12,5 +12,7 @@ extern void LeakMemoryStrdup(int repeat, bool bFree = false);
 extern void LeakMemoryHeapAlloc(int repeat, bool bFree = false);
 extern void LeakMemoryIMalloc(int repeat, bool bFree = false);
 extern void LeakMemoryGetProcMalloc(int repeat, bool bFree = false);
+extern void LeakMemorySysAllocString(int repeat, bool bFree = false);
+extern void LeakMemorySafeArrayCreate(int repeat, bool bFree = false);
 
 extern const int repeats;
