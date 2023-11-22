@@ -1,0 +1,6 @@
+copy "D:\Azure\libs\vld\src\bin\Win32\Debug-v142\vld_x86.dll" "C:\Program Files (x86)\Visual Leak Detector\bin\Win32\vld_x86.dll"
+copy "D:\Azure\libs\vld\src\bin\x64\Debug-v142\vld_x64.dll" "C:\Program Files (x86)\Visual Leak Detector\bin\Win64\vld_x64.dll"
+copy "D:\Azure\libs\vld\src\bin\Win32\Debug-v142\vld_x86.pdb" "C:\Program Files (x86)\Visual Leak Detector\bin\Win32\vld_x86.pdb"
+copy "D:\Azure\libs\vld\src\bin\x64\Debug-v142\vld_x64.pdb" "C:\Program Files (x86)\Visual Leak Detector\bin\Win64\vld_x64.pdb"
+copy "D:\Azure\libs\vld\src\bin\Win32\Debug-v142\vld.lib" "C:\Program Files (x86)\Visual Leak Detector\lib\Win32\vld.lib"
+copy "D:\Azure\libs\vld\src\bin\x64\Debug-v142\vld.lib" "C:\Program Files (x86)\Visual Leak Detector\lib\Win64\vld.lib"
