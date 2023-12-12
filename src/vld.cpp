@@ -1329,8 +1329,6 @@ tls_t* VisualLeakDetector::getTls ()
 //
 VOID VisualLeakDetector::mapBlock (HANDLE heap, LPCVOID mem, SIZE_T size, bool debugcrtalloc, bool ucrt, DWORD threadId, blockinfo_t* &pblockInfo)
 {
-    CriticalSectionLocker<> cs(g_heapMapLock);
-
     // Record the block's information.
     blockinfo_t* blockinfo = new blockinfo_t();
     blockinfo->callStack = NULL;
@@ -1545,8 +1543,6 @@ VOID VisualLeakDetector::unmapHeap (HANDLE heap)
 VOID VisualLeakDetector::remapBlock (HANDLE heap, LPCVOID mem, LPCVOID newmem, SIZE_T size,
     bool debugcrtalloc, bool ucrt, DWORD threadId, blockinfo_t* &pblockInfo, const context_t &context)
 {
-    CriticalSectionLocker<> cs(g_heapMapLock);
-
     if (newmem != mem) {
         // The block was not reallocated in-place. Instead the old block was
         // freed and a new block allocated to satisfy the new size.
@@ -2909,6 +2905,11 @@ CaptureContext::~CaptureContext() {
 
     if ((m_tls->blockWithoutGuard) && (!IsExcludedModule())) {
         blockinfo_t* pblockInfo = NULL;
+        CallStack* callstack = CallStack::Create();
+        callstack->getStackTrace(g_vld.m_maxTraceFrames, m_tls->context);
+
+        CriticalSectionLocker<> cs(g_heapMapLock);
+
         if (m_tls->newBlockWithoutGuard == NULL) {
             g_vld.mapBlock(m_tls->heap,
                 m_tls->blockWithoutGuard,
@@ -2929,8 +2930,6 @@ CaptureContext::~CaptureContext() {
                 pblockInfo, m_tls->context);
         }
 
-        CallStack* callstack = CallStack::Create();
-        callstack->getStackTrace(g_vld.m_maxTraceFrames, m_tls->context);
         pblockInfo->callStack.reset(callstack);
     }
 
