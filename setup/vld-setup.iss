@@ -7,7 +7,7 @@
 #define MyAppURL "http://vld.codeplex.com/"
 #define MyAppRegKey "Software\Visual Leak Detector"
 #define ConfigType "Release"
-#define PlatformVersion "v142"
+#define PlatformVersion "v143"
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application.
@@ -27,13 +27,12 @@ LicenseFile=license-free.txt
 OutputBaseFilename=vld-{#MyAppVersion}-setup
 Compression=lzma
 SolidCompression=True
-MinVersion=0,5.01
+MinVersion=0,7.01
 ; Tell Windows Explorer to reload the environment
 ChangesEnvironment=yes
 AllowNoIcons=yes
 DisableDirPage=auto
-DirExistsWarning=no
-WizardImageFile=compiler:WizModernImage-IS.bmp
+DirExistsWarning=no 
 WizardSmallImageFile=WizSmallImage.bmp
 
 [Languages]
@@ -65,7 +64,7 @@ Source: "Microsoft.Cpp.x64.user.props"; DestDir: "{localappdata}\Microsoft\MSBui
 [Tasks]
 Name: "modifypath"; Description: "Add VLD directory to your environmental path"
 Name: "modifyVS2008Props"; Description: "Add VLD directory to VS 2008"
-Name: "modifyVS2010Props"; Description: "Add VLD directory to VS 2010 - VS 2015"
+Name: "modifyVS2010Props"; Description: "Add VLD directory to VS 2010 - VS 2022"
 
 [ThirdParty]
 UseRelativePaths=True

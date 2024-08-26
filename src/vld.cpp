@@ -796,6 +796,7 @@ static char dbghelp32_assert[sizeof(IMAGEHLP_MODULE64) == 3264 ? 1 : -1];
 //
 //    None.
 //
+
 VOID VisualLeakDetector::attachToLoadedModules (ModuleSet *newmodules)
 {
     LoaderLock ll;
@@ -814,8 +815,8 @@ VOID VisualLeakDetector::attachToLoadedModules (ModuleSet *newmodules)
         LPCWSTR modulename = (*newit).name.c_str();
         LPCWSTR modulepath = (*newit).path.c_str();
         DWORD modulesize   = (DWORD)((*newit).addrHigh - (*newit).addrLow) + 1;
-
-        if ((state == 3) && (moduleFlags & VLD_MODULE_SYMBOLSLOADED)) {
+        
+        if ((state == 3) && (moduleFlags & VLD_MODULE_SYMBOLSLOADED) && g_currentProcess != INVALID_HANDLE_VALUE) {
             // Discard the previously loaded symbols, so we can refresh them.
             DbgTrace(L"dbghelp32.dll %i: SymUnloadModule64\n", GetCurrentThreadId());
             if (g_DbgHelp.SymUnloadModule64(g_currentProcess, modulebase, locker) == false) {
@@ -990,7 +991,7 @@ LPWSTR VisualLeakDetector::buildSymbolSearchPath ()
 #endif
     // Append Visual Studio 2015/2013/2012/2010/2008 symbols cache directory.
     // NOTE: This does not seem to exist for VS 2019 on Windows 10, but leaving it as is for now, updated to 2019 (changed 14->16)
-    for (UINT n = 9; n <= 16; ++n) {
+    for (UINT n = 9; n <= 17; ++n) {
         WCHAR debuggerpath[MAX_PATH] = { 0 };
         swprintf(debuggerpath, _countof(debuggerpath), L"Software\\Microsoft\\VisualStudio\\%u.0\\Debugger", n);
         HKEY debuggerkey;
