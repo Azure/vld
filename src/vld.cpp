@@ -45,13 +45,11 @@
 // Imported global variables.
 extern vldblockheader_t *g_vldBlockList;
 extern HANDLE            g_vldHeap;
-extern CriticalSection   g_vldHeapLock;
-
 // Global variables.
 HANDLE           g_currentProcess; // Pseudo-handle for the current process.
 HANDLE           g_currentThread;  // Pseudo-handle for the current thread.
 HANDLE           g_processHeap;    // Handle to the process's heap (COM allocations come from here).
-CriticalSection  g_heapMapLock;    // Serializes access to the heap and block maps.
+
 ReportHookSet*   g_pReportHooks;
 DbgHelp g_DbgHelp;
 ImageDirectoryEntries g_Ide;
@@ -89,10 +87,9 @@ moduleentry_t ntdllPatch [] = {
 typedef BOOLEAN(NTAPI *PDLL_INIT_ROUTINE)(IN PVOID DllHandle, IN ULONG Reason, IN PCONTEXT Context OPTIONAL);
 BOOLEAN WINAPI LdrpCallInitRoutine(IN PVOID BaseAddress, IN ULONG Reason, IN PVOID Context, IN PDLL_INIT_ROUTINE EntryPoint)
 {
-    LoaderLock ll;
-
     if (Reason == DLL_PROCESS_ATTACH) {
-        g_vld.RefreshModules();
+        if (!g_DbgHelp.IsLockedByCurrentThread())
+            g_vld.RefreshModules();
     }
 
     return EntryPoint(BaseAddress, Reason, (PCONTEXT)Context);
@@ -278,8 +275,6 @@ BOOL NtDllRestore(NTDLL_LDR_PATCH &NtDllPatch)
     return bResult;
 }
 
-#define _DECL_DLLMAIN  // for _CRT_INIT
-#include <process.h>   // for _CRT_INIT
 #pragma comment(linker, "/entry:DllEntryPoint")
 
 __declspec(noinline)
@@ -406,9 +401,7 @@ VisualLeakDetector::VisualLeakDetector ()
 
     LoaderLock ll;
 
-    g_heapMapLock.Initialize();
     g_vldHeap         = HeapCreate(0x0, 0, 0);
-    g_vldHeapLock.Initialize();
     g_pReportHooks    = new ReportHookSet;
 
     // Initialize remaining private data.
@@ -420,12 +413,9 @@ VisualLeakDetector::VisualLeakDetector ()
     m_curAlloc        = 0;
     m_maxAlloc        = 0;
     m_loadedModules   = new ModuleSet();
-    m_optionsLock.Initialize();
-    m_modulesLock.Initialize();
     m_selfTestFile    = __FILE__;
     m_selfTestLine    = 0;
     m_tlsIndex        = TlsAlloc();
-    m_tlsLock.Initialize();
     m_tlsMap          = new TlsMap;
     m_ignoreFunctions = new IgnoreFunctionsSet();
 
@@ -489,7 +479,7 @@ VisualLeakDetector::VisualLeakDetector ()
     */
     g_DbgHelp.SymSetOptions(SYMOPT_DEBUG | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
 #else
-    g_DbgHelp.SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
+    g_DbgHelp.SymSetOptions(SYMOPT_UNDNAME | SYMOPT_LOAD_LINES | SYMOPT_DEFERRED_LOADS);
 #endif
     DbgTrace(L"dbghelp32.dll %i: SymInitializeW\n", GetCurrentThreadId());
     if (!g_DbgHelp.SymInitializeW(g_currentProcess, symbolpath, FALSE)) {
@@ -529,49 +519,47 @@ VisualLeakDetector::VisualLeakDetector ()
     reportConfig();
 }
 
+
+bool VisualLeakDetector::TryToCloseThread(DWORD threadId)
+{
+    if (threadId == GetCurrentThreadId()) {
+        // Don't close the current thread.
+        return false;
+    }
+
+    DWORD dwCurProcessID = GetCurrentProcessId();
+    
+    HANDLE hThread = OpenThread(THREAD_QUERY_INFORMATION, FALSE, threadId);
+    if (!hThread) {
+        // Couldn't query this thread. We'll assume that it exited.
+        return false;
+    }
+
+    DWORD dwProcessId = GetProcessIdOfThread(hThread);
+    if (dwProcessId != dwCurProcessID) {
+        //The thread ID has been recycled.
+        CloseHandle(hThread);
+        return false;
+    }
+
+    DWORD dwExitCode;
+    if (GetExitCodeThread(hThread, &dwExitCode) && dwExitCode == STILL_ACTIVE)
+    {
+        Report(L"Thread %d running on process %d is still active...\n", threadId, dwProcessId);
+    }   
+
+    CloseHandle(hThread);
+    return dwExitCode == STILL_ACTIVE;
+}
+
 bool VisualLeakDetector::waitForAllVLDThreads()
 {
     bool threadsactive = false;
-    DWORD dwCurProcessID = GetCurrentProcessId();
-    int waitcount = 0;
-
     // See if any threads that have ever entered VLD's code are still active.
-    CriticalSectionLocker<> cs(m_tlsLock);
+    std::scoped_lock lock(m_tlsLock);
     for (TlsMap::Iterator tlsit = m_tlsMap->begin(); tlsit != m_tlsMap->end(); ++tlsit) {
-        if ((*tlsit).second->threadId == GetCurrentThreadId()) {
-            // Don't wait for the current thread to exit.
-            continue;
-        }
-
-        HANDLE thread = OpenThread(SYNCHRONIZE | THREAD_QUERY_INFORMATION, FALSE, (*tlsit).second->threadId);
-        if (thread == NULL) {
-            // Couldn't query this thread. We'll assume that it exited.
-            continue; // XXX should we check GetLastError()?
-        }
-        if (GetProcessIdOfThread(thread) != dwCurProcessID) {
-            //The thread ID has been recycled.
-            CloseHandle(thread);
-            continue;
-        }
-        if (WaitForSingleObject(thread, 10000) == WAIT_TIMEOUT) { // 10 seconds
-            // There is still at least one other thread running. The CRT
-            // will stomp it dead when it cleans up, which is not a
-            // graceful way for a thread to go down. Warn about this,
-            // and wait until the thread has exited so that we know it
-            // can't still be off running somewhere in VLD's code.
-            //
-            // Since we've been waiting a while, let the human know we are
-            // still here and alive.
-            waitcount++;
-            threadsactive = true;
-            if (waitcount >= 9) // 90 sec.
-            {
-                CloseHandle(thread);
-                return threadsactive;
-            }
-            Report(L"Visual Leak Detector: Waiting for threads to terminate...\n");
-        }
-        CloseHandle(thread);
+        auto threadId = (*tlsit).second->threadId;
+        threadsactive = TryToCloseThread(threadId) || threadsactive;
     }
     return threadsactive;
 }
@@ -675,7 +663,7 @@ VisualLeakDetector::~VisualLeakDetector ()
 
         {
             // Free internally allocated resources used by the heapmap and blockmap.
-            CriticalSectionLocker<> cs(g_heapMapLock);
+            std::scoped_lock lock(g_heapMapLock);
             for (HeapMap::Iterator heapit = m_heapMap->begin(); heapit != m_heapMap->end(); ++heapit) {
                 BlockMap *blockmap = &(*heapit).second->blockMap;
                 for (BlockMap::Iterator blockit = blockmap->begin(); blockit != blockmap->end(); ++blockit) {
@@ -690,7 +678,7 @@ VisualLeakDetector::~VisualLeakDetector ()
 
         {
             // Free internally allocated resources used for thread local storage.
-            CriticalSectionLocker<> cs(m_tlsLock);
+            std::scoped_lock lock(m_tlsLock);
             for (TlsMap::Iterator tlsit = m_tlsMap->begin(); tlsit != m_tlsMap->end(); ++tlsit) {
                 delete (*tlsit).second;
             }
@@ -715,12 +703,6 @@ VisualLeakDetector::~VisualLeakDetector ()
         g_pReportHooks = NULL;
     }
     HeapDestroy(g_vldHeap);
-
-    m_optionsLock.Delete();
-    m_modulesLock.Delete();
-    m_tlsLock.Delete();
-    g_heapMapLock.Delete();
-    g_vldHeapLock.Delete();
 
     if (m_tlsIndex != TLS_OUT_OF_INDEXES) {
         TlsFree(m_tlsIndex);
@@ -751,7 +733,7 @@ UINT32 VisualLeakDetector::getModuleState(ModuleSet::Iterator& it, UINT32& modul
         return 0;
 
     {
-        CriticalSectionLocker<> cs(m_modulesLock);
+        std::scoped_lock lock(g_vld.m_loadedModulesMutex);
         ModuleSet* oldmodules = m_loadedModules;
         ModuleSet::Iterator oldit = oldmodules->find(moduleinfo);
         if (oldit != oldmodules->end()) // We've seen this "new" module loaded in the process before.
@@ -796,10 +778,11 @@ static char dbghelp32_assert[sizeof(IMAGEHLP_MODULE64) == 3264 ? 1 : -1];
 //
 //    None.
 //
+
 VOID VisualLeakDetector::attachToLoadedModules (ModuleSet *newmodules)
 {
     LoaderLock ll;
-    CriticalSectionLocker<DbgHelp> locker(g_DbgHelp);
+    std::scoped_lock<DbgHelp> locker(g_DbgHelp);
 
     // Iterate through the supplied set, until all modules have been attached.
     for (ModuleSet::Iterator newit = newmodules->begin(); newit != newmodules->end(); ++newit)
@@ -814,8 +797,8 @@ VOID VisualLeakDetector::attachToLoadedModules (ModuleSet *newmodules)
         LPCWSTR modulename = (*newit).name.c_str();
         LPCWSTR modulepath = (*newit).path.c_str();
         DWORD modulesize   = (DWORD)((*newit).addrHigh - (*newit).addrLow) + 1;
-
-        if ((state == 3) && (moduleFlags & VLD_MODULE_SYMBOLSLOADED)) {
+        
+        if ((state == 3) && (moduleFlags & VLD_MODULE_SYMBOLSLOADED) && g_currentProcess != INVALID_HANDLE_VALUE) {
             // Discard the previously loaded symbols, so we can refresh them.
             DbgTrace(L"dbghelp32.dll %i: SymUnloadModule64\n", GetCurrentThreadId());
             if (g_DbgHelp.SymUnloadModule64(g_currentProcess, modulebase, locker) == false) {
@@ -895,16 +878,16 @@ VOID VisualLeakDetector::attachToLoadedModules (ModuleSet *newmodules)
                 }
             }
         }
-        if ((moduleFlags & VLD_MODULE_EXCLUDED) == 0 &&
-            !(moduleFlags & VLD_MODULE_SYMBOLSLOADED) || (moduleimageinfo.SymType == SymExport)) {
-            // This module is going to be included in leak detection, but complete
-            // symbols for this module couldn't be loaded. This means that any stack
-            // traces through this module may lack information, like line numbers
-            // and function names.
-            Report(L"WARNING: Visual Leak Detector: A module, %s, included in memory leak detection\n"
-                L"  does not have any debugging symbols available, or they could not be located.\n"
-                L"  Function names and/or line numbers for this module may not be available.\n", modulename);
-        }
+        //if ((moduleFlags & VLD_MODULE_EXCLUDED) == 0 &&
+        //    !(moduleFlags & VLD_MODULE_SYMBOLSLOADED) || (moduleimageinfo.SymType == SymExport)) {
+        //    // This module is going to be included in leak detection, but complete
+        //    // symbols for this module couldn't be loaded. This means that any stack
+        //    // traces through this module may lack information, like line numbers
+        //    // and function names.
+        //    Report(L"WARNING: Visual Leak Detector: A module, %s, included in memory leak detection\n"
+        //        L"  does not have any debugging symbols available, or they could not be located.\n"
+        //        L"  Function names and/or line numbers for this module may not be available.\n", modulename);
+        //}
 
         // Update the module's flags in the "new modules" set.
         ModuleSet::Muterator  updateit;
@@ -990,7 +973,7 @@ LPWSTR VisualLeakDetector::buildSymbolSearchPath ()
 #endif
     // Append Visual Studio 2015/2013/2012/2010/2008 symbols cache directory.
     // NOTE: This does not seem to exist for VS 2019 on Windows 10, but leaving it as is for now, updated to 2019 (changed 14->16)
-    for (UINT n = 9; n <= 16; ++n) {
+    for (UINT n = 9; n <= 17; ++n) {
         WCHAR debuggerpath[MAX_PATH] = { 0 };
         swprintf(debuggerpath, _countof(debuggerpath), L"Software\\Microsoft\\VisualStudio\\%u.0\\Debugger", n);
         HKEY debuggerkey;
@@ -1189,6 +1172,7 @@ VOID VisualLeakDetector::configure ()
     }
     WCHAR* path = _wfullpath(m_reportFilePath, filename, MAX_PATH);
     assert(path);
+    UNREFERENCED_PARAMETER(path);
 
     LoadStringOption(L"ReportTo", buffer, buffersize, inipath);
     if (_wcsicmp(buffer, L"both") == 0) {
@@ -1279,7 +1263,7 @@ SIZE_T VisualLeakDetector::eraseDuplicates (const BlockMap::Iterator &element, S
     SIZE_T       erased = 0;
     // Iterate through all block maps, looking for blocks with the same size
     // and callstack as the specified element.
-    CriticalSectionLocker<> cs(g_heapMapLock);
+    std::scoped_lock lock(g_heapMapLock);
     for (HeapMap::Iterator heapit = m_heapMap->begin(); heapit != m_heapMap->end(); ++heapit) {
         BlockMap *blockmap = &(*heapit).second->blockMap;
         for (BlockMap::Iterator blockit = blockmap->begin(); blockit != blockmap->end(); ++blockit) {
@@ -1315,13 +1299,12 @@ SIZE_T VisualLeakDetector::eraseDuplicates (const BlockMap::Iterator &element, S
 tls_t* VisualLeakDetector::getTls ()
 {
     // Get the pointer to this thread's thread local storage structure.
-    tls_t* tls = (tls_t*)TlsGetValue(m_tlsIndex);
-    assert(GetLastError() == ERROR_SUCCESS);
+    thread_local tls_t* tls = (tls_t*)TlsGetValue(m_tlsIndex);
 
     if (tls == NULL) {
         DWORD threadId = GetCurrentThreadId();
 
-        CriticalSectionLocker<> cs(m_tlsLock);
+        std::scoped_lock lock(m_tlsLock);
         TlsMap::Iterator it = m_tlsMap->find(threadId);
         if (it == m_tlsMap->end()) {
             // This thread's thread local storage structure has not been allocated.
@@ -1367,7 +1350,7 @@ tls_t* VisualLeakDetector::getTls ()
 //
 VOID VisualLeakDetector::mapBlock (HANDLE heap, LPCVOID mem, SIZE_T size, bool debugcrtalloc, bool ucrt, DWORD threadId, blockinfo_t* &pblockInfo)
 {
-    CriticalSectionLocker<> cs(g_heapMapLock);
+    std::scoped_lock lock(g_heapMapLock);
 
     // Record the block's information.
     blockinfo_t* blockinfo = new blockinfo_t();
@@ -1426,7 +1409,7 @@ VOID VisualLeakDetector::mapBlock (HANDLE heap, LPCVOID mem, SIZE_T size, bool d
 //
 VOID VisualLeakDetector::mapHeap (HANDLE heap)
 {
-    CriticalSectionLocker<> cs(g_heapMapLock);
+    std::scoped_lock lock(g_heapMapLock);
 
     // Create a new block map for this heap and insert it into the heap map.
     heapinfo_t* heapinfo = new heapinfo_t;
@@ -1462,7 +1445,7 @@ VOID VisualLeakDetector::unmapBlock (HANDLE heap, LPCVOID mem, const context_t &
         return;
 
     // Find this heap's block map.
-    CriticalSectionLocker<> cs(g_heapMapLock);
+    std::scoped_lock lock(g_heapMapLock);
     HeapMap::Iterator heapit = m_heapMap->find(heap);
     if (heapit == m_heapMap->end()) {
         // We don't have a block map for this heap. We must not have monitored
@@ -1532,7 +1515,7 @@ VOID VisualLeakDetector::unmapBlock (HANDLE heap, LPCVOID mem, const context_t &
 VOID VisualLeakDetector::unmapHeap (HANDLE heap)
 {
     // Find this heap's block map.
-    CriticalSectionLocker<> cs(g_heapMapLock);
+    std::scoped_lock lock(g_heapMapLock);
     HeapMap::Iterator heapit = m_heapMap->find(heap);
     if (heapit == m_heapMap->end()) {
         // This heap hasn't been mapped. We must not have monitored this heap's
@@ -1583,7 +1566,7 @@ VOID VisualLeakDetector::unmapHeap (HANDLE heap)
 VOID VisualLeakDetector::remapBlock (HANDLE heap, LPCVOID mem, LPCVOID newmem, SIZE_T size,
     bool debugcrtalloc, bool ucrt, DWORD threadId, blockinfo_t* &pblockInfo, const context_t &context)
 {
-    CriticalSectionLocker<> cs(g_heapMapLock);
+    std::scoped_lock lock(g_heapMapLock);
 
     if (newmem != mem) {
         // The block was not reallocated in-place. Instead the old block was
@@ -1796,7 +1779,7 @@ SIZE_T VisualLeakDetector::reportHeapLeaks (HANDLE heap)
     assert(heap != NULL);
 
     // Find the heap's information (blockmap, etc).
-    CriticalSectionLocker<> cs(g_heapMapLock);
+    std::scoped_lock lock(g_heapMapLock);
     HeapMap::Iterator heapit = m_heapMap->find(heap);
     if (heapit == m_heapMap->end()) {
         // Nothing is allocated from this heap. No leaks.
@@ -1983,7 +1966,7 @@ blockinfo_t* VisualLeakDetector::findAllocedBlock(LPCVOID mem, __out HANDLE& hea
     heap = NULL;
     blockinfo_t* result = NULL;
     // Iterate through all heaps
-    CriticalSectionLocker<> cs(g_heapMapLock);
+    std::scoped_lock lock(g_heapMapLock);
     for (HeapMap::Iterator it = m_heapMap->begin();
         it != m_heapMap->end();
         ++it)
@@ -2297,22 +2280,17 @@ NTSTATUS VisualLeakDetector::_LdrLoadDll (LPWSTR searchpath, PULONG flags, unico
 NTSTATUS VisualLeakDetector::_LdrLoadDllWin8 (DWORD_PTR reserved, PULONG flags, unicodestring_t *modulename,
                                           PHANDLE modulehandle)
 {
-    // Load the DLL
     NTSTATUS status = LdrLoadDllWin8(reserved, flags, modulename, modulehandle);
     return status;
 }
 
 NTSTATUS VisualLeakDetector::_LdrGetDllHandle(IN PWSTR DllPath OPTIONAL, IN PULONG DllCharacteristics OPTIONAL, IN PUNICODE_STRING DllName, OUT PVOID *DllHandle OPTIONAL)
 {
-    LoaderLock ll;
-
     NTSTATUS status = LdrGetDllHandle(DllPath, DllCharacteristics, DllName, DllHandle);
     return status;
 }
 NTSTATUS VisualLeakDetector::_LdrGetProcedureAddress(IN PVOID BaseAddress, IN PANSI_STRING Name, IN ULONG Ordinal, OUT PVOID * ProcedureAddress)
 {
-    LoaderLock ll;
-
     NTSTATUS status = LdrGetProcedureAddress(BaseAddress, Name, Ordinal, ProcedureAddress);
     return status;
 }
@@ -2334,14 +2312,13 @@ NTSTATUS VisualLeakDetector::_LdrUnloadDll(IN PVOID BaseAddress)
 
 VOID VisualLeakDetector::RefreshModules()
 {
-    LoaderLock ll;
-
     if (m_options & VLD_OPT_VLDOFF)
         return;
 
     ModuleSet* newmodules = new ModuleSet();
     newmodules->reserve(MODULE_SET_RESERVE);
     {
+        LoaderLock ll;
         // Duplicate code here in this method. Consider refactoring out to another method.
         // Create a new set of all loaded modules, including any newly loaded
         // modules.
@@ -2353,7 +2330,7 @@ VOID VisualLeakDetector::RefreshModules()
     }
 
     // Start using the new set of loaded modules.
-    CriticalSectionLocker<> cs(m_modulesLock);
+    std::scoped_lock lock(g_vld.m_loadedModulesMutex);
     ModuleSet* oldmodules = m_loadedModules;
     m_loadedModules = newmodules;
 
@@ -2370,7 +2347,7 @@ bool VisualLeakDetector::isModuleExcluded(UINT_PTR address)
     moduleinfo.addrHigh = address + 1024;
     moduleinfo.flags = 0;
 
-    CriticalSectionLocker<> cs(g_vld.m_modulesLock);
+    std::scoped_lock lock(g_vld.m_loadedModulesMutex);
     moduleit = g_vld.m_loadedModules->find(moduleinfo);
     if (moduleit != g_vld.m_loadedModules->end())
         return (*moduleit).flags & VLD_MODULE_EXCLUDED ? true : false;
@@ -2384,19 +2361,32 @@ bool VisualLeakDetector::isFunctionIgnored(LPCWSTR functionName)
     return g_vld.m_ignoreFunctions->find(functioninfo) != g_vld.m_ignoreFunctions->end();
 }
 
-SIZE_T VisualLeakDetector::GetLeaksCount()
-{
+void PreloadSymsrvDll() {
+
+    HMODULE hExisting = GetModuleHandleW(L"symsrv.dll");
+    if (hExisting == NULL) {
+		VLDDisable();
+        HMODULE hSymsrv = LoadLibraryW(L"symsrv.dll");
+        if (hSymsrv == NULL) {
+            DWORD error = GetLastError();
+            Report(L"Failed to load symsrv.dll. Error code: %lu\n", error);
+        }
+		VLDEnable();
+    }
+}
+
+SIZE_T VisualLeakDetector::GetLeaksCount() {
     if (m_options & VLD_OPT_VLDOFF) {
         // VLD has been turned off.
         return 0;
     }
 
+	PreloadSymsrvDll();
+
     SIZE_T leaksCount = 0;
     // Generate a memory leak report for each heap in the process.
-    CriticalSectionLocker<> cs(g_heapMapLock);
+    std::scoped_lock lock(g_heapMapLock);
     for (HeapMap::Iterator heapit = m_heapMap->begin(); heapit != m_heapMap->end(); ++heapit) {
-        HANDLE heap = (*heapit).first;
-        UNREFERENCED_PARAMETER(heap);
         heapinfo_t* heapinfo = (*heapit).second;
         leaksCount += getLeaksCount(heapinfo);
     }
@@ -2410,12 +2400,12 @@ SIZE_T VisualLeakDetector::GetThreadLeaksCount(DWORD threadId)
         return 0;
     }
 
+    PreloadSymsrvDll();
+
     SIZE_T leaksCount = 0;
     // Generate a memory leak report for each heap in the process.
-    CriticalSectionLocker<> cs(g_heapMapLock);
+    std::scoped_lock lock(g_heapMapLock);
     for (HeapMap::Iterator heapit = m_heapMap->begin(); heapit != m_heapMap->end(); ++heapit) {
-        HANDLE heap = (*heapit).first;
-        UNREFERENCED_PARAMETER(heap);
         heapinfo_t* heapinfo = (*heapit).second;
         leaksCount += getLeaksCount(heapinfo, threadId);
     }
@@ -2429,9 +2419,11 @@ SIZE_T VisualLeakDetector::ReportLeaks( )
         return 0;
     }
 
+    PreloadSymsrvDll();
+
     // Generate a memory leak report for each heap in the process.
     SIZE_T leaksCount = 0;
-    CriticalSectionLocker<> cs(g_heapMapLock);
+    std::scoped_lock lock(g_heapMapLock);
     bool firstLeak = true;
     Set<blockinfo_t*> aggregatedLeaks;
     for (HeapMap::Iterator heapit = m_heapMap->begin(); heapit != m_heapMap->end(); ++heapit) {
@@ -2450,9 +2442,11 @@ SIZE_T VisualLeakDetector::ReportThreadLeaks( DWORD threadId )
         return 0;
     }
 
+    PreloadSymsrvDll();
+
     // Generate a memory leak report for each heap in the process.
     SIZE_T leaksCount = 0;
-    CriticalSectionLocker<> cs(g_heapMapLock);
+    std::scoped_lock lock(g_heapMapLock);
     bool firstLeak = true;
     Set<blockinfo_t*> aggregatedLeaks;
     for (HeapMap::Iterator heapit = m_heapMap->begin(); heapit != m_heapMap->end(); ++heapit) {
@@ -2471,11 +2465,8 @@ VOID VisualLeakDetector::MarkAllLeaksAsReported( )
         return;
     }
 
-    // Generate a memory leak report for each heap in the process.
-    CriticalSectionLocker<> cs(g_heapMapLock);
+    std::scoped_lock lock(g_heapMapLock);
     for (HeapMap::Iterator heapit = m_heapMap->begin(); heapit != m_heapMap->end(); ++heapit) {
-        HANDLE heap = (*heapit).first;
-        UNREFERENCED_PARAMETER(heap);
         heapinfo_t* heapinfo = (*heapit).second;
         markAllLeaksAsReported(heapinfo);
     }
@@ -2488,11 +2479,8 @@ VOID VisualLeakDetector::MarkThreadLeaksAsReported( DWORD threadId )
         return;
     }
 
-    // Generate a memory leak report for each heap in the process.
-    CriticalSectionLocker<> cs(g_heapMapLock);
+    std::scoped_lock lock(g_heapMapLock);
     for (HeapMap::Iterator heapit = m_heapMap->begin(); heapit != m_heapMap->end(); ++heapit) {
-        HANDLE heap = (*heapit).first;
-        UNREFERENCED_PARAMETER(heap);
         heapinfo_t* heapinfo = (*heapit).second;
         markAllLeaksAsReported(heapinfo, threadId);
     }
@@ -2502,7 +2490,7 @@ void VisualLeakDetector::ChangeModuleState(HMODULE module, bool on)
 {
     ModuleSet::Iterator  moduleit;
 
-    CriticalSectionLocker<> cs(m_modulesLock);
+    std::scoped_lock lock(g_vld.m_loadedModulesMutex);
     moduleit = m_loadedModules->begin();
     while( moduleit != m_loadedModules->end() )
     {
@@ -2598,11 +2586,10 @@ void VisualLeakDetector::GlobalDisableLeakDetection ()
         return;
     }
 
-    CriticalSectionLocker<> cs(m_optionsLock);
+    std::scoped_lock lock(m_optionsLock, m_tlsLock);
     m_options |= VLD_OPT_START_DISABLED;
 
     // Disable memory leak detection for all threads.
-    CriticalSectionLocker<> cstls(m_tlsLock);
     TlsMap::Iterator     tlsit;
     for (tlsit = m_tlsMap->begin(); tlsit != m_tlsMap->end(); ++tlsit) {
         (*tlsit).second->oldFlags = (*tlsit).second->flags;
@@ -2618,12 +2605,11 @@ void VisualLeakDetector::GlobalEnableLeakDetection ()
         return;
     }
 
-    CriticalSectionLocker<> cs(m_optionsLock);
+    std::scoped_lock lock(m_optionsLock, m_tlsLock);
     m_options &= ~VLD_OPT_START_DISABLED;
     m_status &= ~VLD_STATUS_NEVER_ENABLED;
 
     // Enable memory leak detection for all threads.
-    CriticalSectionLocker<> cstls(m_tlsLock);
     TlsMap::Iterator     tlsit;
     for (tlsit = m_tlsMap->begin(); tlsit != m_tlsMap->end(); ++tlsit) {
         (*tlsit).second->oldFlags = (*tlsit).second->flags;
@@ -2639,7 +2625,7 @@ CONST UINT32 OptionsMask = VLD_OPT_AGGREGATE_DUPLICATES | VLD_OPT_MODULE_LIST_IN
 
 UINT32 VisualLeakDetector::GetOptions()
 {
-    CriticalSectionLocker<> cs(m_optionsLock);
+    std::scoped_lock lock(m_optionsLock);
     return m_options & OptionsMask;
 }
 
@@ -2650,7 +2636,7 @@ void VisualLeakDetector::SetOptions(UINT32 option_mask, SIZE_T maxDataDump, UINT
         return;
     }
 
-    CriticalSectionLocker<> cs(m_optionsLock);
+    std::scoped_lock lock(m_optionsLock);
     m_options &= ~OptionsMask; // clear used bits
     m_options |= option_mask & OptionsMask;
 
@@ -2672,7 +2658,7 @@ void VisualLeakDetector::SetModulesList(CONST WCHAR *modules, BOOL includeModule
         return;
     }
 
-    CriticalSectionLocker<> cs(m_optionsLock);
+    std::scoped_lock lock(m_optionsLock);
     wcsncpy_s(m_forcedModuleList, MAXMODULELISTLENGTH, modules, _TRUNCATE);
     _wcslwr_s(m_forcedModuleList, MAXMODULELISTLENGTH);
     if (includeModules)
@@ -2689,7 +2675,7 @@ bool VisualLeakDetector::GetModulesList(WCHAR *modules, UINT size)
         return true;
     }
 
-    CriticalSectionLocker<> cs(m_optionsLock);
+    std::scoped_lock lock(m_optionsLock);
     wcsncpy_s(modules, size, m_forcedModuleList, _TRUNCATE);
     return (m_options & VLD_OPT_MODULE_LIST_INCLUDE) > 0;
 }
@@ -2702,7 +2688,7 @@ void VisualLeakDetector::GetReportFilename(WCHAR *filename)
         return;
     }
 
-    CriticalSectionLocker<> cs(m_optionsLock);
+    std::scoped_lock lock(m_optionsLock);
     wcsncpy_s(filename, MAX_PATH, m_reportFilePath, _TRUNCATE);
 }
 
@@ -2713,7 +2699,7 @@ void VisualLeakDetector::SetReportOptions(UINT32 option_mask, CONST WCHAR *filen
         return;
     }
 
-    CriticalSectionLocker<> cs(m_optionsLock);
+    std::scoped_lock lock(m_optionsLock);
     m_options &= ~(VLD_OPT_REPORT_TO_DEBUGGER | VLD_OPT_REPORT_TO_FILE |
         VLD_OPT_REPORT_TO_STDOUT | VLD_OPT_UNICODE_REPORT); // clear used bits
 
@@ -2749,7 +2735,7 @@ int VisualLeakDetector::SetReportHook(int mode, VLD_REPORT_HOOK pfnNewHook)
         // VLD has been turned off.
         return -1;
     }
-    CriticalSectionLocker<> cs(m_optionsLock);
+    std::scoped_lock lock(m_optionsLock);
     if (mode == VLD_RPTHOOK_INSTALL)
     {
         ReportHookSet::Iterator it = g_pReportHooks->insert(pfnNewHook);
@@ -2845,12 +2831,13 @@ const wchar_t* VisualLeakDetector::GetAllocationResolveResults(void* alloc, BOOL
     if (m_options & VLD_OPT_VLDOFF)
         return NULL;
 
-    CriticalSectionLocker<> cs(g_heapMapLock);
+    std::scoped_lock lock(g_heapMapLock);
     blockinfo_t* info = getAllocationBlockInfo(alloc);
     if (info != NULL)
     {
         int unresolvedFunctionsCount = info->callStack->resolve(showInternalFrames);
-        _ASSERT(unresolvedFunctionsCount == 0);
+        assert(unresolvedFunctionsCount == 0);
+        UNREFERENCED_PARAMETER(unresolvedFunctionsCount);
         return info->callStack->getResolvedCallstack(showInternalFrames);
     }
     return NULL;
@@ -2865,20 +2852,15 @@ int VisualLeakDetector::resolveStacks(heapinfo_t* heapinfo)
         // Found a block which is still in the BlockMap. We've identified a
         // potential memory leak.
         const void* block   = (*blockit).first;
+        assert(block != NULL);
+
         blockinfo_t* info   = (*blockit).second;
         assert(info);
         if (info == NULL)
-        {
             continue;
-        }
 
-        if (info->reported) {
+        if (info->reported)
             continue;
-        }
-
-        // The actual memory address
-        const void* address = block;
-        assert(address != NULL);
 
         if (isDebugCrtAlloc(block, info)) {
             // This block is allocated to a CRT heap, so the block has a CRT
@@ -2920,7 +2902,7 @@ int VisualLeakDetector::ResolveCallstacks()
 
     int unresolvedFunctionsCount = 0;
     // Generate the Callstacks early
-    CriticalSectionLocker<> cs(g_heapMapLock);
+    std::scoped_lock lock(g_heapMapLock);
     for (HeapMap::Iterator heapiter = m_heapMap->begin(); heapiter != m_heapMap->end(); ++heapiter)
     {
         HANDLE heap = (*heapiter).first;
@@ -2957,6 +2939,11 @@ CaptureContext::~CaptureContext() {
 
     if ((m_tls->blockWithoutGuard) && (!IsExcludedModule())) {
         blockinfo_t* pblockInfo = NULL;
+        CallStack* callstack = CallStack::Create();
+        callstack->getStackTrace(g_vld.m_maxTraceFrames, m_tls->context);
+
+		std::scoped_lock lock(g_vld.g_heapMapLock);
+
         if (m_tls->newBlockWithoutGuard == NULL) {
             g_vld.mapBlock(m_tls->heap,
                 m_tls->blockWithoutGuard,
@@ -2977,8 +2964,6 @@ CaptureContext::~CaptureContext() {
                 pblockInfo, m_tls->context);
         }
 
-        CallStack* callstack = CallStack::Create();
-        callstack->getStackTrace(g_vld.m_maxTraceFrames, m_tls->context);
         pblockInfo->callStack.reset(callstack);
     }
 

@@ -26,48 +26,48 @@
     <WholeProgramOptimization Condition="'$(Configuration)'=='Release'">true</WholeProgramOptimization>
     <NumericPlatform Condition="'$(Platform)'=='Win32'">x86</NumericPlatform>
     <NumericPlatform Condition="'$(Platform)'=='x64'">x64</NumericPlatform>
-    <WindowsTargetPlatformVersion>10.0.19041.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
     <ProjectName>vld</ProjectName>
   </PropertyGroup>
   <!-- Import Default Property Sheets -->
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Label="Configuration">
-    <PlatformToolset>v142</PlatformToolset>
+    <PlatformToolset>v143</PlatformToolset>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <!-- Global properties -->
   <PropertyGroup>
     <_ProjectFileVersion>10.0.30128.1</_ProjectFileVersion>
-    <OutDir>$(ProjectDir)bin\$(Platform)\$(Configuration)-v$(PlatformToolsetVersion)\</OutDir>
-    <IntDir>$(ProjectDir)obj\$(Platform)\$(Configuration)-v$(PlatformToolsetVersion)\$(ProjectName)\</IntDir>
     <CodeAnalysisRuleSet Condition="'$(Platform)'=='Win32'">NativeRecommendedRules.ruleset</CodeAnalysisRuleSet>
     <TargetName>$(ProjectName)_$(NumericPlatform)</TargetName>
     <VcpkgEnabled>false</VcpkgEnabled>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <RunCodeAnalysis>false</RunCodeAnalysis>
+    <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <RunCodeAnalysis>false</RunCodeAnalysis>
+    <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <RunCodeAnalysis>false</RunCodeAnalysis>
     <CodeAnalysisRuleSet>NativeRecommendedRules.ruleset</CodeAnalysisRuleSet>
+    <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <RunCodeAnalysis>false</RunCodeAnalysis>
     <CodeAnalysisRuleSet>NativeRecommendedRules.ruleset</CodeAnalysisRuleSet>
+    <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>$(SolutionDir)\lib\;$(SolutionDir)\lib\dbghelp\include;$(SolutionDir)\setup;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)\setup;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PrecompiledHeader>Use</PrecompiledHeader>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <BaseAddress>0x03200000</BaseAddress>
-      <RandomizedBaseAddress>false</RandomizedBaseAddress>
-      <AdditionalLibraryDirectories>$(SolutionDir)\lib\dbghelp\lib\$(PlatformName);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
       <Command>copy "$(OutDir)$(TargetName).lib" "$(OutDir)vld.lib" /y</Command>
@@ -85,7 +85,8 @@
       <WarningLevel>Level4</WarningLevel>
       <StringPooling>false</StringPooling>
       <EnablePREfast>false</EnablePREfast>
-      <DisableSpecificWarnings>4201;4229;4091;4302;4311;4312;4127</DisableSpecificWarnings>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <TreatWarningAsError>true</TreatWarningAsError>
     </ClCompile>
     <Link>
       <AdditionalDependencies>Onecore.lib;psapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -103,8 +104,9 @@
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <WarningLevel>Level4</WarningLevel>
       <StringPooling>false</StringPooling>
-      <DisableSpecificWarnings>4201;4229;4091;4302;4311;4312;4127</DisableSpecificWarnings>
       <EnablePREfast>false</EnablePREfast>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <TreatWarningAsError>true</TreatWarningAsError>
     </ClCompile>
     <Link>
       <AdditionalDependencies>Onecore.lib;psapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -128,8 +130,10 @@
       <BufferSecurityCheck>false</BufferSecurityCheck>
       <FloatingPointModel>Fast</FloatingPointModel>
       <FunctionLevelLinking>false</FunctionLevelLinking>
-      <DisableSpecificWarnings>4201;4229;4091;4302;4311;4312;4127</DisableSpecificWarnings>
       <EnablePREfast>false</EnablePREfast>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
     </ClCompile>
     <Link>
       <OptimizeReferences>true</OptimizeReferences>
@@ -153,8 +157,10 @@
       <FloatingPointModel>Fast</FloatingPointModel>
       <OmitFramePointers>false</OmitFramePointers>
       <FunctionLevelLinking>false</FunctionLevelLinking>
-      <DisableSpecificWarnings>4201;4229;4091;4302;4311;4312;4127</DisableSpecificWarnings>
       <EnablePREfast>false</EnablePREfast>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <WarningLevel>Level4</WarningLevel>
+      <TreatWarningAsError>true</TreatWarningAsError>
     </ClCompile>
     <Link>
       <OptimizeReferences>true</OptimizeReferences>
@@ -187,7 +193,8 @@
     <ClInclude Include="callstack.h" />
     <ClInclude Include="criticalsection.h" />
     <ClInclude Include="crtmfcpatch.h" />
-    <ClInclude Include="dbghelp.h" />
+    <ClInclude Include="loaderlock.h" />
+    <ClInclude Include="vld_dbghelp.h" />
     <ClInclude Include="map.h" />
     <ClInclude Include="ntapi.h" />
     <ClInclude Include="resource.h" />
@@ -207,11 +214,6 @@
   </ItemGroup>
   <ItemGroup>
     <Natvis Include="vld.natvis" />
-  </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\lib\cppformat\format.vcxproj">
-      <Project>{4adfd279-56c6-4b1d-ba9e-b815e81c1b17}</Project>
-    </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

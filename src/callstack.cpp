@@ -27,14 +27,13 @@
 #include "utility.h"    // Provides various utility functions.
 #include "vldheap.h"    // Provides internal new and delete operators.
 #include "vldint.h"     // Provides access to VLD internals.
-#include "cppformat\format.h"
 
 // Imported global variables.
 extern HANDLE             g_currentProcess;
 extern HANDLE             g_currentThread;
-extern CriticalSection    g_heapMapLock;
 extern VisualLeakDetector g_vld;
 extern DbgHelp g_DbgHelp;
+
 
 // Helper function to compare the begin of a string with a substring
 //
@@ -196,14 +195,42 @@ VOID CallStack::clear ()
     m_resolvedLength = 0;
 }
 
+// Helper function to format a pointer-sized hexadecimal value into a buffer
+wchar_t* formatHexAddress(wchar_t* buffer, size_t bufferSize, SIZE_T address) {
+    constexpr size_t hexLength = (sizeof(void*) == 8) ? 16 : 8; 
+    assert(bufferSize > hexLength + 3);
+
+    wchar_t* writePtr = buffer;
+    wchar_t* endPtr = buffer + bufferSize - 1; // Leave space for null terminator
+
+    // Write "0x" prefix
+    *writePtr++ = L'0';
+    *writePtr++ = L'x';
+
+    if (endPtr - writePtr >= static_cast<ptrdiff_t>(hexLength)) {
+        std::swprintf(writePtr, endPtr - writePtr + 1,
+            (hexLength == 16) ? L"%016llX" : L"%08lX",
+            address);
+        writePtr += hexLength;
+    }
+
+    // Clamp write pointer to endPtr and null-terminate
+    if (writePtr > endPtr) {
+        writePtr = endPtr;
+    }
+    *writePtr = L'\0';
+
+    return buffer;
+}
+
 LPCWSTR CallStack::getFunctionName(SIZE_T programCounter, DWORD64& displacement64,
-    SYMBOL_INFO* functionInfo, CriticalSectionLocker<DbgHelp>& locker) const
+    SYMBOL_INFO* functionInfo, std::scoped_lock<DbgHelp>& locker) const
 {
     // Initialize structures passed to the symbol handler.
     functionInfo->SizeOfStruct = sizeof(SYMBOL_INFO);
     functionInfo->MaxNameLen = MAX_SYMBOL_NAME_LENGTH;
 
-    // Try to get the name of the function containing this program
+    // Try to get the name of the function containing this program - we have the dbghelp lock + we get the loader lock
     // counter address.
     displacement64 = 0;
     LPCWSTR functionName;
@@ -212,10 +239,8 @@ LPCWSTR CallStack::getFunctionName(SIZE_T programCounter, DWORD64& displacement6
         functionName = functionInfo->Name;
     }
     else {
-        // GetFormattedMessage( GetLastError() );
-        fmt::WArrayWriter wf(functionInfo->Name, MAX_SYMBOL_NAME_LENGTH);
-        wf.write(L"" ADDRESSCPPFORMAT, programCounter);
-        functionName = wf.c_str();
+        formatHexAddress(functionInfo->Name, MAX_SYMBOL_NAME_LENGTH, programCounter);
+        functionName = functionInfo->Name;
         displacement64 = 0;
     }
     return functionName;
@@ -224,9 +249,10 @@ LPCWSTR CallStack::getFunctionName(SIZE_T programCounter, DWORD64& displacement6
 DWORD CallStack::resolveFunction(SIZE_T programCounter, IMAGEHLP_LINEW64* sourceInfo, DWORD displacement,
     LPCWSTR functionName, LPWSTR stack_line, DWORD stackLineSize) const
 {
+    constexpr wchar_t moduleNameNotFound[] = L"(Module name unavailable)";
     WCHAR callingModuleName[260];
     HMODULE hCallingModule = GetCallingModule(programCounter);
-    LPWSTR moduleName = L"(Module name unavailable)";
+    LPWSTR moduleName = const_cast<LPWSTR>(moduleNameNotFound);
     if (hCallingModule &&
         GetModuleFileName(hCallingModule, callingModuleName, _countof(callingModuleName)) > 0)
     {
@@ -239,39 +265,50 @@ DWORD CallStack::resolveFunction(SIZE_T programCounter, IMAGEHLP_LINEW64* source
             moduleName = callingModuleName;
     }
 
-    fmt::WArrayWriter w(stack_line, stackLineSize);
+    // Define a limited range for writing into the buffer
+    wchar_t* writePtr = stack_line;
+    wchar_t* endPtr = stack_line + stackLineSize - 1; // Leave space for null terminator
+
     // Display the current stack frame's information.
     if (sourceInfo)
     {
         if (displacement == 0)
         {
-            w.write(L"    {} ({}): {}!{}()\n",
-                sourceInfo->FileName, sourceInfo->LineNumber, moduleName,
-                functionName);
+            writePtr += std::swprintf(writePtr, endPtr - writePtr + 1,
+                L"    %s (%d): %s!%s()\n",
+                sourceInfo->FileName, sourceInfo->LineNumber, moduleName, functionName);
         }
         else
         {
-            w.write(L"    {} ({}): {}!{}() + 0x{:X} bytes\n",
-                sourceInfo->FileName, sourceInfo->LineNumber, moduleName,
-                functionName, displacement);
+            writePtr += std::swprintf(writePtr, endPtr - writePtr + 1,
+                L"    %s (%d): %s!%s() + 0x%X bytes\n",
+                sourceInfo->FileName, sourceInfo->LineNumber, moduleName, functionName, displacement);
         }
     }
     else
     {
         if (displacement == 0)
         {
-            w.write(L"    {}!{}()\n",
+            writePtr += std::swprintf(writePtr, endPtr - writePtr + 1,
+                L"    %s!%s()\n",
                 moduleName, functionName);
         }
         else
         {
-            w.write(L"    {}!{}() + 0x{:X} bytes\n",
+            writePtr += std::swprintf(writePtr, endPtr - writePtr + 1,
+                L"    %s!%s() + 0x%X bytes\n",
                 moduleName, functionName, displacement);
         }
     }
-    DWORD NumChars = (DWORD)w.size();
-    stack_line[NumChars] = '\0';
-    return NumChars;
+
+    if (writePtr > endPtr) {
+        writePtr = endPtr; // Clamp to avoid overflow
+    }
+
+    // Null-terminate the string
+    *writePtr = L'\0';
+    // Return the number of characters written (excluding null terminator)
+    return static_cast<DWORD>(writePtr - stack_line);
 }
 
 
@@ -294,7 +331,7 @@ bool CallStack::isCrtStartupAlloc()
     sourceInfo.SizeOfStruct = sizeof(IMAGEHLP_LINE64);
 
     BYTE symbolBuffer[sizeof(SYMBOL_INFO) + MAX_SYMBOL_NAME_SIZE] = { 0 };
-    CriticalSectionLocker<DbgHelp> locker(g_DbgHelp);
+    std::scoped_lock<DbgHelp> locker(g_DbgHelp);
 
     // Iterate through each frame in the call stack.
     for (UINT32 frame = 0; frame < m_size; frame++) {
@@ -394,7 +431,7 @@ int CallStack::resolve(BOOL showInternalFrames)
     static WCHAR stack_line[MAXREPORTLENGTH + 1] = L"";
     bool isPrevFrameInternal = false;
     DWORD NumChars = 0;
-    CriticalSectionLocker<DbgHelp> locker(g_DbgHelp);
+    std::scoped_lock<DbgHelp> locker(g_DbgHelp);
 
     const size_t max_line_length = MAXREPORTLENGTH + 1;
     m_resolvedCapacity = m_size * max_line_length;
@@ -521,6 +558,7 @@ UINT CallStack::isCrtStartupFunction( LPCWSTR functionName ) const
     if (beginWith(functionName, len, L"_malloc_crt")
         || beginWith(functionName, len, L"_calloc_crt")
         || endWith(functionName, len, L"CRT_INIT")
+        // initialization of static variables
         || endWith(functionName, len, L"initterm_e")
         || beginWith(functionName, len, L"_cinit")
         || beginWith(functionName, len, L"std::`dynamic initializer for '")
@@ -543,8 +581,10 @@ UINT CallStack::isCrtStartupFunction( LPCWSTR functionName ) const
         || (wcscmp(functionName, L"_Getctype") == 0)
         || (wcscmp(functionName, L"std::_Facet_Register") == 0)
         || endWith(functionName, len, L">::_Getcat")
-        // Added fixes
+        // initialization of static variables
         || endWith(functionName, len, L"initterm")
+        // initialization of thread_local variables
+        || beginWith(functionName, len, L"__dyn_tls_init")
         ) {
         return CALLSTACK_STATUS_STARTUPCRT;
     }
@@ -780,15 +820,14 @@ VOID SafeCallStack::getStackTrace (UINT32 maxdepth, const context_t& context)
     frame.AddrFrame.Mode      = AddrModeFlat;
     frame.Virtual             = TRUE;
 
-    CriticalSectionLocker<> cs(g_heapMapLock);
-    CriticalSectionLocker<DbgHelp> locker(g_DbgHelp);
+    std::scoped_lock lock(g_vld.GetHeapMapLock(), g_DbgHelp);
 
     // Walk the stack.
     while (count < maxdepth) {
         count++;
         DbgTrace(L"dbghelp32.dll %i: StackWalk64\n", GetCurrentThreadId());
         if (!g_DbgHelp.StackWalk64(architecture, g_currentProcess, g_currentThread, &frame, &currentContext, NULL,
-            SymFunctionTableAccess64, SymGetModuleBase64, NULL, locker)) {
+            SymFunctionTableAccess64, SymGetModuleBase64, NULL)) {
                 // Couldn't trace back through any more frames.
                 break;
         }

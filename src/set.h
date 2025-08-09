@@ -228,7 +228,7 @@ public:
         //
         Tk& operator * ()
         {
-            return m_node->key;
+            return this->m_node->key;
         }
     };
 

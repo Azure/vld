@@ -1,89 +1,56 @@
 #pragma once
 
 #define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
 #include <windows.h>
+#include <cassert>
+#include <mutex>
 
-// you should consider CriticalSectionLocker<> whenever possible instead of
-// directly working with CriticalSection class - it is safer
-class CriticalSection
+namespace vld
 {
-public:
-	void Initialize()
-	{
-		m_critRegion.OwningThread = 0;
-		__try {
-			InitializeCriticalSection(&m_critRegion);
-		} __except (GetExceptionCode() == STATUS_NO_MEMORY ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
-			assert(FALSE);
-		}
-	}
-	void Delete()		{ DeleteCriticalSection(&m_critRegion); }
+    // A simple RAII-based critical section wrapper
+    class criticalsection
+    {
+    public:
+        criticalsection() noexcept
+        {
+            InitializeCriticalSection(&m_critRegion);
+        }
 
-	// enter the section
-	void Enter()
-	{
-		ULONG_PTR ownerThreadId = (ULONG_PTR)m_critRegion.OwningThread;
-		UNREFERENCED_PARAMETER(ownerThreadId);
-		EnterCriticalSection(&m_critRegion);
-	}
+        ~criticalsection() noexcept
+        {
+            DeleteCriticalSection(&m_critRegion);
+        }
 
-	bool IsLocked()
-	{
-		return (m_critRegion.OwningThread != NULL);
-	}
+        criticalsection(const criticalsection&) = delete;
+        criticalsection& operator=(const criticalsection&) = delete;
+        criticalsection(criticalsection&&) = delete;
+        criticalsection& operator=(criticalsection&&) = delete;
 
-	bool IsLockedByCurrentThread()
-	{
-		if (m_critRegion.OwningThread == NULL)
-			return false;
-		HANDLE ownerThreadId = (HANDLE)GetCurrentThreadId();
-		return m_critRegion.OwningThread == ownerThreadId;
-	}
+        void lock() noexcept
+        {
+            EnterCriticalSection(&m_critRegion);
+        }
 
-	// try enter the section
-	bool TryEnter()		{ return (TryEnterCriticalSection(&m_critRegion) != 0); }
+        bool try_lock() noexcept
+        {
+            return TryEnterCriticalSection(&m_critRegion) != 0;
+        }
 
-	// leave the critical section
-	void Leave()		{ LeaveCriticalSection(&m_critRegion); }
+        void unlock() noexcept
+        {
+            LeaveCriticalSection(&m_critRegion);
+        }
 
-private:
-	CRITICAL_SECTION m_critRegion;
-};
+        bool is_locked_by_current_thread() const noexcept
+        {
+            // yes, it needs to be compared with the id and not the handle: 
+            // https://stackoverflow.com/questions/12675301/why-is-the-owningthread-member-of-critical-section-of-type-handle-when-it-is-de
+            return m_critRegion.OwningThread == ULongToHandle(GetCurrentThreadId());
+        }
 
-template<typename T = CriticalSection>
-class CriticalSectionLocker
-{
-public:
-	CriticalSectionLocker(T& cs)
-		: m_leave(false)
-		, m_critSect(cs)
-	{
-		m_critSect.Enter();
-	}
-
-	~CriticalSectionLocker()
-	{
-		LeaveLock();
-	}
-
-	void Leave()
-	{
-		LeaveLock();
-	}
-
-private:
-	void LeaveLock()
-	{
-		if (!m_leave)
-		{
-			m_critSect.Leave();
-			m_leave = true;
-		}
-	}
-	CriticalSectionLocker(); // not allowed
-	CriticalSectionLocker( const CriticalSectionLocker & ); // not allowed
-	CriticalSectionLocker & operator=( const CriticalSectionLocker & ); // not allowed
-	bool m_leave;
-    T& m_critSect;
-};
+    private:
+		// see this discussion on using std::mutex, CRITICAL_SECTION, and SRWLOCK:
+        // https://stoyannk.wordpress.com/2016/04/30/msvc-mutex-is-slower-than-you-might-expect/
+        CRITICAL_SECTION m_critRegion;
+    };
+}

@@ -1,10 +1,13 @@
 obj/
+
 Debug/
-Debug (Unicode)/
+Debug(Release)/
+Debug(Release)_StaticCRT/
 Release/
-Release (Unicode)/
+
 Win32/
 x64/
+
 *.vcxproj.user
 *.*sdf
 *.suo
@@ -22,3 +25,9 @@ src/bin/vld.ini
 *.VC.db
 *.aps
 .vs/
+packages/
+TestResults/
+build/
+
+!setup/dbghelp/x64/
+!lib/sdl2/lib/x64/

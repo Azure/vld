@@ -85,6 +85,8 @@ public:
     static void* __cdecl crtd__aligned_recalloc (void *memblock, size_t num, size_t size, size_t alignment);
     static void* __cdecl crtd__aligned_offset_recalloc (void *memblock, size_t num, size_t size, size_t alignment, size_t offset);
 
+#pragma warning (push)
+#pragma warning (disable:4201) // warning C4201: nonstandard extension used: nameless struct/union
     union
     {
         void* function[28];
@@ -120,6 +122,7 @@ public:
             void* pcrtd_vector_new;
         };
     };
+#pragma warning (pop)
 };
 
 template<int MFCVersion, bool debug = false>
@@ -141,6 +144,8 @@ public:
     static void* __cdecl mfcud__scalar_new_dbg_4p(size_t size, int type, char const *file, int line);
     static void* __cdecl mfcud__scalar_new_dbg_3p(size_t size, char const *file, int line);
 
+#pragma warning (push)
+#pragma warning (disable:4201) // warning C4201: nonstandard extension used: nameless struct/union
     union
     {
         void* function[12];
@@ -161,6 +166,7 @@ public:
             void* pmfcud__vector_new_dbg_3p;
         };
     };
+#pragma warning (pop)
 };
 
 ////////////////////////////////////////////////////////////////////////////////

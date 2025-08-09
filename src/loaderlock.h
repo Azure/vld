@@ -5,6 +5,8 @@
 #include <windows.h>
 #include "ntapi.h"
 
+// more details: https://www.geoffchappell.com/studies/windows/win32/ntdll/api/ldrapi/lockloaderlock.htm 
+
 //
 // LdrLockLoaderLock Flags
 //

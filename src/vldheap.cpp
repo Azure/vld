@@ -26,13 +26,12 @@
 #define VLDBUILD     // Declares that we are building Visual Leak Detector.
 #include "ntapi.h"   // Provides access to NT APIs.
 #include "vldheap.h" // Provides access to VLD's internal heap data structures.
-#include "criticalsection.h"
 #undef new           // Do not map "new" to VLD's new operator in this file
 
 // Global variables.
-vldblockheader_t *g_vldBlockList = NULL; // List of internally allocated blocks on VLD's private heap.
+vldblockheader_t *g_vldBlockList = nullptr; // List of internally allocated blocks on VLD's private heap.
 HANDLE            g_vldHeap;             // VLD's private heap.
-CriticalSection   g_vldHeapLock;         // Serializes access to VLD's private heap.
+bool g_vldHeapActive = false;
 
 // Local helper functions.
 static inline void* vldnew (size_t size, const char *file, int line);
@@ -52,7 +51,7 @@ static inline void vlddelete (void *block);
 //  Return Value:
 //
 //    If the allocation succeeds, a pointer to the allocated memory block is
-//    returned. If the allocation fails, NULL is returned.
+//    returned. If the allocation fails, nullptr is returned.
 //
 void* operator new (size_t size, const char *file, int line)
 {
@@ -73,7 +72,7 @@ void* operator new (size_t size, const char *file, int line)
 //  Return Value:
 //
 //    If the allocation succeeds, a pointer to the allocated memory block is
-//    returned. If the allocation fails, NULL is returned.
+//    returned. If the allocation fails, nullptr is returned.
 //
 void* operator new [] (size_t size, const char *file, int line)
 {
@@ -132,6 +131,16 @@ void operator delete [] (void *block, const char *, int)
     vlddelete(block);
 }
 
+// get_heap_mutex - Returns a reference to the mutex used to serialize access to
+//  the VLD's private heap. Wrapping this inside a function ensures that the mutex
+//  is initialized before it is used, but not during static initialization of the   
+//  entire program.
+vld::criticalsection& get_heap_mutex()
+{
+    static vld::criticalsection heap_mutex;
+    return heap_mutex;
+}
+
 // vldnew - Local helper function that actually allocates memory from VLD's
 //   private heap. Prepends a header, which is used for bookkeeping information
 //   that allows VLD to detect and report internal memory leaks, to the returned
@@ -148,16 +157,20 @@ void operator delete [] (void *block, const char *, int)
 //  Return Value:
 //
 //    If the memory allocation succeeds, a pointer to the allocated memory
-//    block is returned. If the allocation fails, NULL is returned.
+//    block is returned. If the allocation fails, nullptr is returned.
 //
 void* vldnew (size_t size, const char *file, int line)
 {
-    vldblockheader_t *header = (vldblockheader_t*)RtlAllocateHeap(g_vldHeap, 0x0, size + sizeof(vldblockheader_t));
-    static SIZE_T     serialnumber = 0;
+    assert(size > 0);
+    assert(file != nullptr);
+    assert(line > 0);
 
-    if (header == NULL) {
+    auto *header = reinterpret_cast<vldblockheader_t*>(RtlAllocateHeap(g_vldHeap, 0x0, size + sizeof(vldblockheader_t)));
+    static size_t serialnumber = 0;
+
+    if (header == nullptr) {
         // Out of memory.
-        return NULL;
+        return nullptr;
     }
 
     // Fill in the block's header information.
@@ -167,16 +180,16 @@ void* vldnew (size_t size, const char *file, int line)
     header->size         = size;
 
     // Link the block into the block list.
-    CriticalSectionLocker<> cs(g_vldHeapLock);
+	std::scoped_lock lock(get_heap_mutex());
     header->next         = g_vldBlockList;
-    if (header->next != NULL) {
+    if (header->next != nullptr) {
         header->next->prev = header;
     }
-    header->prev         = NULL;
+    header->prev         = nullptr;
     g_vldBlockList       = header;
 
     // Return a pointer to the beginning of the data section of the block.
-    return (void*)VLDBLOCKDATA(header);
+    return static_cast<void*>(VLDBLOCKDATA(header));
 }
 
 // vlddelete - Local helper function that actually frees memory back to VLD's
@@ -190,14 +203,13 @@ void* vldnew (size_t size, const char *file, int line)
 //
 void vlddelete (void *block)
 {
-    if (block == NULL)
+    if (block == nullptr)
         return;
 
-    BOOL              freed;
     vldblockheader_t *header = VLDBLOCKHEADER((LPVOID)block);
 
     // Unlink the block from the block list.
-    CriticalSectionLocker<> cs(g_vldHeapLock);
+    std::scoped_lock lock(get_heap_mutex());
     if (header->prev) {
         header->prev->next = header->next;
     }
@@ -210,6 +222,7 @@ void vlddelete (void *block)
     }
 
     // Free the block.
-    freed = RtlFreeHeap(g_vldHeap, 0x0, header);
+    bool freed = RtlFreeHeap(g_vldHeap, 0x0, header);
     assert(freed);
+    UNREFERENCED_PARAMETER(freed);
 }

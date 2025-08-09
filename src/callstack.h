@@ -128,7 +128,7 @@ protected:
     UINT isCrtStartupFunction( LPCWSTR functionName ) const;
     bool isIgnoreFunction(LPCWSTR functionName) const;
     LPCWSTR getFunctionName(SIZE_T programCounter, DWORD64& displacement64,
-        SYMBOL_INFO* functionInfo, CriticalSectionLocker<DbgHelp>& locker) const;
+        SYMBOL_INFO* functionInfo, std::scoped_lock<DbgHelp>& locker) const;
     DWORD resolveFunction(SIZE_T programCounter, IMAGEHLP_LINEW64* sourceInfo, DWORD displacement,
         LPCWSTR functionName, LPWSTR stack_line, DWORD stackLineSize) const;
 

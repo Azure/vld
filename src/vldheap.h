@@ -90,12 +90,12 @@ typedef char checkDebugHeapBlockSize[
 // pretended to them.
 struct vldblockheader_t
 {
-    struct vldblockheader_t *next;          // Pointer to the next block in the list of internally allocated blocks.
-    struct vldblockheader_t *prev;          // Pointer to the preceding block in the list of internally allocated blocks.
-    const char              *file;          // Name of the file where this block was allocated.
-    int                      line;          // Line number within the above file where this block was allocated.
-    size_t                   size;          // The size of this memory block, not including this header.
-    size_t                   serialNumber;  // Each block is assigned a unique serial number, starting from zero.
+    vldblockheader_t* next{};          // Pointer to the next block in the list of internally allocated blocks.
+    vldblockheader_t* prev{};          // Pointer to the preceding block in the list of internally allocated blocks.
+    const char* file{};          // Name of the file where this block was allocated.
+    int line{};          // Line number within the above file where this block was allocated.
+    size_t size{};          // The size of this memory block, not including this header.
+    size_t serialNumber{};  // Each block is assigned a unique serial number, starting from zero.
 };
 
 // Data-to-Header and Header-to-Data conversion
@@ -115,3 +115,5 @@ void* operator new [] (size_t size, const char *file, int line);
 // All calls to the new operator from within VLD are mapped to the version of
 // new that allocates from VLD's private heap.
 #define new new(__FILE__, __LINE__)
+
+extern bool g_vldHeapActive;

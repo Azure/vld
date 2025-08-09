@@ -1,0 +1,108 @@
+name: TestDevelopment
+
+on:
+  push:
+    branches: [ "dev" ]
+env:
+  # Path to the solution file relative to the root of the project.
+  SOLUTION_FILE_PATH: ./vld.sln
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Install GitVersion
+      uses: gittools/actions/gitversion/setup@v3
+      with:
+        versionSpec: '6.0.5'
+
+    - name: Determine Version
+      uses: gittools/actions/gitversion/execute@v3
+
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v2
+      
+    - name: Restore NuGet packages
+      working-directory: ${{env.GITHUB_WORKSPACE}}
+      run: nuget restore ${{env.SOLUTION_FILE_PATH}}
+
+    - name: Setup VSTest.exe
+      uses: Malcolmnixon/Setup-VSTest@v4
+
+    - name: Update version number in version.h
+      shell: pwsh
+      run: |
+        ./update_version.ps1
+
+    - name: Build Win64 VLD
+      working-directory: ${{env.GITHUB_WORKSPACE}}
+      run: msbuild /m /p:Configuration="Release" /p:Platform=x64 -target:vld ${{env.SOLUTION_FILE_PATH}}
+
+    - name: Build Win64 Tests
+      working-directory: ${{env.GITHUB_WORKSPACE}}
+      run: msbuild /m /p:Configuration="Debug(Release)" /p:Platform=x64 ${{env.SOLUTION_FILE_PATH}}
+
+    - name: Build Win64 StaticCRT Tests
+      working-directory: ${{env.GITHUB_WORKSPACE}}
+      run: msbuild /m /p:Configuration="Debug(Release)_StaticCRT" /p:Platform=x64 ${{env.SOLUTION_FILE_PATH}}
+
+    - name: Test Win64
+      run: |
+        vstest.console '.\bin\tests\x64\debug(release)\vld_tests.dll' /InIsolation /Logger:trx
+        vstest.console '.\bin\tests\x64\debug(release)\threads.dll' /InIsolation /Logger:trx
+        vstest.console '.\bin\tests\x64\debug(release)\vld_unload.dll' /InIsolation /Logger:trx
+        vstest.console '.\bin\tests\x64\debug(release)_staticcrt\vld_tests.dll' /InIsolation /Logger:trx
+        vstest.console '.\bin\tests\x64\debug(release)_staticcrt\threads.dll' /InIsolation /Logger:trx
+        vstest.console '.\bin\tests\x64\debug(release)_staticcrt\vld_unload.dll' /InIsolation /Logger:trx
+
+    - name: Build Win32 VLD
+      working-directory: ${{env.GITHUB_WORKSPACE}}
+      run: msbuild /m /p:Configuration="Release" /p:Platform=Win32 -target:vld ${{env.SOLUTION_FILE_PATH}}
+
+    - name: Build Win32 Tests
+      working-directory: ${{env.GITHUB_WORKSPACE}}
+      run: msbuild /m /p:Configuration="Debug(Release)" /p:Platform=Win32 ${{env.SOLUTION_FILE_PATH}}
+
+    - name: Build Win32 StaticCRT Tests
+      working-directory: ${{env.GITHUB_WORKSPACE}}
+      run: msbuild /m /p:Configuration="Debug(Release)_StaticCRT" /p:Platform=Win32 ${{env.SOLUTION_FILE_PATH}}
+
+    - name: Test Win32
+      run: |
+        vstest.console '.\bin\tests\win32\debug(release)\vld_tests.dll' /InIsolation /Logger:trx
+        vstest.console '.\bin\tests\win32\debug(release)\threads.dll' /InIsolation /Logger:trx
+        vstest.console '.\bin\tests\win32\debug(release)\vld_unload.dll' /InIsolation /Logger:trx
+        vstest.console '.\bin\tests\win32\debug(release)_staticcrt\vld_tests.dll' /InIsolation /Logger:trx
+        vstest.console '.\bin\tests\win32\debug(release)_staticcrt\threads.dll' /InIsolation /Logger:trx
+        vstest.console '.\bin\tests\win32\debug(release)_staticcrt\vld_unload.dll' /InIsolation /Logger:trx
+
+    - name: Publish Test Results
+      uses: EnricoMi/publish-unit-test-result-action/windows@v2
+      if: always()
+      with:
+        files: |
+          TestResults\**\*.trx
+        comment_mode: off
+        
+    - name: Create installer
+      uses: Minionguyjpro/Inno-Setup-Action@v1.2.4
+      with:
+        path: ./setup/vld-setup.iss
+        options: /V0 /O+ /DMyAppVersion=${{ env.GitVersion_MajorMinorPatch }}
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: Installer
+        path: ./setup/Output/vld-${{ env.GitVersion_MajorMinorPatch }}-setup.exe
+        retention-days: 1

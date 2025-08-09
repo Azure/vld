@@ -89,10 +89,13 @@
     <ClInclude Include="vldallocator.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="dbghelp.h">
+    <ClInclude Include="vld_dbghelp.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\setup\version.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="loaderlock.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

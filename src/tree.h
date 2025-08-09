@@ -30,7 +30,6 @@ Applications should never include this header."
 #endif
 
 #include "vldheap.h" // Provides internal new and delete operators.
-#include "criticalsection.h"
 
 #define TREE_DEFAULT_RESERVE 32 // By default, trees reserve enough space, in advance, for this many nodes.
 
@@ -84,7 +83,6 @@ public:
     Tree ()
     {
         m_freelist   = NULL;
-        m_lock.Initialize();
         m_nil.color  = black;
         m_nil.key    = T();
         m_nil.left   = &m_nil;
@@ -110,7 +108,7 @@ public:
         chunk_t *temp;
 
         // Free all the chunks in the chunk list.
-        m_lock.Enter();
+		std::scoped_lock lock(m_lock);
         cur = m_store;
         while (cur != NULL) {
             temp = cur;
@@ -118,9 +116,6 @@ public:
             delete [] temp->nodes;
             delete temp;
         }
-        m_lock.Leave();
-
-        m_lock.Delete();
     }
 
     // operator = - Assignment operator. For efficiency, we want to avoid ever
@@ -146,7 +141,7 @@ public:
     {
         node_t *cur;
 
-        CriticalSectionLocker<> cs(m_lock);
+		std::scoped_lock lock(m_lock);
         if (m_root == &m_nil) {
             return NULL;
         }
@@ -177,7 +172,7 @@ public:
         node_t *erasure;
         node_t *sibling;
 
-        CriticalSectionLocker<> cs(m_lock);
+        std::scoped_lock lock(m_lock);
 
         if ((node->left == &m_nil) || (node->right == &m_nil)) {
             // The node to be erased has less than two children. It can be directly
@@ -317,7 +312,7 @@ public:
         node_t *node;
 
         // Find the node to erase.
-        CriticalSectionLocker<> cs(m_lock);
+        std::scoped_lock lock(m_lock);
         node = m_root;
         while (node != &m_nil) {
             if (node->key < key) {
@@ -353,7 +348,7 @@ public:
     {
         node_t *cur;
 
-        CriticalSectionLocker<> cs(m_lock);
+        std::scoped_lock lock(m_lock);
         cur = m_root;
         while (cur != &m_nil) {
             if (cur->key < key) {
@@ -388,7 +383,7 @@ public:
     //
     typename Tree::node_t* insert (const T &key)
     {
-        CriticalSectionLocker<> cs(m_lock);
+        std::scoped_lock lock(m_lock);
 
         // Find the location where the new node should be inserted..
         node_t  *cur = m_root;
@@ -508,7 +503,7 @@ public:
         if (node == NULL)
             return NULL;
 
-        CriticalSectionLocker<> cs(m_lock);
+        std::scoped_lock lock(m_lock);
         node_t* cur;
         if (node->right != &m_nil) {
             // 'node' has a right child. Successor is the far left node in
@@ -567,7 +562,7 @@ public:
             return NULL;
         }
 
-        CriticalSectionLocker<> cs(m_lock);
+        std::scoped_lock lock(m_lock);
         node_t* cur;
         if (node->left != &m_nil) {
             // 'node' has left child. Predecessor is the far right node in the
@@ -642,7 +637,7 @@ public:
             }
         }
 
-        CriticalSectionLocker<> cs(m_lock);
+        std::scoped_lock lock(m_lock);
         if (m_freelist == NULL) {
             // Allocate additional storage.
             // Link a new chunk into the chunk list.
@@ -747,7 +742,7 @@ private:
 
     // Private data members.
     node_t                   *m_freelist;  // Pointer to the list of free nodes (reserve storage).
-    mutable CriticalSection   m_lock;      // Protects the tree's integrity against concurrent accesses.
+    mutable vld::criticalsection m_lock;      // Protects the tree's integrity against concurrent accesses.
     node_t                    m_nil;       // The tree's nil node. All leaf nodes point to this.
     size_t                    m_reserve;   // The size (in nodes) of the chunks of reserve storage.
     node_t                   *m_root;      // Pointer to the tree's root node.
