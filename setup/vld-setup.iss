@@ -6,7 +6,7 @@
 #define MyAppPublisher "VLD Team"
 #define MyAppURL "http://vld.codeplex.com/"
 #define MyAppRegKey "Software\Visual Leak Detector"
-#define ConfigType "Debug"
+#define ConfigType "Release"
 #define PlatformVersion "v143"
 
 [Setup]
