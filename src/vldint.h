@@ -216,6 +216,7 @@ private:
     tls_t *m_tls;
     BOOL m_bFirst;
     const context_t& m_context;
+    CriticalSectionLocker<>* m_Locker;
 };
 
 class CallStack;
@@ -317,10 +318,10 @@ private:
     BOOL   enabled ();
     SIZE_T eraseDuplicates (const BlockMap::Iterator &element, Set<blockinfo_t*> &aggregatedLeak);
     tls_t* getTls ();
-    VOID   mapBlock (HANDLE heap, LPCVOID mem, SIZE_T size, bool crtalloc, bool ucrt, DWORD threadId, blockinfo_t* &pblockInfo);
+    VOID   mapBlock (HANDLE heap, LPCVOID mem, SIZE_T size, bool crtalloc, bool ucrt, DWORD threadId, CallStack* newCallstack);
     VOID   mapHeap (HANDLE heap);
     VOID   remapBlock (HANDLE heap, LPCVOID mem, LPCVOID newmem, SIZE_T size,
-        bool crtalloc, bool ucrt, DWORD threadId, blockinfo_t* &pblockInfo, const context_t &context);
+        bool crtalloc, bool ucrt, DWORD threadId, CallStack* newCallstack, const context_t &context);
     VOID   reportConfig ();
     static bool   isDebugCrtAlloc(LPCVOID block, blockinfo_t* info);
     SIZE_T reportHeapLeaks (HANDLE heap);

@@ -2,12 +2,12 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "Visual Leak Detector"
-#define MyAppVersion "2.5.9"
+#define MyAppVersion "2.5.10"
 #define MyAppPublisher "VLD Team"
 #define MyAppURL "http://vld.codeplex.com/"
 #define MyAppRegKey "Software\Visual Leak Detector"
-#define ConfigType "Release"
-#define PlatformVersion "v142"
+#define ConfigType "Debug"
+#define PlatformVersion "v143"
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application.
@@ -27,13 +27,12 @@ LicenseFile=license-free.txt
 OutputBaseFilename=vld-{#MyAppVersion}-setup
 Compression=lzma
 SolidCompression=True
-MinVersion=0,5.01
+MinVersion=0,6.1
 ; Tell Windows Explorer to reload the environment
 ChangesEnvironment=yes
 AllowNoIcons=yes
 DisableDirPage=auto
 DirExistsWarning=no
-WizardImageFile=compiler:WizModernImage-IS.bmp
 WizardSmallImageFile=WizSmallImage.bmp
 
 [Languages]

@@ -1365,14 +1365,13 @@ tls_t* VisualLeakDetector::getTls ()
 //
 //    None.
 //
-VOID VisualLeakDetector::mapBlock (HANDLE heap, LPCVOID mem, SIZE_T size, bool debugcrtalloc, bool ucrt, DWORD threadId, blockinfo_t* &pblockInfo)
+VOID VisualLeakDetector::mapBlock (HANDLE heap, LPCVOID mem, SIZE_T size, bool debugcrtalloc, bool ucrt, DWORD threadId, CallStack* newCallstack)
 {
     CriticalSectionLocker<> cs(g_heapMapLock);
 
     // Record the block's information.
     blockinfo_t* blockinfo = new blockinfo_t();
-    blockinfo->callStack = NULL;
-    pblockInfo = blockinfo;
+    blockinfo->callStack.reset(newCallstack);
     blockinfo->threadId = threadId;
     blockinfo->serialNumber = m_requestCurr++;
     blockinfo->size = size;
@@ -1581,7 +1580,7 @@ VOID VisualLeakDetector::unmapHeap (HANDLE heap)
 //    None.
 //
 VOID VisualLeakDetector::remapBlock (HANDLE heap, LPCVOID mem, LPCVOID newmem, SIZE_T size,
-    bool debugcrtalloc, bool ucrt, DWORD threadId, blockinfo_t* &pblockInfo, const context_t &context)
+    bool debugcrtalloc, bool ucrt, DWORD threadId, CallStack* newCallstack, const context_t &context)
 {
     CriticalSectionLocker<> cs(g_heapMapLock);
 
@@ -1589,7 +1588,7 @@ VOID VisualLeakDetector::remapBlock (HANDLE heap, LPCVOID mem, LPCVOID newmem, S
         // The block was not reallocated in-place. Instead the old block was
         // freed and a new block allocated to satisfy the new size.
         unmapBlock(heap, mem, context);
-        mapBlock(heap, newmem, size, debugcrtalloc, ucrt, threadId, pblockInfo);
+        mapBlock(heap, newmem, size, debugcrtalloc, ucrt, threadId, newCallstack);
         return;
     }
 
@@ -1601,7 +1600,7 @@ VOID VisualLeakDetector::remapBlock (HANDLE heap, LPCVOID mem, LPCVOID newmem, S
         // block has also not been mapped to a blockinfo_t entry yet either,
         // so treat this reallocation as a brand-new allocation (this will
         // also map the heap to a new block map).
-        mapBlock(heap, newmem, size, debugcrtalloc, ucrt, threadId, pblockInfo);
+        mapBlock(heap, newmem, size, debugcrtalloc, ucrt, threadId, newCallstack);
         return;
     }
 
@@ -1611,17 +1610,14 @@ VOID VisualLeakDetector::remapBlock (HANDLE heap, LPCVOID mem, LPCVOID newmem, S
     if (blockit == blockmap->end()) {
         // The block hasn't been mapped to a blockinfo_t entry yet.
         // Treat this reallocation as a new allocation.
-        mapBlock(heap, newmem, size, debugcrtalloc, ucrt, threadId, pblockInfo);
+        mapBlock(heap, newmem, size, debugcrtalloc, ucrt, threadId, newCallstack);
         return;
     }
 
     // Found the blockinfo_t entry for this block. Update it with
     // a new callstack and new size.
     blockinfo_t* info = (*blockit).second;
-    if (info->callStack)
-    {
-        info->callStack.reset();
-    }
+    info->callStack.reset(newCallstack);
 
     if (m_totalAlloc < SIZE_MAX)
     {
@@ -1641,7 +1637,6 @@ VOID VisualLeakDetector::remapBlock (HANDLE heap, LPCVOID mem, LPCVOID newmem, S
     info->threadId = threadId;
     // Update the block's size.
     info->size = size;
-    pblockInfo = info;
 }
 
 // reportconfig - Generates a brief report summarizing Visual Leak Detector's
@@ -2956,7 +2951,9 @@ CaptureContext::~CaptureContext() {
         return;
 
     if ((m_tls->blockWithoutGuard) && (!IsExcludedModule())) {
-        blockinfo_t* pblockInfo = NULL;
+        CallStack* callstack = CallStack::Create();
+        callstack->getStackTrace(g_vld.m_maxTraceFrames, m_tls->context);
+
         if (m_tls->newBlockWithoutGuard == NULL) {
             g_vld.mapBlock(m_tls->heap,
                 m_tls->blockWithoutGuard,
@@ -2964,7 +2961,7 @@ CaptureContext::~CaptureContext() {
                 (m_tls->flags & VLD_TLS_DEBUGCRTALLOC) != 0,
                 (m_tls->flags & VLD_TLS_UCRT) != 0,
                 m_tls->threadId,
-                pblockInfo);
+                callstack);
         }
         else {
             g_vld.remapBlock(m_tls->heap,
@@ -2974,12 +2971,8 @@ CaptureContext::~CaptureContext() {
                 (m_tls->flags & VLD_TLS_DEBUGCRTALLOC) != 0,
                 (m_tls->flags & VLD_TLS_UCRT) != 0,
                 m_tls->threadId,
-                pblockInfo, m_tls->context);
+                callstack, m_tls->context);
         }
-
-        CallStack* callstack = CallStack::Create();
-        callstack->getStackTrace(g_vld.m_maxTraceFrames, m_tls->context);
-        pblockInfo->callStack.reset(callstack);
     }
 
     // Reset thread local flags and variables for the next allocation.
