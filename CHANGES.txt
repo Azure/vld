@@ -1,7 +1,12 @@
-Visual Leak Detector (VLD) Version 2.5.7
+Visual Leak Detector (VLD) Version 2.5.10
 
 
   Change Log / Release Notes
+
+2.5.10 (5 November 2025)
+----------------------------
+  Bugs fixed:
+  + Fix AV due to race in resetting callstacks.
 
 2.5.9 (1 January 2023)
 ----------------------------
