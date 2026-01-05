@@ -13,9 +13,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Option to enable/disable MFC support
 option(VLD_USE_MFC "Build with MFC support (includes MFC test projects)" OFF)
 
-# Windows SDK version
-set(CMAKE_SYSTEM_VERSION 10.0.19041.0 CACHE STRING "Windows SDK version")
-
 # Configure output directories
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
