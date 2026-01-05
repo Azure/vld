@@ -12,6 +12,8 @@ target_include_directories(libformat PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # MSVC settings
 if(MSVC)
+    # Use static runtime to match VLD core
+    set_property(TARGET libformat PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_compile_options(libformat PRIVATE /W3)
     target_compile_definitions(libformat PRIVATE
         _CRT_SECURE_NO_WARNINGS

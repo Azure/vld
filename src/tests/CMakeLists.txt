@@ -54,17 +54,11 @@ function(add_vld_test TARGET_NAME)
         set_target_properties(${TARGET_NAME} PROPERTIES
             MFC_FLAG 2  # Use MFC as a shared DLL
         )
-        # MFC with _AFXDLL requires /MD runtime and _AFXDLL definition
-        set_property(TARGET ${TARGET_NAME} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
         target_compile_definitions(${TARGET_NAME} PRIVATE _AFXDLL)
     endif()
     
-    # MSVC settings
+    # MSVC settings - DLL runtime is set as default in root CMakeLists.txt
     if(MSVC)
-        # Set static runtime only for non-MFC targets
-        if(NOT (ARG_USE_MFC AND VLD_USE_MFC))
-            set_property(TARGET ${TARGET_NAME} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-        endif()
         target_compile_options(${TARGET_NAME} PRIVATE /W3)
         
         if(ARG_IS_DLL)

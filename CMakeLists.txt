@@ -37,9 +37,9 @@ endif()
 
 # MSVC specific settings
 if(MSVC)
-    # Use static runtime library for non-MFC builds
-    # MFC targets will override this to use DLL runtime
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    # Default to DLL runtime for tests (they need it for GetProcAddress tests)
+    # VLD core library overrides this to use static runtime
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
     
     # Common compile options
     add_compile_options(/W3)
@@ -59,8 +59,8 @@ message(STATUS "MFC Support: ${VLD_USE_MFC}")
 # Enable testing
 enable_testing()
 
-# Google Test configuration
-set(gtest_force_shared_crt OFF CACHE BOOL "" FORCE)
+# Google Test configuration - use DLL runtime to match tests
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 

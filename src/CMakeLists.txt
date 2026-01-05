@@ -87,6 +87,9 @@ target_compile_definitions(vld PRIVATE
 
 # MSVC specific settings
 if(MSVC)
+    # VLD core uses static runtime (different from tests which use DLL runtime)
+    set_property(TARGET vld PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    
     # Precompiled header
     target_precompile_headers(vld PRIVATE stdafx.h)
     
