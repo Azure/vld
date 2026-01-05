@@ -313,6 +313,13 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_functions_test/ignore_functions_tes
         HEADERS ${IGNORE_FUNCTIONS_TEST_HEADERS}
         DEPENDS gtest
     )
+    # This test requires its own vld.ini with IgnoreFunctionsList
+    add_custom_command(TARGET ignore_functions_test POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/ignore_functions_test/vld.ini"
+            "$<TARGET_FILE_DIR:ignore_functions_test>/vld.ini"
+        COMMENT "Copying ignore_functions_test vld.ini"
+    )
 endif()
 
 # ============================================================================
