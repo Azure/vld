@@ -81,6 +81,15 @@ function(add_vld_test TARGET_NAME)
     
     # Add to tests folder in IDE
     set_target_properties(${TARGET_NAME} PROPERTIES FOLDER "Tests")
+    
+    # Register with CTest if it's an executable (not a DLL)
+    if(NOT ARG_IS_DLL)
+        add_test(
+            NAME ${TARGET_NAME}
+            COMMAND ${TARGET_NAME}
+            WORKING_DIRECTORY $<TARGET_FILE_DIR:${TARGET_NAME}>
+        )
+    endif()
 endfunction()
 
 # ============================================================================

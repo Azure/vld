@@ -56,6 +56,9 @@ message(STATUS "Configuring Visual Leak Detector v${PROJECT_VERSION}")
 message(STATUS "Platform: ${VLD_PLATFORM}")
 message(STATUS "MFC Support: ${VLD_USE_MFC}")
 
+# Enable testing
+enable_testing()
+
 # Google Test configuration
 set(gtest_force_shared_crt OFF CACHE BOOL "" FORCE)
 set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
