@@ -195,6 +195,8 @@ add_vld_test(vld_main_test
     HAS_PCH
     PCH_HEADER vld_main_test/stdafx.h
 )
+# vld_main_test spawns vld_main.exe - ensure it's built first
+add_dependencies(vld_main_test vld_main)
 
 # ============================================================================
 # MFC Tests (only when VLD_USE_MFC is ON)
