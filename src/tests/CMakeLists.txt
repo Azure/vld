@@ -9,7 +9,7 @@ set(VLD_TEST_INCLUDE_DIRS
 
 # Common function to set up VLD test targets
 function(add_vld_test TARGET_NAME)
-    cmake_parse_arguments(ARG "IS_DLL;USE_MFC;HAS_PCH;NO_UNICODE" "PCH_HEADER" "SOURCES;HEADERS;DEPENDS;DEFINITIONS" ${ARGN})
+    cmake_parse_arguments(ARG "IS_DLL;USE_MFC;HAS_PCH;NO_UNICODE;NO_TEST" "PCH_HEADER" "SOURCES;HEADERS;DEPENDS;DEFINITIONS" ${ARGN})
     
     if(ARG_IS_DLL)
         add_library(${TARGET_NAME} SHARED ${ARG_SOURCES} ${ARG_HEADERS})
@@ -76,8 +76,8 @@ function(add_vld_test TARGET_NAME)
     # Add to tests folder in IDE
     set_target_properties(${TARGET_NAME} PROPERTIES FOLDER "Tests")
     
-    # Register with CTest if it's an executable (not a DLL)
-    if(NOT ARG_IS_DLL)
+    # Register with CTest if it's an executable (not a DLL) and not a helper program
+    if(NOT ARG_IS_DLL AND NOT ARG_NO_TEST)
         add_test(
             NAME ${TARGET_NAME}
             COMMAND ${TARGET_NAME}
@@ -168,7 +168,7 @@ add_vld_test(corruption
 )
 
 # ============================================================================
-# vld_main - Main VLD test application
+# vld_main - Helper program spawned by vld_main_test (not a test itself)
 # ============================================================================
 add_vld_test(vld_main
     SOURCES
@@ -179,6 +179,7 @@ add_vld_test(vld_main
         vld_main/targetver.h
     HAS_PCH
     PCH_HEADER vld_main/stdafx.h
+    NO_TEST  # This is a helper program, not a standalone test
 )
 
 # ============================================================================
