@@ -159,6 +159,11 @@ add_vld_test(dynamic_app
     PCH_HEADER dynamic_app/stdafx.h
 )
 
+# Add dependency on test_mfc if MFC is enabled (runtime LoadLibrary dependency)
+if(VLD_USE_MFC AND TARGET test_mfc)
+    add_dependencies(dynamic_app test_mfc)
+endif()
+
 # Known issue: VLDEnableModule() doesn't properly track leaks from dynamically loaded DLLs
 # on modern Windows. Mark test as expected to fail.
 set_tests_properties(dynamic_app PROPERTIES WILL_FAIL TRUE)
