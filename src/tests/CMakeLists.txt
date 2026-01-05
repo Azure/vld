@@ -359,17 +359,134 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vld_unload)
 endif()
 
 # ============================================================================
-# COM Test - Skip for now as it requires COM IDL compilation
+# COM Test - MFC/ATL COM DLL with IDL compilation
 # ============================================================================
-# COM test requires generated ComTest_i.h from IDL compilation which CMake
-# doesn't handle well. Uncomment and configure if needed.
-# if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest)
-#     file(GLOB COMTEST_SOURCES vld_ComTest/*.cpp)
-#     file(GLOB COMTEST_HEADERS vld_ComTest/*.h)
-#     if(COMTEST_SOURCES)
-#         add_vld_test(ComTest
-#             SOURCES ${COMTEST_SOURCES}
-#             HEADERS ${COMTEST_HEADERS}
-#         )
-#     endif()
-# endif()
+if(VLD_USE_MFC AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest/ComTest.idl)
+    # Find MIDL compiler
+    find_program(MIDL_EXECUTABLE midl)
+    
+    if(MIDL_EXECUTABLE)
+        set(COMTEST_IDL ${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest/ComTest.idl)
+        set(COMTEST_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/vld_ComTest)
+        
+        # Generated files from MIDL
+        set(COMTEST_GENERATED_H ${COMTEST_GENERATED_DIR}/ComTest_i.h)
+        set(COMTEST_GENERATED_C ${COMTEST_GENERATED_DIR}/ComTest_i.c)
+        set(COMTEST_GENERATED_P ${COMTEST_GENERATED_DIR}/ComTest_p.c)
+        set(COMTEST_GENERATED_TLB ${COMTEST_GENERATED_DIR}/ComTest.tlb)
+        
+        # Create output directory
+        file(MAKE_DIRECTORY ${COMTEST_GENERATED_DIR})
+        
+        # Determine target environment for MIDL
+        if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+            set(MIDL_ENV "x64")
+        else()
+            set(MIDL_ENV "win32")
+        endif()
+        
+        # Custom command to run MIDL compiler
+        add_custom_command(
+            OUTPUT ${COMTEST_GENERATED_H} ${COMTEST_GENERATED_C} ${COMTEST_GENERATED_P} ${COMTEST_GENERATED_TLB}
+            COMMAND ${MIDL_EXECUTABLE}
+                /nologo
+                /env ${MIDL_ENV}
+                /h ComTest_i.h
+                /iid ComTest_i.c
+                /proxy ComTest_p.c
+                /tlb ComTest.tlb
+                /Oicf
+                /out ${COMTEST_GENERATED_DIR}
+                ${COMTEST_IDL}
+            DEPENDS ${COMTEST_IDL}
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest
+            COMMENT "Compiling IDL file: ComTest.idl"
+            VERBATIM
+        )
+        
+        # Custom target for IDL compilation
+        add_custom_target(ComTest_idl DEPENDS 
+            ${COMTEST_GENERATED_H} 
+            ${COMTEST_GENERATED_C}
+        )
+        
+        # C++ source files (use PCH)
+        set(COMTEST_CPP_SOURCES
+            vld_ComTest/ComTest.cpp
+            vld_ComTest/dllmain.cpp
+            vld_ComTest/MyMath.cpp
+            vld_ComTest/stdafx.cpp
+        )
+        
+        # C source files (no PCH - they're RPC/proxy stubs)
+        # Note: xdlldata.c includes dlldata.c conditionally via _MERGE_PROXYSTUB
+        # We only need xdlldata.c and the generated ComTest_i.c
+        set(COMTEST_C_SOURCES
+            vld_ComTest/xdlldata.c
+            ${COMTEST_GENERATED_C}
+        )
+        
+        # COM Test DLL
+        add_library(ComTest SHARED
+            ${COMTEST_CPP_SOURCES}
+            ${COMTEST_C_SOURCES}
+            vld_ComTest/ComTest.rc
+            vld_ComTest/ComTest.def
+        )
+        
+        # Exclude C files from precompiled header
+        set_source_files_properties(${COMTEST_C_SOURCES} PROPERTIES
+            SKIP_PRECOMPILE_HEADERS ON
+        )
+        
+        # Ensure IDL is compiled before ComTest
+        add_dependencies(ComTest ComTest_idl)
+        
+        target_include_directories(ComTest PRIVATE 
+            ${VLD_TEST_INCLUDE_DIRS}
+            ${COMTEST_GENERATED_DIR}
+            ${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest
+        )
+        
+        target_link_libraries(ComTest PRIVATE vld)
+        
+        # Basic definitions - ATL macros are already in stdafx.h
+        target_compile_definitions(ComTest PRIVATE
+            _WINDOWS
+            _USRDLL
+            _AFXDLL
+            UNICODE
+            _UNICODE
+            $<$<CONFIG:Debug>:_DEBUG>
+            $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
+        )
+        
+        if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+            target_compile_definitions(ComTest PRIVATE WIN64)
+        else()
+            target_compile_definitions(ComTest PRIVATE WIN32)
+        endif()
+        
+        # MFC settings
+        set_target_properties(ComTest PROPERTIES
+            FOLDER "Tests"
+            VS_GLOBAL_KEYWORD "MFCProj"
+        )
+        set_property(TARGET ComTest PROPERTY VS_GLOBAL_UseOfMfc "Dynamic")
+        
+        # MFC requires DLL runtime
+        set_property(TARGET ComTest PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+        
+        target_compile_options(ComTest PRIVATE /W3)
+        target_link_options(ComTest PRIVATE /SUBSYSTEM:WINDOWS)
+        
+        # Precompiled header for C++ files only
+        target_precompile_headers(ComTest PRIVATE 
+            "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest/stdafx.h>"
+        )
+        
+        message(STATUS "COM Test enabled - MIDL found at: ${MIDL_EXECUTABLE}")
+    else()
+        message(WARNING "COM Test skipped - MIDL compiler not found")
+    endif()
+endif()
