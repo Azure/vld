@@ -41,9 +41,6 @@ if(MSVC)
     # MFC targets will override this to use DLL runtime
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     
-    # Set platform toolset
-    set(CMAKE_VS_PLATFORM_TOOLSET "v142" CACHE STRING "Platform toolset")
-    
     # Common compile options
     add_compile_options(/W3)
     add_compile_definitions(
