@@ -44,16 +44,9 @@ endif()
 # ${gtest_BINARY_DIR}.
 # Language "C" is required for find_package(Threads).
 
-# Project version:
-
-if (CMAKE_VERSION VERSION_LESS 3.0)
-  project(gtest CXX C)
-  set(PROJECT_VERSION ${GOOGLETEST_VERSION})
-else()
-  cmake_policy(SET CMP0048 NEW)
-  project(gtest VERSION ${GOOGLETEST_VERSION} LANGUAGES CXX C)
-endif()
-cmake_minimum_required(VERSION 2.6.4)
+cmake_minimum_required(VERSION 3.10)
+cmake_policy(SET CMP0048 NEW)
+project(gtest LANGUAGES CXX C)
 
 if (POLICY CMP0063) # Visibility
   cmake_policy(SET CMP0063 NEW)
