@@ -43,7 +43,7 @@ Applications should never include this header."
 #define BOM             0xFEFF     // Unicode byte-order mark.
 #define MAXREPORTLENGTH 511        // Maximum length, in characters, of "report" messages.
 
-// Architecture-specific definitions for x86 and x64
+// Architecture-specific definitions for x86, x64, and ARM64
 #if defined(_M_IX86)
 #define X86X64ARCHITECTURE IMAGE_FILE_MACHINE_I386
 #define BPREG Ebp
@@ -54,6 +54,15 @@ Applications should never include this header."
 #define BPREG Rbp
 #define IPREG Rip
 #define SPREG Rsp
+#elif defined(_M_ARM64)
+#ifndef IMAGE_FILE_MACHINE_ARM64
+#define IMAGE_FILE_MACHINE_ARM64 0xAA64  // ARM64 Little-Endian
+#endif
+#define X86X64ARCHITECTURE IMAGE_FILE_MACHINE_ARM64
+// ARM64 uses Fp (x29), Sp, Pc instead of Rbp, Rsp, Rip
+#define BPREG Fp
+#define IPREG Pc
+#define SPREG Sp
 #endif // _M_IX86
 
 struct context_t
@@ -68,8 +77,27 @@ struct context_t
     DWORD64 Rbp;
     DWORD64 Rsp;
     DWORD64 Rip;
+#elif defined(_M_ARM64)
+    DWORD64 Fp;  // Frame pointer (x29)
+    DWORD64 Sp;  // Stack pointer
+    DWORD64 Pc;  // Program counter
 #endif // _M_IX86
 };
+
+// Abstraction macros for accessing context registers across architectures
+#if defined(_M_IX86)
+#define CONTEXT_BPREG(ctx) ((ctx).Ebp)
+#define CONTEXT_SPREG(ctx) ((ctx).Esp)
+#define CONTEXT_IPREG(ctx) ((ctx).Eip)
+#elif defined(_M_X64)
+#define CONTEXT_BPREG(ctx) ((ctx).Rbp)
+#define CONTEXT_SPREG(ctx) ((ctx).Rsp)
+#define CONTEXT_IPREG(ctx) ((ctx).Rip)
+#elif defined(_M_ARM64)
+#define CONTEXT_BPREG(ctx) ((ctx).Fp)
+#define CONTEXT_SPREG(ctx) ((ctx).Sp)
+#define CONTEXT_IPREG(ctx) ((ctx).Pc)
+#endif
 
 // Capture current context
 #if defined(_M_IX86)
@@ -86,6 +114,14 @@ struct context_t
     {CONTEXT _ctx;                                                              \
     RtlCaptureContext(&_ctx);                                                   \
     context_.Rbp = _ctx.Rbp; context_.Rsp = _ctx.Rsp; context_.Rip = _ctx.Rip;  \
+    context_.fp = (UINT_PTR)_ReturnAddress();}
+#define GET_RETURN_ADDRESS(context)  (context.fp)
+#elif defined(_M_ARM64)
+#define CAPTURE_CONTEXT()                                                       \
+    context_t context_;                                                         \
+    {CONTEXT _ctx;                                                              \
+    RtlCaptureContext(&_ctx);                                                   \
+    context_.Fp = _ctx.Fp; context_.Sp = _ctx.Sp; context_.Pc = _ctx.Pc;        \
     context_.fp = (UINT_PTR)_ReturnAddress();}
 #define GET_RETURN_ADDRESS(context)  (context.fp)
 #else

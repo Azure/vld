@@ -514,6 +514,11 @@ LPVOID FindRealCode(LPVOID pCode)
     LPVOID result;
     if (pCode != NULL)
     {
+#if defined(_M_ARM64)
+        // ARM64: Instruction encoding differs from x64
+        // Skip trampoline following for now - return address directly
+        result = pCode;
+#else
         // we need to make sure we can read the first 7 ULONG_PTRs
         PROTECT_INSTANCE protect_1;
 
@@ -585,6 +590,7 @@ LPVOID FindRealCode(LPVOID pCode)
         {
             result = NULL;
         }
+#endif // !_M_ARM64
     }
     else
     {

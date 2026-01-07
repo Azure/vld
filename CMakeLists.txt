@@ -27,12 +27,27 @@ foreach(CONFIG_TYPE ${CMAKE_CONFIGURATION_TYPES})
 endforeach()
 
 # Platform detection
-if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-    set(VLD_PLATFORM "x64")
-    set(VLD_PLATFORM_DEFINE "WIN64")
+# Use CMAKE_VS_PLATFORM_NAME for reliable ARM64 detection in Visual Studio generator
+if(DEFINED CMAKE_VS_PLATFORM_NAME)
+    if(CMAKE_VS_PLATFORM_NAME STREQUAL "ARM64")
+        set(VLD_PLATFORM "ARM64")
+        set(VLD_PLATFORM_DEFINE "WIN64")
+    elseif(CMAKE_VS_PLATFORM_NAME STREQUAL "x64")
+        set(VLD_PLATFORM "x64")
+        set(VLD_PLATFORM_DEFINE "WIN64")
+    else()
+        set(VLD_PLATFORM "Win32")
+        set(VLD_PLATFORM_DEFINE "WIN32")
+    endif()
 else()
-    set(VLD_PLATFORM "Win32")
-    set(VLD_PLATFORM_DEFINE "WIN32")
+    # Fallback for non-VS generators
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(VLD_PLATFORM "x64")
+        set(VLD_PLATFORM_DEFINE "WIN64")
+    else()
+        set(VLD_PLATFORM "Win32")
+        set(VLD_PLATFORM_DEFINE "WIN32")
+    endif()
 endif()
 
 # MSVC specific settings
