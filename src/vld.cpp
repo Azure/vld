@@ -1314,12 +1314,18 @@ SIZE_T VisualLeakDetector::eraseDuplicates (const BlockMap::Iterator &element, S
 //
 tls_t* VisualLeakDetector::getTls ()
 {
+    // Prevent recursion during TLS initialization (declared in vld_hooks.cpp)
+    extern __declspec(thread) int s_inVldCall;
+    
     // Get the pointer to this thread's thread local storage structure.
     tls_t* tls = (tls_t*)TlsGetValue(m_tlsIndex);
     assert(GetLastError() == ERROR_SUCCESS);
 
     if (tls == NULL) {
         DWORD threadId = GetCurrentThreadId();
+
+        // Set guard to prevent tracking allocations during TLS init
+        s_inVldCall++;
 
         CriticalSectionLocker<> cs(m_tlsLock);
         TlsMap::Iterator it = m_tlsMap->find(threadId);
@@ -1340,6 +1346,9 @@ tls_t* VisualLeakDetector::getTls ()
         tls->threadId = threadId;
         tls->blockWithoutGuard = NULL;
         TlsSetValue(m_tlsIndex, tls);
+
+        // Clear guard after TLS init complete
+        s_inVldCall--;
     }
 
     return tls;
@@ -2955,6 +2964,10 @@ CaptureContext::~CaptureContext() {
         return;
 
     if ((m_tls->blockWithoutGuard) && (!IsExcludedModule())) {
+        // Prevent recursion during call stack capture (declared in vld_hooks.cpp)
+        extern __declspec(thread) int s_inVldCall;
+        s_inVldCall++;
+
         blockinfo_t* pblockInfo = NULL;
         CallStack* callstack = CallStack::Create();
         callstack->getStackTrace(g_vld.m_maxTraceFrames, m_tls->context);
@@ -2982,6 +2995,8 @@ CaptureContext::~CaptureContext() {
         }
 
         pblockInfo->callStack.reset(callstack);
+        
+        s_inVldCall--;
     }
 
     // Reset thread local flags and variables for the next allocation.

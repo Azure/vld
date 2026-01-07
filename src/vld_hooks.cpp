@@ -23,6 +23,11 @@
 
 #include "stdafx.h"
 
+// Thread-local reentrancy guard to prevent infinite recursion
+// This is checked before getTls() is called to avoid recursion during TLS initialization
+// Must be defined here and accessed via extern in vld.cpp
+__declspec(thread) int s_inVldCall = 0;
+
 #pragma comment(lib, "dbghelp.lib")
 
 #include <sys/stat.h>
@@ -151,18 +156,18 @@ BOOL VisualLeakDetector::_HeapDestroy (HANDLE heap)
 LPVOID VisualLeakDetector::_RtlAllocateHeap (HANDLE heap, DWORD flags, SIZE_T size)
 {
     PRINT_HOOKED_FUNCTION2();
+
+    // Check for reentrancy - if already inside VLD internal operations
+    if (s_inVldCall > 0) {
+        // Inside VLD, don't track this allocation
+        return RtlAllocateHeap(heap, flags, size);
+    }
+
     // Allocate the block.
     LPVOID block = RtlAllocateHeap(heap, flags, size);
 
     if ((block == NULL) || !g_vld.enabled())
         return block;
-
-    // Check for reentrancy - if we're already inside VLD, skip tracking
-    tls_t* tls = g_vld.getTls();
-    if (tls->flags & VLD_TLS_INCALL) {
-        // Already inside VLD tracking, skip to prevent infinite recursion
-        return block;
-    }
 
     if (!g_DbgHelp.IsLockedByCurrentThread()) { // skip dbghelp.dll calls
         CAPTURE_CONTEXT();
@@ -177,18 +182,18 @@ LPVOID VisualLeakDetector::_RtlAllocateHeap (HANDLE heap, DWORD flags, SIZE_T si
 LPVOID VisualLeakDetector::_HeapAlloc (HANDLE heap, DWORD flags, SIZE_T size)
 {
     PRINT_HOOKED_FUNCTION2();
+
+    // Check for reentrancy - if already inside VLD internal operations
+    if (s_inVldCall > 0) {
+        // Inside VLD, don't track this allocation
+        return HeapAlloc(heap, flags, size);
+    }
+
     // Allocate the block.
     LPVOID block = HeapAlloc(heap, flags, size);
 
     if ((block == NULL) || !g_vld.enabled())
         return block;
-
-    // Check for reentrancy - if we're already inside VLD, skip tracking
-    tls_t* tls = g_vld.getTls();
-    if (tls->flags & VLD_TLS_INCALL) {
-        // Already inside VLD tracking, skip to prevent infinite recursion
-        return block;
-    }
 
     if (!g_DbgHelp.IsLockedByCurrentThread()) { // skip dbghelp.dll calls
         CAPTURE_CONTEXT();
