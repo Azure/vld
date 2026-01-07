@@ -182,6 +182,7 @@ struct tls_t {
 #define VLD_TLS_DISABLED 0x2 	  //   If set, memory leak detection is disabled for the current thread.
 #define VLD_TLS_ENABLED  0x4 	  //   If set, memory leak detection is enabled for the current thread.
 #define VLD_TLS_UCRT     0x8      //   If set, the current allocation is a UCRT allocation.
+#define VLD_TLS_INCALL   0x10     //   If set, VLD is currently inside an allocation tracking call (prevents reentrancy).
     UINT32	    oldFlags;         // Thread-local status old flags
     DWORD 	    threadId;         // Thread ID of the thread that owns this TLS structure.
     HANDLE      heap;

@@ -751,13 +751,13 @@ VOID SafeCallStack::getStackTrace (UINT32 maxdepth, const context_t& context)
         push_back(function);
     }
 
-    if (context.IPREG == NULL)
+    if (CONTEXT_IPREG(context) == NULL)
     {
         return;
     }
 
     count++;
-    push_back(context.IPREG);
+    push_back(CONTEXT_IPREG(context));
 
     DWORD   architecture   = X86X64ARCHITECTURE;
 
@@ -765,18 +765,18 @@ VOID SafeCallStack::getStackTrace (UINT32 maxdepth, const context_t& context)
     // to be passed to StackWalk64(). Required fields are AddrPC and AddrFrame.
     CONTEXT currentContext;
     memset(&currentContext, 0, sizeof(currentContext));
-    currentContext.SPREG = context.SPREG;
-    currentContext.BPREG = context.BPREG;
-    currentContext.IPREG = context.IPREG;
+    CONTEXT_SPREG(currentContext) = CONTEXT_SPREG(context);
+    CONTEXT_BPREG(currentContext) = CONTEXT_BPREG(context);
+    CONTEXT_IPREG(currentContext) = CONTEXT_IPREG(context);
 
     // Initialize the STACKFRAME64 structure.
     STACKFRAME64 frame;
     memset(&frame, 0x0, sizeof(frame));
-    frame.AddrPC.Offset       = currentContext.IPREG;
+    frame.AddrPC.Offset       = CONTEXT_IPREG(currentContext);
     frame.AddrPC.Mode         = AddrModeFlat;
-    frame.AddrStack.Offset    = currentContext.SPREG;
+    frame.AddrStack.Offset    = CONTEXT_SPREG(currentContext);
     frame.AddrStack.Mode      = AddrModeFlat;
-    frame.AddrFrame.Offset    = currentContext.BPREG;
+    frame.AddrFrame.Offset    = CONTEXT_BPREG(currentContext);
     frame.AddrFrame.Mode      = AddrModeFlat;
     frame.Virtual             = TRUE;
 

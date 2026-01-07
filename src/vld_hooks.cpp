@@ -157,6 +157,13 @@ LPVOID VisualLeakDetector::_RtlAllocateHeap (HANDLE heap, DWORD flags, SIZE_T si
     if ((block == NULL) || !g_vld.enabled())
         return block;
 
+    // Check for reentrancy - if we're already inside VLD, skip tracking
+    tls_t* tls = g_vld.getTls();
+    if (tls->flags & VLD_TLS_INCALL) {
+        // Already inside VLD tracking, skip to prevent infinite recursion
+        return block;
+    }
+
     if (!g_DbgHelp.IsLockedByCurrentThread()) { // skip dbghelp.dll calls
         CAPTURE_CONTEXT();
         CaptureContext cc(RtlAllocateHeap, context_);
@@ -175,6 +182,13 @@ LPVOID VisualLeakDetector::_HeapAlloc (HANDLE heap, DWORD flags, SIZE_T size)
 
     if ((block == NULL) || !g_vld.enabled())
         return block;
+
+    // Check for reentrancy - if we're already inside VLD, skip tracking
+    tls_t* tls = g_vld.getTls();
+    if (tls->flags & VLD_TLS_INCALL) {
+        // Already inside VLD tracking, skip to prevent infinite recursion
+        return block;
+    }
 
     if (!g_DbgHelp.IsLockedByCurrentThread()) { // skip dbghelp.dll calls
         CAPTURE_CONTEXT();
