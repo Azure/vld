@@ -702,27 +702,33 @@ VOID FastCallStack::getStackTrace (UINT32 maxdepth, const context_t& context)
     ZeroMemory(myFrames, sizeof(UINT_PTR) * maxframes);
     ULONG BackTraceHash;
     maxframes = RtlCaptureStackBackTrace(0, maxframes, reinterpret_cast<PVOID*>(myFrames), &BackTraceHash);
-    m_hashValue = BackTraceHash;
     UINT32  startIndex = 0;
+    
+    // Find the frame matching context.fp to skip VLD internal frames
     while (count < maxframes) {
         if (myFrames[count] == 0)
             break;
-#if defined(_M_ARM64)
-        // On ARM64, context.fp contains return address which may not exactly match
-        // the function address in myFrames. Search for a frame within 4KB range.
-        if (myFrames[count] <= context.fp && (context.fp - myFrames[count]) < 4096)
-            startIndex = count;
-#else
         if (myFrames[count] == context.fp)
             startIndex = count;
-#endif
         count++;
     }
+    
+    // If we didn't find an exact match (can happen on ARM64 with return addresses),
+    // skip first 3 frames which are typically VLD internal frames
+    if (startIndex == 0 && maxframes > 3) {
+        startIndex = 3;
+    }
+    
+    // Calculate hash from the actual frames we're keeping, not from RtlCaptureStackBackTrace
+    // which includes frames we may trim differently on different architectures
+    m_hashValue = 0;
     count = startIndex;
     while (count < maxframes) {
         if (myFrames[count] == 0)
             break;
         push_back(myFrames[count]);
+        // Simple hash: XOR all frame addresses
+        m_hashValue ^= (UINT32)(myFrames[count] ^ (myFrames[count] >> 32));
         count++;
     }
     delete [] myFrames;
