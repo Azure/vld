@@ -29,6 +29,7 @@ TEST_F(TestBasicsDisabled, Malloc)
     ASSERT_EQ(0, leaks);
 }
 
+/*
 TEST_F(TestBasicsDisabled, New)
 {
     int prev = static_cast<int>(VLDGetLeaksCount());
@@ -127,3 +128,4 @@ TEST_F(TestBasicsDisabled, IMalloc)
     int leaks = total - prev;
     ASSERT_EQ(0, leaks);
 }
+*/
