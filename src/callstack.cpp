@@ -713,11 +713,21 @@ VOID FastCallStack::getStackTrace (UINT32 maxdepth, const context_t& context)
         count++;
     }
     
+#if defined(_M_ARM64)
+    // Debug: Check if we ever need the fallback
+    if (startIndex == 0 && maxframes > 0) {
+        // context.fp not found - this should be rare
+        wprintf(L"VLD DEBUG: context.fp=0x%p NOT found in %u frames, using fallback to skip 3\n", 
+                (void*)context.fp, maxframes);
+        startIndex = (maxframes > 3) ? 3 : 0;
+    }
+#else
     // If we didn't find an exact match (can happen on ARM64 with return addresses),
     // skip first 3 frames which are typically VLD internal frames
     if (startIndex == 0 && maxframes > 3) {
         startIndex = 3;
     }
+#endif
     
     // Calculate hash from the actual frames we're keeping, not from RtlCaptureStackBackTrace
     // which includes frames we may trim differently on different architectures
