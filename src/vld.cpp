@@ -2941,9 +2941,6 @@ CaptureContext::CaptureContext(void* func, context_t& context, BOOL debug, BOOL 
     context.func = reinterpret_cast<UINT_PTR>(func);
     m_tls = g_vld.getTls();
 
-    // Set reentrancy flag to prevent infinite recursion
-    m_tls->flags |= VLD_TLS_INCALL;
-
     if (debug) {
         m_tls->flags |= VLD_TLS_DEBUGCRTALLOC;
     }
@@ -3027,7 +3024,7 @@ void CaptureContext::Reset() {
 #elif defined(_M_ARM64)
     m_tls->context.Fp = m_tls->context.Sp = m_tls->context.Pc = NULL;
 #endif
-    m_tls->flags &= ~(VLD_TLS_DEBUGCRTALLOC | VLD_TLS_UCRT | VLD_TLS_INCALL);
+    m_tls->flags &= ~(VLD_TLS_DEBUGCRTALLOC | VLD_TLS_UCRT);
     Set(NULL, NULL, NULL, NULL);
 }
 
