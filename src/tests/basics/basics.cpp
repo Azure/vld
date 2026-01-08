@@ -147,5 +147,6 @@ INSTANTIATE_TEST_CASE_P(FreeVal,
 int main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);
     int res = RUN_ALL_TESTS();
+    VLDMarkAllLeaksAsReported();
     return res;
 }
