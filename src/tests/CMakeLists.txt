@@ -208,22 +208,6 @@ add_vld_test(tls_init_test
 )
 
 # ============================================================================
-# debug_callstack_test - Intentional memory leaks to verify callstack capture
-# ============================================================================
-add_vld_test(debug_callstack_test
-    SOURCES
-        debug_callstack_test/debug_callstack_test.cpp
-)
-
-# ============================================================================
-# frame_match_test - Diagnostic test for _ReturnAddress() frame matching
-# ============================================================================
-add_executable(frame_match_test
-    frame_match_test/frame_match_test.cpp
-)
-set_target_properties(frame_match_test PROPERTIES FOLDER "Tests")
-
-# ============================================================================
 # vld_main_test - Main VLD test with gtest
 # ============================================================================
 add_vld_test(vld_main_test
