@@ -455,6 +455,9 @@ VisualLeakDetector::VisualLeakDetector ()
         InsertReportDelay();
     }
     if (m_options & VLD_OPT_IGNORE_FUNCTIONS) {
+#if defined(_M_ARM64)
+        Report(L"VLD DEBUG: VLD_OPT_IGNORE_FUNCTIONS is SET, parsing functions\n");
+#endif
         // Delimit each function name with "," and insert these into IgnoreFunctionsSet.
         LPCWSTR pwc;
         wchar_t* buffer;
@@ -468,6 +471,11 @@ VisualLeakDetector::VisualLeakDetector ()
             pwc = wcstok_s(NULL, L",", &buffer);
         }
     }
+#if defined(_M_ARM64)
+    else {
+        Report(L"VLD DEBUG: VLD_OPT_IGNORE_FUNCTIONS is NOT SET\n");
+    }
+#endif
 
     // This is highly unlikely to happen, but just in case, check to be sure
     // we got a valid TLS index.
@@ -1179,6 +1187,9 @@ VOID VisualLeakDetector::configure ()
 
     // Read the ignore function list.
     LoadStringOption(L"IgnoreFunctionsList", m_ignoreFunctionsList, MAXIGNOREFUNCTIONLISTLENGTH, inipath);
+#if defined(_M_ARM64)
+    Report(L"VLD DEBUG: Loaded IgnoreFunctionsList: '%s'\n", m_ignoreFunctionsList);
+#endif
     if (wcscmp(m_ignoreFunctionsList, L"") == 0)
         m_ignoreFunctionsList[0] = '\0';
     else
