@@ -200,6 +200,30 @@ add_vld_test(vld_main
 )
 
 # ============================================================================
+# tls_init_test - Multi-threaded TLS initialization stress test
+# ============================================================================
+add_vld_test(tls_init_test
+    SOURCES
+        tls_init_test/tls_init_test.cpp
+)
+
+# ============================================================================
+# debug_callstack_test - Intentional memory leaks to verify callstack capture
+# ============================================================================
+add_vld_test(debug_callstack_test
+    SOURCES
+        debug_callstack_test/debug_callstack_test.cpp
+)
+
+# ============================================================================
+# frame_match_test - Diagnostic test for _ReturnAddress() frame matching
+# ============================================================================
+add_executable(frame_match_test
+    frame_match_test/frame_match_test.cpp
+)
+set_target_properties(frame_match_test PROPERTIES FOLDER "Tests")
+
+# ============================================================================
 # vld_main_test - Main VLD test with gtest
 # ============================================================================
 add_vld_test(vld_main_test
@@ -538,38 +562,5 @@ if(VLD_USE_MFC AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest/ComTest.idl)
         message(WARNING "COM Test skipped - MIDL compiler not found")
     endif()
 endif()
-
-################################################################################
-# TLS Init Test - Exposes TLS initialization reentrancy bug
-################################################################################
-add_executable(tls_init_test
-    tls_init_test/tls_init_test.cpp
-)
-target_link_libraries(tls_init_test PRIVATE vld)
-set_target_properties(tls_init_test PROPERTIES FOLDER "Tests")
-
-# Register with CTest
-add_test(
-    NAME tls_init_test
-    COMMAND tls_init_test
-    WORKING_DIRECTORY $<TARGET_FILE_DIR:tls_init_test>
-)
-
-################################################################################
-# Frame Match Test - Debug why _ReturnAddress() doesn't match on ARM64
-################################################################################
-add_executable(frame_match_test
-    frame_match_test/frame_match_test.cpp
-)
-set_target_properties(frame_match_test PROPERTIES FOLDER "Tests")
-
-################################################################################
-# Debug Callstack Test - Creates intentional leaks to test callstack capture
-################################################################################
-add_executable(debug_callstack_test
-    debug_callstack_test/debug_callstack_test.cpp
-)
-target_link_libraries(debug_callstack_test PRIVATE vld)
-set_target_properties(debug_callstack_test PROPERTIES FOLDER "Tests")
 
 
