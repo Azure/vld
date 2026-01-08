@@ -140,3 +140,19 @@ add_custom_command(TARGET vld POST_BUILD
         "${CMAKE_SOURCE_DIR}/vld.ini"
         "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/vld.ini"
 )
+
+# Copy dbghelp.dll based on platform
+if(VLD_PLATFORM STREQUAL "ARM64")
+    set(DBGHELP_ARCH "arm64")
+elseif(CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(DBGHELP_ARCH "x64")
+else()
+    set(DBGHELP_ARCH "x86")
+endif()
+
+add_custom_command(TARGET vld POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E echo "Copying dbghelp.dll (${DBGHELP_ARCH})"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/setup/dbghelp/${DBGHELP_ARCH}/dbghelp.dll"
+        "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/dbghelp.dll"
+)
