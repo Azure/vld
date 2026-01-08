@@ -146,10 +146,6 @@ INSTANTIATE_TEST_CASE_P(FreeVal,
 
 int main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);
-    // Mark any leaks from gtest initialization as already reported
-    // This prevents false positives from gtest's internal allocations
-    VLDMarkAllLeaksAsReported();
     int res = RUN_ALL_TESTS();
-    VLDMarkAllLeaksAsReported();
     return res;
 }

@@ -1474,6 +1474,9 @@ VOID VisualLeakDetector::unmapBlock (HANDLE heap, LPCVOID mem, const context_t &
     if (heapit == m_heapMap->end()) {
         // We don't have a block map for this heap. We must not have monitored
         // this allocation (probably happened before VLD was initialized).
+#if defined(_M_ARM64)
+        Report(L"VLD DEBUG: unmapBlock - heap not found: " ADDRESSFORMAT L", mem: " ADDRESSFORMAT L"\n", heap, mem);
+#endif
         return;
     }
 
@@ -1484,6 +1487,9 @@ VOID VisualLeakDetector::unmapBlock (HANDLE heap, LPCVOID mem, const context_t &
     {
         // This memory block is not in the block map. We must not have monitored this
         // allocation (probably happened before VLD was initialized).
+#if defined(_M_ARM64)
+        Report(L"VLD DEBUG: unmapBlock - block not found in map: " ADDRESSFORMAT L", heap: " ADDRESSFORMAT L"\n", mem, heap);
+#endif
 
         // This can also result from allocating on one heap, and freeing on another heap.
         // This is an especially bad way to corrupt the application.
