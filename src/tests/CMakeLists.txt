@@ -45,11 +45,7 @@ function(add_vld_test TARGET_NAME)
         target_compile_definitions(${TARGET_NAME} PRIVATE ${ARG_DEFINITIONS})
     endif()
     
-    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-        target_compile_definitions(${TARGET_NAME} PRIVATE WIN64)
-    else()
-        target_compile_definitions(${TARGET_NAME} PRIVATE WIN32)
-    endif()
+    target_compile_definitions(${TARGET_NAME} PRIVATE ${VLD_PLATFORM_DEFINE})
     
     # MFC support
     if(ARG_USE_MFC AND VLD_USE_MFC)
@@ -278,11 +274,7 @@ if(VLD_USE_MFC)
         $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
     )
     
-    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-        target_compile_definitions(vldmfc PRIVATE WIN64)
-    else()
-        target_compile_definitions(vldmfc PRIVATE WIN32)
-    endif()
+    target_compile_definitions(vldmfc PRIVATE ${VLD_PLATFORM_DEFINE})
     
     # MFC settings - UseOfMfc=Dynamic corresponds to CMAKE_MFC_FLAG=2
     set_target_properties(vldmfc PROPERTIES
@@ -435,7 +427,9 @@ if(VLD_USE_MFC AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest/ComTest.idl)
         file(MAKE_DIRECTORY ${COMTEST_GENERATED_DIR})
         
         # Determine target environment for MIDL
-        if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        if(VLD_PLATFORM STREQUAL "ARM64")
+            set(MIDL_ENV "arm64")
+        elseif(VLD_PLATFORM STREQUAL "x64")
             set(MIDL_ENV "x64")
         else()
             set(MIDL_ENV "win32")
@@ -517,11 +511,7 @@ if(VLD_USE_MFC AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest/ComTest.idl)
             $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
         )
         
-        if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-            target_compile_definitions(ComTest PRIVATE WIN64)
-        else()
-            target_compile_definitions(ComTest PRIVATE WIN32)
-        endif()
+        target_compile_definitions(ComTest PRIVATE ${VLD_PLATFORM_DEFINE})
         
         # MFC settings
         set_target_properties(ComTest PROPERTIES
