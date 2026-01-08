@@ -1,26 +1,26 @@
-// Test that exposes TLS initialization reentrancy bug in old VLD code
+// Multi-threaded TLS initialization stress test
 // 
-// The bug: When a new thread's first allocation happens, getTls() needs to
-// allocate a tls_t structure. In the old code, the reentrancy check happened
-// AFTER calling getTls(), so the allocation of tls_t itself would trigger
-// infinite recursion.
+// This test spawns multiple threads that simultaneously perform their first
+// allocations, stressing VLD's per-thread TLS (Thread Local Storage) initialization.
 //
-// Old code flow (crashes):
-//   1. Thread calls malloc() -> _RtlAllocateHeap
-//   2. _RtlAllocateHeap calls getTls()
-//   3. getTls() sees tls==NULL, calls new tls_t
-//   4. new tls_t triggers _RtlAllocateHeap again
-//   5. _RtlAllocateHeap calls getTls() again (TLS not set yet!)
-//   6. INFINITE RECURSION -> stack overflow
+// What it tests:
+//   - Multiple threads calling getTls() concurrently
+//   - VLD's CriticalSection protection during TLS map operations
+//   - First allocation in each thread triggers TLS structure creation
+//   - Recursive CriticalSection behavior (same thread can re-acquire)
 //
-// New code with s_inVldCall (works):
-//   1. Thread calls malloc() -> _RtlAllocateHeap
-//   2. _RtlAllocateHeap calls getTls()
-//   3. getTls() increments s_inVldCall, calls new tls_t
-//   4. new tls_t triggers _RtlAllocateHeap again
-//   5. _RtlAllocateHeap sees s_inVldCall > 0, skips tracking, returns
-//   6. getTls() completes, decrements s_inVldCall
-//   7. Original allocation proceeds normally
+// Thread flow:
+//   1. Thread calls malloc() -> _RtlAllocateHeap hook
+//   2. Hook calls getTls() to get thread-local state
+//   3. If first time: getTls() takes m_tlsLock, calls new tls_t
+//   4. new tls_t may trigger _RtlAllocateHeap again (recursive)
+//   5. Recursive call also calls getTls()
+//   6. Windows CriticalSection is recursive - same thread can re-acquire
+//   7. Second getTls() finds TLS already in map (inserted by first call)
+//   8. Both calls complete successfully
+//
+// This test verifies VLD handles concurrent TLS initialization across threads
+// and recursive calls within a single thread during TLS initialization.
 
 #include <windows.h>
 #include <stdio.h>
@@ -46,8 +46,7 @@ DWORD WINAPI ThreadFunc(LPVOID param)
     }
     
     // This is the first allocation in this thread
-    // Old VLD code: This will crash with stack overflow during getTls()
-    // New VLD code: s_inVldCall protects getTls() from reentrancy
+    // Tests VLD's handling of concurrent TLS initialization
     void* ptr = malloc(100);
     
     // Do more allocations to stress test
@@ -63,9 +62,9 @@ DWORD WINAPI ThreadFunc(LPVOID param)
 
 int main()
 {
-    printf("TLS Initialization Reentrancy Test\n");
-    printf("===================================\n");
-    printf("This test exposes a bug in old VLD where getTls() could recurse infinitely.\n");
+    printf("TLS Initialization Stress Test\n");
+    printf("===============================\n");
+    printf("Testing VLD's handling of concurrent TLS initialization.\n");
     printf("Creating %d threads that will all allocate simultaneously...\n\n", NUM_THREADS);
     
     HANDLE threads[NUM_THREADS];
