@@ -144,7 +144,7 @@ add_custom_command(TARGET vld POST_BUILD
 # Copy dbghelp.dll based on platform
 if(VLD_PLATFORM STREQUAL "ARM64")
     set(DBGHELP_ARCH "arm64")
-elseif(CMAKE_SIZEOF_VOID_P EQUAL 8)
+elseif(VLD_PLATFORM STREQUAL "x64")
     set(DBGHELP_ARCH "x64")
 else()
     set(DBGHELP_ARCH "x86")
