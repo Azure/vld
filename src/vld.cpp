@@ -2377,8 +2377,7 @@ bool VisualLeakDetector::isModuleExcluded(UINT_PTR address)
 bool VisualLeakDetector::isFunctionIgnored(LPCWSTR functionName)
 {
     functioninfo_t functioninfo = { functionName };
-    bool found = g_vld.m_ignoreFunctions->find(functioninfo) != g_vld.m_ignoreFunctions->end();
-    return found;
+    return g_vld.m_ignoreFunctions->find(functioninfo) != g_vld.m_ignoreFunctions->end();
 }
 
 SIZE_T VisualLeakDetector::GetLeaksCount()
@@ -3006,8 +3005,6 @@ void CaptureContext::Reset() {
     m_tls->context.Ebp = m_tls->context.Esp = m_tls->context.Eip = NULL;
 #elif defined(_M_X64)
     m_tls->context.Rbp = m_tls->context.Rsp = m_tls->context.Rip = NULL;
-#elif defined(_M_ARM64)
-    m_tls->context.Fp = m_tls->context.Sp = m_tls->context.Pc = NULL;
 #endif
     m_tls->flags &= ~(VLD_TLS_DEBUGCRTALLOC | VLD_TLS_UCRT);
     Set(NULL, NULL, NULL, NULL);
