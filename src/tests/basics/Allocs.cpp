@@ -134,18 +134,6 @@ void GetVldFunctions()
     if (VldInternalGetAllocationCallstack == NULL)
     {
         HMODULE vld_module = GetModuleHandle(sVld_dll);
-        if (vld_module == NULL)
-        {
-            // Try to get more info about why it failed
-            DWORD error = GetLastError();
-            _tprintf(_T("GetModuleHandle('%s') failed with error %lu\n"), sVld_dll, error);
-            // Try loading it explicitly
-            vld_module = LoadLibrary(sVld_dll);
-            if (vld_module != NULL)
-            {
-                _tprintf(_T("LoadLibrary succeeded, module was not loaded yet\n"));
-            }
-        }
         assert(vld_module);
         typedef int(*VLDAPI_func)();
         if (vld_module != NULL)
