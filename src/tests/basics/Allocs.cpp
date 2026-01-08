@@ -118,7 +118,9 @@ static const int recursion = 3;
     return succeded ? ::testing::AssertionSuccess() : (::testing::AssertionSuccess() << resultStream.str());
 }
 
-#ifdef _WIN64
+#if defined(_M_ARM64)
+static const TCHAR* sVld_dll = _T("vld_arm64.dll");
+#elif defined(_WIN64)
 static const TCHAR* sVld_dll = _T("vld_x64.dll");
 #else
 static const TCHAR* sVld_dll = _T("vld_x86.dll");
@@ -132,6 +134,18 @@ void GetVldFunctions()
     if (VldInternalGetAllocationCallstack == NULL)
     {
         HMODULE vld_module = GetModuleHandle(sVld_dll);
+        if (vld_module == NULL)
+        {
+            // Try to get more info about why it failed
+            DWORD error = GetLastError();
+            _tprintf(_T("GetModuleHandle('%s') failed with error %lu\n"), sVld_dll, error);
+            // Try loading it explicitly
+            vld_module = LoadLibrary(sVld_dll);
+            if (vld_module != NULL)
+            {
+                _tprintf(_T("LoadLibrary succeeded, module was not loaded yet\n"));
+            }
+        }
         assert(vld_module);
         typedef int(*VLDAPI_func)();
         if (vld_module != NULL)
