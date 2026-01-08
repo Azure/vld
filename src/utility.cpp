@@ -514,6 +514,14 @@ LPVOID FindRealCode(LPVOID pCode)
     LPVOID result;
     if (pCode != NULL)
     {
+#if defined(_M_ARM64)
+        // ARM64: Different instruction encoding from x86/x64
+        // The x86/x64 JMP opcodes (0x25ff, 0xE9) don't exist in ARM64 instruction set
+        // ARM64 uses B/BR/BL instructions with different encoding
+        // Windows ARM64 typically doesn't use the same trampoline patterns
+        // If ARM64-specific trampolines are found to exist, implement ARM64 instruction decoding here
+        result = pCode;
+#else
         // we need to make sure we can read the first 7 ULONG_PTRs
         PROTECT_INSTANCE protect_1;
 
@@ -585,6 +593,7 @@ LPVOID FindRealCode(LPVOID pCode)
         {
             result = NULL;
         }
+#endif // !_M_ARM64
     }
     else
     {
