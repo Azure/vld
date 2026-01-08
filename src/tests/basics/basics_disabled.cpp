@@ -20,8 +20,6 @@ class TestBasicsDisabled : public ::testing::Test
     }
 };
 
-
-
 TEST_F(TestBasicsDisabled, Malloc)
 {
     int prev = static_cast<int>(VLDGetLeaksCount());
@@ -129,4 +127,3 @@ TEST_F(TestBasicsDisabled, IMalloc)
     int leaks = total - prev;
     ASSERT_EQ(0, leaks);
 }
-
