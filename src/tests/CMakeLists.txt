@@ -563,3 +563,13 @@ add_executable(frame_match_test
 )
 set_target_properties(frame_match_test PROPERTIES FOLDER "Tests")
 
+################################################################################
+# Debug Callstack Test - Creates intentional leaks to test callstack capture
+################################################################################
+add_executable(debug_callstack_test
+    debug_callstack_test/debug_callstack_test.cpp
+)
+target_link_libraries(debug_callstack_test PRIVATE vld)
+set_target_properties(debug_callstack_test PROPERTIES FOLDER "Tests")
+
+
