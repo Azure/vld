@@ -47,6 +47,13 @@ extern vldblockheader_t *g_vldBlockList;
 extern HANDLE            g_vldHeap;
 extern CriticalSection   g_vldHeapLock;
 
+// Force VLD to initialize in the "lib" segment, which runs before user code.
+// This ensures VLD tracks ALL allocations, including those from static initializers
+// in other translation units (like Google Test's InitGoogleTest).
+// IMPORTANT: This pragma must come BEFORE all global variable declarations to ensure
+// all VLD globals (including CriticalSections) initialize together in the lib phase.
+#pragma init_seg(lib)
+
 // Global variables.
 HANDLE           g_currentProcess; // Pseudo-handle for the current process.
 HANDLE           g_currentThread;  // Pseudo-handle for the current thread.
