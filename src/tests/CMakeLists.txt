@@ -554,3 +554,12 @@ add_test(
     COMMAND tls_init_test
     WORKING_DIRECTORY $<TARGET_FILE_DIR:tls_init_test>
 )
+
+################################################################################
+# Frame Match Test - Debug why _ReturnAddress() doesn't match on ARM64
+################################################################################
+add_executable(frame_match_test
+    frame_match_test/frame_match_test.cpp
+)
+set_target_properties(frame_match_test PROPERTIES FOLDER "Tests")
+
