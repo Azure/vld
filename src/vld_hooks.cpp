@@ -151,7 +151,6 @@ BOOL VisualLeakDetector::_HeapDestroy (HANDLE heap)
 LPVOID VisualLeakDetector::_RtlAllocateHeap (HANDLE heap, DWORD flags, SIZE_T size)
 {
     PRINT_HOOKED_FUNCTION2();
-
     // Allocate the block.
     LPVOID block = RtlAllocateHeap(heap, flags, size);
 
@@ -171,7 +170,6 @@ LPVOID VisualLeakDetector::_RtlAllocateHeap (HANDLE heap, DWORD flags, SIZE_T si
 LPVOID VisualLeakDetector::_HeapAlloc (HANDLE heap, DWORD flags, SIZE_T size)
 {
     PRINT_HOOKED_FUNCTION2();
-
     // Allocate the block.
     LPVOID block = HeapAlloc(heap, flags, size);
 
