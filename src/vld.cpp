@@ -462,6 +462,9 @@ VisualLeakDetector::VisualLeakDetector ()
         while (pwc != NULL) {
             functioninfo_t funtioninfo = { pwc };
             m_ignoreFunctions->insert(funtioninfo);
+#if defined(_M_ARM64)
+            Report(L"VLD DEBUG: Added ignore function: '%s'\n", pwc);
+#endif
             pwc = wcstok_s(NULL, L",", &buffer);
         }
     }
@@ -2386,7 +2389,13 @@ bool VisualLeakDetector::isModuleExcluded(UINT_PTR address)
 bool VisualLeakDetector::isFunctionIgnored(LPCWSTR functionName)
 {
     functioninfo_t functioninfo = { functionName };
-    return g_vld.m_ignoreFunctions->find(functioninfo) != g_vld.m_ignoreFunctions->end();
+    bool found = g_vld.m_ignoreFunctions->find(functioninfo) != g_vld.m_ignoreFunctions->end();
+#if defined(_M_ARM64)
+    if (functionName && wcsstr(functionName, L"GetOSVersion") != NULL) {
+        Report(L"VLD DEBUG: isFunctionIgnored('%s') = %d\n", functionName, found);
+    }
+#endif
+    return found;
 }
 
 SIZE_T VisualLeakDetector::GetLeaksCount()
