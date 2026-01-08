@@ -79,14 +79,6 @@ function(add_vld_test TARGET_NAME)
     # Add to tests folder in IDE
     set_target_properties(${TARGET_NAME} PROPERTIES FOLDER "Tests")
     
-    # Set per-configuration output directories for Visual Studio multi-config generator
-    foreach(CONFIG_TYPE ${CMAKE_CONFIGURATION_TYPES})
-        string(TOUPPER ${CONFIG_TYPE} CONFIG_TYPE_UPPER)
-        set_target_properties(${TARGET_NAME} PROPERTIES
-            RUNTIME_OUTPUT_DIRECTORY_${CONFIG_TYPE_UPPER} "${CMAKE_BINARY_DIR}/bin/${CONFIG_TYPE}"
-        )
-    endforeach()
-    
     # Register with CTest if it's an executable (not a DLL) and not a helper program
     if(NOT ARG_IS_DLL AND NOT ARG_NO_TEST)
         add_test(
