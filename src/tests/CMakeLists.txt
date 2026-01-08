@@ -538,3 +538,12 @@ if(VLD_USE_MFC AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest/ComTest.idl)
         message(WARNING "COM Test skipped - MIDL compiler not found")
     endif()
 endif()
+
+################################################################################
+# TLS Init Test - Exposes TLS initialization reentrancy bug
+################################################################################
+add_executable(tls_init_test
+    tls_init_test/tls_init_test.cpp
+)
+target_link_libraries(tls_init_test PRIVATE vld)
+set_target_properties(tls_init_test PROPERTIES FOLDER "Tests")
