@@ -312,8 +312,16 @@ bool CallStack::isCrtStartupAlloc()
         }
 
         if (isIgnoreFunction(functionName)) {
+#if defined(_M_ARM64)
+            wprintf(L"VLD DEBUG: Ignoring function: %s\n", functionName);
+#endif
             return true;
         }
+#if defined(_M_ARM64)
+        else if (functionName != NULL) {
+            wprintf(L"VLD DEBUG: NOT ignoring function: %s\n", functionName);
+        }
+#endif
     }
 
     m_status |= CALLSTACK_STATUS_NOTSTARTUPCRT;
