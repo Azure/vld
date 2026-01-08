@@ -30,7 +30,6 @@ TEST_P(TestBasics, Malloc)
     ASSERT_EQ(correctLeaks, leaks);
 }
 
-#if 0 /*do not check in this*/
 TEST_P(TestBasics, New)
 {
     int prev = static_cast<int>(VLDGetLeaksCount());
@@ -140,7 +139,7 @@ TEST_P(TestBasics, GetProcMalloc)
     int correctLeaks = GetParam() ? 0 : repeats * 1;
     ASSERT_EQ(correctLeaks, leaks);
 }
-#endif
+
 INSTANTIATE_TEST_CASE_P(FreeVal,
     TestBasics,
     ::testing::Bool());
