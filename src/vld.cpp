@@ -1396,10 +1396,17 @@ VOID VisualLeakDetector::mapBlock (HANDLE heap, LPCVOID mem, SIZE_T size, bool d
     if (m_curAlloc > m_maxAlloc)
         m_maxAlloc = m_curAlloc;
 
+#if defined(_M_ARM64)
+    Report(L"VLD DEBUG: mapBlock - heap: " ADDRESSFORMAT L", mem: " ADDRESSFORMAT L", size: %u\n", heap, mem, size);
+#endif
+
     // Insert the block's information into the block map.
     HeapMap::Iterator heapit = m_heapMap->find(heap);
     if (heapit == m_heapMap->end()) {
         // We haven't mapped this heap to a block map yet. Do it now.
+#if defined(_M_ARM64)
+        Report(L"VLD DEBUG: mapBlock - heap not tracked yet, calling mapHeap()\n");
+#endif
         mapHeap(heap);
         heapit = m_heapMap->find(heap);
         assert(heapit != m_heapMap->end());
@@ -1434,6 +1441,10 @@ VOID VisualLeakDetector::mapBlock (HANDLE heap, LPCVOID mem, SIZE_T size, bool d
 VOID VisualLeakDetector::mapHeap (HANDLE heap)
 {
     CriticalSectionLocker<> cs(g_heapMapLock);
+
+#if defined(_M_ARM64)
+    Report(L"VLD DEBUG: mapHeap - tracking heap: " ADDRESSFORMAT L"\n", heap);
+#endif
 
     // Create a new block map for this heap and insert it into the heap map.
     heapinfo_t* heapinfo = new heapinfo_t;
