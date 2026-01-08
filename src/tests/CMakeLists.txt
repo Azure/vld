@@ -330,6 +330,16 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_functions_test/ignore_functions_tes
         HEADERS ${IGNORE_FUNCTIONS_TEST_HEADERS}
         DEPENDS gtest
     )
+    
+    # This test needs its own output subdirectory to avoid vld.ini conflicts with other tests
+    set_target_properties(ignore_functions_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/ignore_functions_test"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin/Debug/ignore_functions_test"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin/Release/ignore_functions_test"
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/bin/RelWithDebInfo/ignore_functions_test"
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/bin/MinSizeRel/ignore_functions_test"
+    )
+    
     # This test requires its own vld.ini with IgnoreFunctionsList
     add_custom_command(TARGET ignore_functions_test POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
