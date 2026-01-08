@@ -345,7 +345,10 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_functions_test/ignore_functions_tes
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/ignore_functions_test/vld.ini"
             "$<TARGET_FILE_DIR:ignore_functions_test>/vld.ini"
-        COMMENT "Copying ignore_functions_test vld.ini"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:vld>"
+            "$<TARGET_FILE_DIR:ignore_functions_test>/$<TARGET_FILE_NAME:vld>"
+        COMMENT "Copying ignore_functions_test vld.ini and VLD DLL"
     )
 endif()
 
