@@ -547,3 +547,10 @@ add_executable(tls_init_test
 )
 target_link_libraries(tls_init_test PRIVATE vld)
 set_target_properties(tls_init_test PROPERTIES FOLDER "Tests")
+
+# Register with CTest
+add_test(
+    NAME tls_init_test
+    COMMAND tls_init_test
+    WORKING_DIRECTORY $<TARGET_FILE_DIR:tls_init_test>
+)
