@@ -707,8 +707,15 @@ VOID FastCallStack::getStackTrace (UINT32 maxdepth, const context_t& context)
     while (count < maxframes) {
         if (myFrames[count] == 0)
             break;
+#if defined(_M_ARM64)
+        // On ARM64, context.fp contains return address which may not exactly match
+        // the function address in myFrames. Search for a frame within 4KB range.
+        if (myFrames[count] <= context.fp && (context.fp - myFrames[count]) < 4096)
+            startIndex = count;
+#else
         if (myFrames[count] == context.fp)
             startIndex = count;
+#endif
         count++;
     }
     count = startIndex;
