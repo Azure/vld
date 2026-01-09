@@ -7,7 +7,6 @@
 #define MyAppURL "http://vld.codeplex.com/"
 #define MyAppRegKey "Software\Visual Leak Detector"
 #define ConfigType "Release"
-#define PlatformVersion "v143"
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application.
@@ -42,25 +41,34 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "{group}\View Documentation"; Filename: "http://vld.codeplex.com/documentation"
 
 [Files]
-Source: "dbghelp\x64\dbghelp.dll"; DestDir: "{app}\bin\Win64"; Flags: ignoreversion
-Source: "dbghelp\x64\Microsoft.DTfW.DHL.manifest"; DestDir: "{app}\bin\Win64"; Flags: ignoreversion
+; x86 (Win32) binaries from CMake build
 Source: "dbghelp\x86\dbghelp.dll"; DestDir: "{app}\bin\Win32"; Flags: ignoreversion
-Source: "dbghelp\x86\Microsoft.DTfW.DHL.manifest"; DestDir: "{app}\bin\Win32"; Flags: ignoreversion
-Source: "..\src\bin\Win32\{#ConfigType}-{#PlatformVersion}\vld.lib"; DestDir: "{app}\lib\Win32"; Flags: ignoreversion
-Source: "..\src\bin\Win32\{#ConfigType}-{#PlatformVersion}\vld_x86.dll"; DestDir: "{app}\bin\Win32"; Flags: ignoreversion
-Source: "..\src\bin\Win32\{#ConfigType}-{#PlatformVersion}\vld_x86.pdb"; DestDir: "{app}\bin\Win32"; Flags: ignoreversion
-Source: "..\src\bin\x64\{#ConfigType}-{#PlatformVersion}\vld.lib"; DestDir: "{app}\lib\Win64"; Flags: ignoreversion
-Source: "..\src\bin\x64\{#ConfigType}-{#PlatformVersion}\vld_x64.dll"; DestDir: "{app}\bin\Win64"; Flags: ignoreversion
-Source: "..\src\bin\x64\{#ConfigType}-{#PlatformVersion}\vld_x64.pdb"; DestDir: "{app}\bin\Win64"; Flags: ignoreversion
-Source: "..\src\vld.h"; DestDir: "{app}\include"; Flags: ignoreversion
-Source: "..\src\vld_def.h"; DestDir: "{app}\include"; Flags: ignoreversion
+Source: "dbghelp\x86\Microsoft.DTfW.DHL.manifest"; DestDir: "{app}\bin\Win32"; Flags: ignoreversion; Check: FileExists(ExpandConstant('{#SourcePath}\dbghelp\x86\Microsoft.DTfW.DHL.manifest'))
+Source: "..\build-x86\lib\{#ConfigType}\vld_x86.lib"; DestDir: "{app}\lib\Win32"; Flags: ignoreversion
+Source: "..\build-x86\bin\{#ConfigType}\vld_x86.dll"; DestDir: "{app}\bin\Win32"; Flags: ignoreversion
+Source: "..\build-x86\bin\{#ConfigType}\vld_x86.pdb"; DestDir: "{app}\bin\Win32"; Flags: ignoreversion
+
+; x64 binaries from CMake build
+Source: "dbghelp\x64\dbghelp.dll"; DestDir: "{app}\bin\Win64"; Flags: ignoreversion
+Source: "dbghelp\x64\Microsoft.DTfW.DHL.manifest"; DestDir: "{app}\bin\Win64"; Flags: ignoreversion; Check: FileExists(ExpandConstant('{#SourcePath}\dbghelp\x64\Microsoft.DTfW.DHL.manifest'))
+Source: "..\build-x64\lib\{#ConfigType}\vld_x64.lib"; DestDir: "{app}\lib\Win64"; Flags: ignoreversion
+Source: "..\build-x64\bin\{#ConfigType}\vld_x64.dll"; DestDir: "{app}\bin\Win64"; Flags: ignoreversion
+Source: "..\build-x64\bin\{#ConfigType}\vld_x64.pdb"; DestDir: "{app}\bin\Win64"; Flags: ignoreversion
+
+; ARM64 binaries from CMake build (optional - only if built)
+Source: "dbghelp\arm64\dbghelp.dll"; DestDir: "{app}\bin\ARM64"; Flags: ignoreversion; Check: FileExists(ExpandConstant('{#SourcePath}\dbghelp\arm64\dbghelp.dll'))
+Source: "..\build-arm64\lib\{#ConfigType}\vld_arm64.lib"; DestDir: "{app}\lib\ARM64"; Flags: ignoreversion; Check: FileExists(ExpandConstant('{#SourcePath}\..\build-arm64\lib\{#ConfigType}\vld_arm64.lib'))
+Source: "..\build-arm64\bin\{#ConfigType}\vld_arm64.dll"; DestDir: "{app}\bin\ARM64"; Flags: ignoreversion; Check: FileExists(ExpandConstant('{#SourcePath}\..\build-arm64\bin\{#ConfigType}\vld_arm64.dll'))
+Source: "..\build-arm64\bin\{#ConfigType}\vld_arm64.pdb"; DestDir: "{app}\bin\ARM64"; Flags: ignoreversion; Check: FileExists(ExpandConstant('{#SourcePath}\..\build-arm64\bin\{#ConfigType}\vld_arm64.pdb'))
+
+; Headers and configuration
 Source: "..\vld.ini"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\AUTHORS.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\CHANGES.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\COPYING.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "Microsoft.Cpp.Win32.user.props"; DestDir: "{localappdata}\Microsoft\MSBuild\v4.0\"; Flags: onlyifdoesntexist uninsneveruninstall
-Source: "Microsoft.Cpp.x64.user.props"; DestDir: "{localappdata}\Microsoft\MSBuild\v4.0\"; Flags: onlyifdoesntexist uninsneveruninstall
-
+Source: "Microsoft.Cpp.x64.user.props"; DestDir: "{localappdata}\Microsoft\MSBuild\v4.0\"; Flags: onlyifdoesntexist uninsneveruninstallSource: "Microsoft.Cpp.ARM64.user.props"; DestDir: "{localappdata}\Microsoft\MSBuild\v4.0\"; Flags: onlyifdoesntexist uninsneveruninstall
 [Tasks]
 Name: "modifypath"; Description: "Add VLD directory to your environmental path"
 Name: "modifyVS2008Props"; Description: "Add VLD directory to VS 2008"
@@ -432,8 +440,7 @@ begin
   if DirExists(Path) then
   begin
     ModifyProps(Path + 'Microsoft.Cpp.Win32.user.props', 'Win32');
-    ModifyProps(Path + 'Microsoft.Cpp.x64.user.props', 'Win64');
-  end;
+    ModifyProps(Path + 'Microsoft.Cpp.x64.user.props', 'Win64');    ModifyProps(Path + 'Microsoft.Cpp.ARM64.user.props', 'ARM64');  end;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
