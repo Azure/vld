@@ -7,6 +7,15 @@ set(VLD_TEST_INCLUDE_DIRS
     ${CMAKE_SOURCE_DIR}/lib/gtest/include
 )
 
+# Determine dbghelp.dll architecture based on platform
+if(VLD_PLATFORM STREQUAL "ARM64")
+    set(DBGHELP_ARCH "arm64")
+elseif(VLD_PLATFORM STREQUAL "x64")
+    set(DBGHELP_ARCH "x64")
+else()
+    set(DBGHELP_ARCH "x86")
+endif()
+
 # Common function to set up VLD test targets
 function(add_vld_test TARGET_NAME)
     cmake_parse_arguments(ARG "IS_DLL;USE_MFC;HAS_PCH;NO_UNICODE;NO_TEST;USE_STATIC_CRT;NO_VLD_LINK" "PCH_HEADER" "SOURCES;HEADERS;DEPENDS;DEFINITIONS" ${ARGN})
@@ -78,6 +87,14 @@ function(add_vld_test TARGET_NAME)
     
     # Add to tests folder in IDE
     set_target_properties(${TARGET_NAME} PROPERTIES FOLDER "Tests")
+    
+    # Copy dbghelp.dll to test output directory
+    add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/setup/dbghelp/${DBGHELP_ARCH}/dbghelp.dll"
+            "$<TARGET_FILE_DIR:${TARGET_NAME}>/dbghelp.dll"
+        COMMENT "Copying dbghelp.dll (${DBGHELP_ARCH}) to ${TARGET_NAME}"
+    )
     
     # Register with CTest if it's an executable (not a DLL) and not a helper program
     if(NOT ARG_IS_DLL AND NOT ARG_NO_TEST)
