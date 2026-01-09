@@ -415,11 +415,7 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vld_unload)
         if(TARGET vld_dll2)
             add_dependencies(vld_unload vld_dll2)
         endif()
-        
-        # Known issue: Sequence2 and Sequence3 tests fail due to VLD not tracking leaks
-        # correctly when multiple modules with static CRT are loaded simultaneously.
-        # Mark test as expected to fail for now.
-        set_tests_properties(vld_unload PROPERTIES WILL_FAIL TRUE)
+    
     endif()
 endif()
 
