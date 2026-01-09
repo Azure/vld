@@ -34,6 +34,11 @@ jobs:
       maximumCpuCount: true
 
   - task: CmdLine@2
+    displayName: 'list all content'
+    inputs:
+      script: 'dir /s'
+
+  - task: CmdLine@2
     displayName: 'Run ctest Debug'
     inputs:
       script: 'ctest -C "Debug" --output-on-failure'
