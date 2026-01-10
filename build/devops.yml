@@ -41,7 +41,7 @@ jobs:
   - task: CmdLine@2
     displayName: 'Run ctest Debug'
     inputs:
-      script: 'ctest -C "Debug" --output-on-failure'
+      script: 'ctest -C "Debug" --output-on-failure --verbose'
       workingDirectory: 'build_x64'
 
 - job: Build_Windows_x64_RelWithDebInfo

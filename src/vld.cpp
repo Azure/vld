@@ -24,8 +24,10 @@
 #include "stdafx.h"
 
 #pragma comment(lib, "dbghelp.lib")
+#pragma comment(lib, "Psapi.lib")
 
 #include <sys/stat.h>
+#include <Psapi.h>
 
 #define VLDBUILD         // Declares that we are building Visual Leak Detector.
 #include "callstack.h"   // Provides a class for handling call stacks.
@@ -89,19 +91,36 @@ moduleentry_t ntdllPatch [] = {
 typedef BOOLEAN(NTAPI *PDLL_INIT_ROUTINE)(IN PVOID DllHandle, IN ULONG Reason, IN PCONTEXT Context OPTIONAL);
 BOOLEAN WINAPI LdrpCallInitRoutine(IN PVOID BaseAddress, IN ULONG Reason, IN PVOID Context, IN PDLL_INIT_ROUTINE EntryPoint)
 {
+    WCHAR moduleName[MAX_PATH];
+    GetModuleFileNameW((HMODULE)BaseAddress, moduleName, MAX_PATH);
+    Report(L"[VLD_DIFF] *** LdrpCallInitRoutine INTERCEPTED ***\n");
+    Report(L"[VLD_DIFF] LdrpCallInitRoutine: Reason=%u, Module=%s at 0x%p, EntryPoint=0x%p\n", 
+        Reason, moduleName, BaseAddress, EntryPoint);
+
     LoaderLock ll;
 
     if (Reason == DLL_PROCESS_ATTACH) {
+        Report(L"[VLD_DIFF] LdrpCallInitRoutine: DLL_PROCESS_ATTACH for %s - calling RefreshModules\n", moduleName);
         g_vld.RefreshModules();
+        Report(L"[VLD_DIFF] LdrpCallInitRoutine: RefreshModules completed for %s\n", moduleName);
     }
 
-    return EntryPoint(BaseAddress, Reason, (PCONTEXT)Context);
+    Report(L"[VLD_DIFF] LdrpCallInitRoutine: Calling original EntryPoint at 0x%p\n", EntryPoint);
+    BOOLEAN result = EntryPoint(BaseAddress, Reason, (PCONTEXT)Context);
+    Report(L"[VLD_DIFF] LdrpCallInitRoutine: EntryPoint returned %d\n", result);
+    
+    return result;
 }
 
 PBYTE NtDllFindDetourAddress(const PBYTE pAddress, SIZE_T dwSize)
 {
+    Report(L"[VLD_DIFF] NtDllFindDetourAddress: Looking for %Iu bytes starting from 0x%p\n", dwSize, pAddress);
+    
     MEMORY_BASIC_INFORMATION meminfo = { 0 };
     if (VirtualQuery(pAddress, &meminfo, sizeof(meminfo))) {
+        Report(L"[VLD_DIFF] NtDllFindDetourAddress: MemInfo - Base=0x%p, Size=%Iu, State=0x%X, Protect=0x%X\n", 
+            meminfo.BaseAddress, meminfo.RegionSize, meminfo.State, meminfo.Protect);
+        
         // Find spare bytes at the end of the memory region that are unused
         // so we can jump to this address and set up the detour.
         PBYTE end = (PBYTE)meminfo.BaseAddress + meminfo.RegionSize;
@@ -111,50 +130,106 @@ PBYTE NtDllFindDetourAddress(const PBYTE pAddress, SIZE_T dwSize)
             if (*(--begin) != 0x00)
                 end = begin;
         }
-        if (begin != pAddress)
+        if (begin != pAddress) {
+            Report(L"[VLD_DIFF] NtDllFindDetourAddress: Found detour address at 0x%p\n", begin);
             return begin;
+        }
+        Report(L"[VLD_DIFF] NtDllFindDetourAddress: Failed to find suitable detour address\n");
+    } else {
+        Report(L"[VLD_DIFF] NtDllFindDetourAddress: VirtualQuery failed, error=%lu\n", GetLastError());
     }
     return NULL;
 }
 
 PBYTE NtDllFindParamAddress(const PBYTE pAddress)
 {
+    Report(L"[VLD_DIFF] NtDllFindParamAddress: Searching backwards from 0x%p\n", pAddress);
+    
     PBYTE ptr = pAddress;
-    // Test previous 32 bytes to find the begining address we need to patch
+    // Test previous 64 bytes (increased for Windows 11) to find the beginning address we need to patch
     // for 32bit find => push [ebp][14h] => parameters are pushed to stack
     // for 64bit find => mov r8,... => parameters are moved to registers r8, edx, rcx
-    while (pAddress - --ptr < 0x20) {
+    // Windows 11 may have more preamble code before parameters are set up
+    
+    // Dump bytes for analysis
+    Report(L"[VLD_DIFF] NtDllFindParamAddress: Memory dump (64 bytes before return address):\n");
+    for (int i = -64; i < 0; i += 16) {
+        if (pAddress + i >= (PBYTE)0x1000) {  // Basic safety check
+            Report(L"[VLD_DIFF]   Offset %3d: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X\n",
+                i,
+                *(pAddress + i + 0), *(pAddress + i + 1), *(pAddress + i + 2), *(pAddress + i + 3),
+                *(pAddress + i + 4), *(pAddress + i + 5), *(pAddress + i + 6), *(pAddress + i + 7),
+                *(pAddress + i + 8), *(pAddress + i + 9), *(pAddress + i + 10), *(pAddress + i + 11),
+                *(pAddress + i + 12), *(pAddress + i + 13), *(pAddress + i + 14), *(pAddress + i + 15));
+        }
+    }
+    
+    while (pAddress - --ptr < 0x40) {
 #ifdef _WIN64
+        // Match mov r8, r.. or mov r9, r.. instructions
+        // Pattern: 4C/4D 8B xx or 49 8B xx
         if (((ptr[0] & 0x4D) >= 0x4C) && (ptr[1] == 0x8B) && ((ptr[2] & 0xC7) == ptr[2])) {
-#else
-        if ((ptr[0] == 0xFF) && (ptr[1] == 0x75) && (ptr[2] == 0x14)) {
-#endif
+            Report(L"[VLD_DIFF] NtDllFindParamAddress: Found Pattern 1 at offset %d: %02X %02X %02X\n",
+                (int)(ptr - pAddress), ptr[0], ptr[1], ptr[2]);
             return ptr;
         }
+        // Also check for Windows 11 variant with REX prefix: 48/49/4C/4D 8B
+        if (((ptr[0] & 0xFC) == 0x48) && (ptr[1] == 0x8B)) {
+            Report(L"[VLD_DIFF] NtDllFindParamAddress: Found Pattern 2 at offset %d: %02X %02X %02X\n",
+                (int)(ptr - pAddress), ptr[0], ptr[1], ptr[2]);
+            return ptr;
         }
-    return NULL;
+#else
+        if ((ptr[0] == 0xFF) && (ptr[1] == 0x75) && (ptr[2] == 0x14)) {
+            Report(L"[VLD_DIFF] NtDllFindParamAddress: Found x86 pattern at offset %d\n", (int)(ptr - pAddress));
+            return ptr;
+        }
+#endif
     }
+    Report(L"[VLD_DIFF] NtDllFindParamAddress: No matching pattern found in 64 bytes\n");
+    return NULL;
+}
 
 PBYTE NtDllFindCallAddress(const PBYTE pAddress)
 {
+    Report(L"[VLD_DIFF] NtDllFindCallAddress: Searching backwards from 0x%p\n", pAddress);
+    
     PBYTE ptr = pAddress;
-    // Test previous 32 bytes to find the begining address we need to patch
+    // Test previous 48 bytes (increased for Windows 11) to find the beginning address we need to patch
     // for 32bit find => call [ebp][08h]
     // for 64bit find => call <register>
-    while (pAddress - --ptr < 0x20) {
+    // Windows 11 may have Control Flow Guard (CFG) checks before the call
+    while (pAddress - --ptr < 0x30) {
 #ifdef _WIN64
+        // Standard call register: FF Dx where x matches pattern
         if ((ptr[0] == 0xFF) && ((ptr[1] & 0xD7) == ptr[1])) {
-            if ((*(ptr - 1) & 0x41) == *(ptr - 1)) {
+            // Check for REX prefix (41/40) before the call instruction
+            if (ptr > pAddress - 0x30 && ((*(ptr - 1) & 0x41) == *(ptr - 1))) {
                 --ptr;
+                Report(L"[VLD_DIFF] NtDllFindCallAddress: Found call with REX prefix at offset %d: %02X %02X %02X\n",
+                    (int)(ptr - pAddress), ptr[0], ptr[1], ptr[2]);
+            } else {
+                Report(L"[VLD_DIFF] NtDllFindCallAddress: Found standard call at offset %d: %02X %02X\n",
+                    (int)(ptr - pAddress), ptr[0], ptr[1]);
             }
-#else
-        if ((ptr[0] == 0xFF) && (ptr[1] == 0x55) && (ptr[2] == 0x08)) {
-#endif
             return ptr;
         }
+        // Windows 10+: CFG indirect call: FF 15 (call [rip+offset])
+        if ((ptr[0] == 0xFF) && (ptr[1] == 0x15)) {
+            Report(L"[VLD_DIFF] NtDllFindCallAddress: Found CFG indirect call at offset %d: %02X %02X\n",
+                (int)(ptr - pAddress), ptr[0], ptr[1]);
+            return ptr;
         }
-    return NULL;
+#else
+        if ((ptr[0] == 0xFF) && (ptr[1] == 0x55) && (ptr[2] == 0x08)) {
+            Report(L"[VLD_DIFF] NtDllFindCallAddress: Found x86 call at offset %d\n", (int)(ptr - pAddress));
+            return ptr;
+        }
+#endif
     }
+    Report(L"[VLD_DIFF] NtDllFindCallAddress: No call instruction found in 48 bytes\n");
+    return NULL;
+}
 
 typedef struct _NTDLL_LDR_PATCH {
     PBYTE pPatchAddress;
@@ -171,6 +246,8 @@ NTDLL_LDR_PATCH patch;
 BOOL NtDllPatch(const PBYTE pReturnAddress, NTDLL_LDR_PATCH &NtDllPatch)
 {
     if (NtDllPatch.bState == FALSE) {
+        Report(L"[VLD_DEBUG] NtDllPatch: Starting patch process at return address 0x%p\n", pReturnAddress);
+        
 #ifdef _WIN64
         BYTE ptr[] = { '?', 0x8B, '?' };                                     // mov r9, r..
         BYTE mov[] = { 0x48, 0xB8, '?', '?', '?', '?', '?', '?', '?', '?' }; // mov rax, 0x0000000000000000
@@ -183,77 +260,158 @@ BOOL NtDllPatch(const PBYTE pReturnAddress, NTDLL_LDR_PATCH &NtDllPatch)
         BYTE jmp[] = { 0xE9, '?', '?', '?', '?' };                           // jmp 0x00000000
 
         NtDllPatch.pPatchAddress = NtDllFindParamAddress(pReturnAddress);
+        Report(L"[VLD_DEBUG] NtDllPatch: Param address = 0x%p\n", NtDllPatch.pPatchAddress);
+        
         PBYTE pCallAddress = NtDllFindCallAddress(pReturnAddress);
+        Report(L"[VLD_DEBUG] NtDllPatch: Call address = 0x%p\n", pCallAddress);
+        
+        if (!NtDllPatch.pPatchAddress || !pCallAddress) {
+            Report(L"[VLD_DEBUG] NtDllPatch: FAILED - Could not find patch/call addresses\n");
+            return FALSE;
+        }
+        
         NtDllPatch.nPatchSize = pReturnAddress - NtDllPatch.pPatchAddress;
         SIZE_T nParamSize = pCallAddress - NtDllPatch.pPatchAddress;
+        
+        Report(L"[VLD_DEBUG] NtDllPatch: Patch size = %Iu, Param size = %Iu\n", NtDllPatch.nPatchSize, nParamSize);
 
         NtDllPatch.nDetourSize = _countof(ptr) + nParamSize + _countof(mov) + _countof(jmp);
         NtDllPatch.pDetourAddress = NtDllFindDetourAddress(pReturnAddress, NtDllPatch.nDetourSize);
+        
+        Report(L"[VLD_DIFF] NtDllPatch: Detour size = %Iu, Detour address = 0x%p\n", 
+            NtDllPatch.nDetourSize, NtDllPatch.pDetourAddress);
 
         if (NtDllPatch.pPatchAddress && NtDllPatch.pDetourAddress && ((_countof(jmp) + _countof(call)) <= NtDllPatch.nPatchSize)) {
+            Report(L"[VLD_DIFF] NtDllPatch: Pre-patch validation passed\n");
+            Report(L"[VLD_DIFF] NtDllPatch: Backing up %Iu bytes from 0x%p\n", 
+                NtDllPatch.nPatchSize, NtDllPatch.pPatchAddress);
+            
             memcpy(NtDllPatch.pBackup, NtDllPatch.pPatchAddress, NtDllPatch.nPatchSize);
 
             DWORD dwProtect = 0;
             if (VirtualProtect(NtDllPatch.pDetourAddress, NtDllPatch.nDetourSize, PAGE_EXECUTE_READWRITE, &dwProtect)) {
+                Report(L"[VLD_DIFF] NtDllPatch: Detour memory protection changed (old=0x%X)\n", dwProtect);
+                
                 memset(NtDllPatch.pDetourAddress, 0x90, NtDllPatch.nDetourSize);
 #ifdef _WIN64
                 // Copy original param instructions
                 memcpy(NtDllPatch.pDetourAddress, NtDllPatch.pPatchAddress, nParamSize);
+                Report(L"[VLD_DIFF] NtDllPatch: Copied %Iu param bytes to detour\n", nParamSize);
 
                 BYTE reg = 0x00;
 
+                // Enhanced detection for Windows 10/11 CFG (Control Flow Guard) and other dispatch mechanisms
                 LPBYTE icall = NtDllPatch.pPatchAddress + nParamSize - (3 /*instruction size*/ + sizeof(DWORD));
+                
+                Report(L"[VLD_DIFF] NtDllPatch: Analyzing icall at offset %d, bytes: %02X %02X %02X %02X %02X %02X %02X\n",
+                    (int)(icall - NtDllPatch.pPatchAddress),
+                    icall[0], icall[1], icall[2], icall[3], icall[4], icall[5], icall[6]);
+                
+                // Check for various CFG dispatch patterns
+                BOOL cfgDetected = FALSE;
+                
+                // Pattern 1: Windows 10 (1607+) __guard_dispatch_icall_fptr: 4C 8B 0D
                 if ((*(LPDWORD)icall & 0x000D8B4C) == 0x000D8B4C) {
-                    // From Windows 10 (1607) calls to the EntryPoint are dispatched through
-                    // __guard_dispatch_icall_fptr. In such case correct the relative address.
+                    Report(L"[VLD_DIFF] NtDllPatch: Detected CFG Pattern 1 (Windows 10 1607+ guard_dispatch)\n");
+                    cfgDetected = TRUE;
                     DWORD fptr = *(LPDWORD)(icall + 3) + (3 /*instruction size*/ + sizeof(DWORD)) - (DWORD)(NtDllPatch.pDetourAddress - NtDllPatch.pPatchAddress);
                     memcpy(NtDllPatch.pDetourAddress + nParamSize - sizeof(DWORD), &fptr, sizeof(DWORD));
-
-                    // Additionally in such case the EntryPoint is held in another register
-                    // that was moved to rax. In such case identify the correct register
-                    // holding the EntryPoint
                     reg = ((*(icall - 3) & 0xF1) == 0x41 ? 0x08 : 0x00) + (*(icall - 1) & 0x07);
-                } else {
+                    Report(L"[VLD_DIFF] NtDllPatch: CFG Pattern 1 - Adjusted fptr=0x%X, reg=0x%02X\n", fptr, reg);
+                }
+                // Pattern 2: Windows 11 variant with different register encoding
+                else if ((icall[0] == 0x4C || icall[0] == 0x48) && icall[1] == 0x8B) {
+                    Report(L"[VLD_DIFF] NtDllPatch: Detected CFG Pattern 2 (Windows 11 variant)\n");
+                    cfgDetected = TRUE;
+                    // mov r.., [rip+offset]
+                    if (icall[2] == 0x0D || icall[2] == 0x15) {
+                        DWORD fptr = *(LPDWORD)(icall + 3) + (3 /*instruction size*/ + sizeof(DWORD)) - (DWORD)(NtDllPatch.pDetourAddress - NtDllPatch.pPatchAddress);
+                        memcpy(NtDllPatch.pDetourAddress + nParamSize - sizeof(DWORD), &fptr, sizeof(DWORD));
+                        Report(L"[VLD_DIFF] NtDllPatch: CFG Pattern 2 - Adjusted fptr=0x%X\n", fptr);
+                    }
+                    reg = (icall[0] == 0x4C ? 0x08 : 0x00) + (icall[2] & 0x07);
+                    Report(L"[VLD_DIFF] NtDllPatch: CFG Pattern 2 - reg=0x%02X\n", reg);
+                }
+                // Pattern 3: Call through [rip+offset] - FF 15
+                else if (pCallAddress[0] == 0xFF && pCallAddress[1] == 0x15) {
+                    Report(L"[VLD_DIFF] NtDllPatch: Detected CFG Pattern 3 (indirect call via rip+offset)\n");
+                    cfgDetected = TRUE;
+                    // For indirect call via memory, the register is typically rax
+                    reg = 0x00; // rax
+                    Report(L"[VLD_DIFF] NtDllPatch: CFG Pattern 3 - Using rax (reg=0x00)\n");
+                }
+                
+                // Fallback to standard register detection
+                if (!cfgDetected) {
+                    Report(L"[VLD_DIFF] NtDllPatch: No CFG pattern detected, using standard register detection\n");
+                    Report(L"[VLD_DIFF] NtDllPatch: pCallAddress bytes: %02X %02X, offset=%d\n",
+                        pCallAddress[0], pCallAddress[pReturnAddress - pCallAddress - 1],
+                        (int)(pReturnAddress - pCallAddress - 1));
                     reg = ((pCallAddress[0] & 0xF1) == 0x41 ? 0x08 : 0x00) + (pCallAddress[pReturnAddress - pCallAddress - 1] & 0x07);
+                    Report(L"[VLD_DIFF] NtDllPatch: Standard detection - reg=0x%02X\n", reg);
                 }
 
                 // Copy the register that holds the EntryPoint to r9
                 ptr[0] = 0x4C + ((reg & 0x08) ? 0x01 : 0x00);
                 ptr[2] = 0xC8 + (reg & 0x07);
                 memcpy(&NtDllPatch.pDetourAddress[nParamSize], &ptr, _countof(ptr));
+                Report(L"[VLD_DIFF] NtDllPatch: Copied register move instruction: %02X %02X %02X\n",
+                    ptr[0], ptr[1], ptr[2]);
 #else
                 // Push EntryPoint as last parameter
                 memcpy(&NtDllPatch.pDetourAddress[0], &ptr, _countof(ptr));
                 // Copy original param instructions
                 memcpy(&NtDllPatch.pDetourAddress[_countof(ptr)], NtDllPatch.pPatchAddress, nParamSize);
+                Report(L"[VLD_DIFF] NtDllPatch: x86 - Copied param instructions\n");
 #endif
                 // Move LdrpCallInitRoutine to eax/rax
                 *(PSIZE_T)(&mov[2]) = (SIZE_T)LdrpCallInitRoutine;
                 memcpy(&NtDllPatch.pDetourAddress[_countof(ptr) + nParamSize], &mov, _countof(mov));
+                Report(L"[VLD_DIFF] NtDllPatch: Installed LdrpCallInitRoutine address 0x%p\n", LdrpCallInitRoutine);
 
                 // Jump to original function
                 *(DWORD*)(&jmp[1]) = (DWORD)(pReturnAddress - _countof(call) - (NtDllPatch.pDetourAddress + NtDllPatch.nDetourSize));
                 memcpy(&NtDllPatch.pDetourAddress[_countof(ptr) + nParamSize + _countof(mov)], &jmp, _countof(jmp));
+                Report(L"[VLD_DIFF] NtDllPatch: Installed jump back to 0x%p (offset=0x%X)\n",
+                    pReturnAddress - _countof(call), *(DWORD*)(&jmp[1]));
 
                 VirtualProtect(NtDllPatch.pDetourAddress, NtDllPatch.nDetourSize, dwProtect, &dwProtect);
+                Report(L"[VLD_DIFF] NtDllPatch: Restored detour memory protection\n");
 
                 if (VirtualProtect(NtDllPatch.pPatchAddress, NtDllPatch.nPatchSize, PAGE_EXECUTE_READWRITE, &dwProtect)) {
+                    Report(L"[VLD_DIFF] NtDllPatch: Original memory protection changed (old=0x%X)\n", dwProtect);
+                    
                     memset(NtDllPatch.pPatchAddress, 0x90, NtDllPatch.nPatchSize);
 
                     // Jump to detour address
                     *(DWORD*)(&jmp[1]) = (DWORD)(NtDllPatch.pDetourAddress - (pReturnAddress - _countof(call)));
                     memcpy(pReturnAddress - _countof(call) - _countof(jmp), &jmp, _countof(jmp));
+                    Report(L"[VLD_DIFF] NtDllPatch: Installed jump to detour at 0x%p (offset=0x%X)\n",
+                        pReturnAddress - _countof(call) - _countof(jmp), *(DWORD*)(&jmp[1]));
 
                     // Call LdrpCallInitRoutine from eax/rax
                     memcpy(pReturnAddress - _countof(call), &call, _countof(call));
+                    Report(L"[VLD_DIFF] NtDllPatch: Installed call instruction at 0x%p\n", pReturnAddress - _countof(call));
 
                     VirtualProtect(NtDllPatch.pPatchAddress, NtDllPatch.nPatchSize, dwProtect, &dwProtect);
+                    Report(L"[VLD_DIFF] NtDllPatch: Restored original memory protection\n");
 
                     NtDllPatch.bState = TRUE;
+                    Report(L"[VLD_DIFF] NtDllPatch: *** PATCH SUCCESSFULLY INSTALLED ***\n");
+                } else {
+                    Report(L"[VLD_DIFF] NtDllPatch: FAILED to change original memory protection, error=%lu\n", GetLastError());
                 }
+            } else {
+                Report(L"[VLD_DIFF] NtDllPatch: FAILED to change detour memory protection, error=%lu\n", GetLastError());
             }
+        } else {
+            Report(L"[VLD_DIFF] NtDllPatch: FAILED pre-patch validation:\n");
+            Report(L"[VLD_DIFF]   pPatchAddress = 0x%p\n", NtDllPatch.pPatchAddress);
+            Report(L"[VLD_DIFF]   pDetourAddress = 0x%p\n", NtDllPatch.pDetourAddress);
+            Report(L"[VLD_DIFF]   nPatchSize = %Iu (need >= %Iu)\n", NtDllPatch.nPatchSize, _countof(jmp) + _countof(call));
         }
     }
+    Report(L"[VLD_DIFF] NtDllPatch: Final patch state = %s\n", NtDllPatch.bState ? L"SUCCESS" : L"FAILED");
     return NtDllPatch.bState;
 }
 
@@ -287,7 +445,47 @@ BOOL WINAPI DllEntryPoint(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved
 {
     // Patch/Restore ntdll address that calls the dll entry point
     if (fdwReason == DLL_PROCESS_ATTACH) {
-        NtDllPatch((PBYTE)_ReturnAddress(), patch);
+        Report(L"[VLD_DIFF] ========================================\n");
+        Report(L"[VLD_DIFF] DllEntryPoint: VLD.DLL is loading\n");
+        Report(L"[VLD_DIFF] ========================================\n");
+        
+        // Get Windows version for differential analysis
+        OSVERSIONINFOEXW osvi = { sizeof(osvi) };
+        if (GetVersionExW((LPOSVERSIONINFOW)&osvi)) {
+            Report(L"[VLD_DIFF] Windows Version: %u.%u Build %u SP %u.%u\n",
+                osvi.dwMajorVersion, osvi.dwMinorVersion, osvi.dwBuildNumber,
+                osvi.wServicePackMajor, osvi.wServicePackMinor);
+        }
+        
+        PBYTE returnAddr = (PBYTE)_ReturnAddress();
+        Report(L"[VLD_DIFF] DllEntryPoint: Return address from ntdll = 0x%p\n", returnAddr);
+        
+        // Get module info for ntdll
+        HMODULE hNtdll = GetModuleHandleW(L"ntdll.dll");
+        if (hNtdll) {
+            MODULEINFO modInfo = {0};
+            if (GetModuleInformation(GetCurrentProcess(), hNtdll, &modInfo, sizeof(modInfo))) {
+                Report(L"[VLD_DIFF] ntdll.dll: Base=0x%p, Size=%u, EntryPoint=0x%p\n",
+                    modInfo.lpBaseOfDll, modInfo.SizeOfImage, modInfo.EntryPoint);
+                Report(L"[VLD_DIFF] Return address offset from ntdll base: 0x%IX\n",
+                    (SIZE_T)returnAddr - (SIZE_T)modInfo.lpBaseOfDll);
+            }
+        }
+        
+        Report(L"[VLD_DIFF] ========================================\n");
+        Report(L"[VLD_DIFF] Starting ntdll patch process...\n");
+        Report(L"[VLD_DIFF] ========================================\n");
+        
+        BOOL patchResult = NtDllPatch(returnAddr, patch);
+        
+        Report(L"[VLD_DIFF] ========================================\n");
+        if (patchResult) {
+            Report(L"[VLD_DIFF] DllEntryPoint: *** NTDLL PATCH SUCCESS ***\n");
+        } else {
+            Report(L"[VLD_DIFF] DllEntryPoint: *** NTDLL PATCH FAILED ***\n");
+            Report(L"[VLD_DIFF] DllEntryPoint: Will rely on LdrLoadDll hook fallback\n");
+        }
+        Report(L"[VLD_DIFF] ========================================\n");
     }
 
     if (fdwReason == DLL_PROCESS_ATTACH || fdwReason == DLL_THREAD_ATTACH)
@@ -299,6 +497,7 @@ BOOL WINAPI DllEntryPoint(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved
             return(FALSE);
 
     if (fdwReason == DLL_PROCESS_DETACH) {
+        Report(L"[VLD_DIFF] DllEntryPoint: Restoring ntdll patch...\n");
         NtDllRestore(patch);
     }
     return(TRUE);
@@ -911,6 +1110,9 @@ VOID VisualLeakDetector::attachToLoadedModules (ModuleSet *newmodules)
         updateit = newit;
         (*updateit).flags = moduleFlags;
 
+        Report(L"[VLD_DEBUG] attachToLoadedModules: Patching module %s (excluded=%d)\n", 
+                 modulename, (moduleFlags & VLD_MODULE_EXCLUDED) ? 1 : 0);
+
         // Attach to the module.
         PatchModule(modulelocal, m_patchTable, _countof(m_patchTable));
 
@@ -1367,6 +1569,9 @@ tls_t* VisualLeakDetector::getTls ()
 //
 VOID VisualLeakDetector::mapBlock (HANDLE heap, LPCVOID mem, SIZE_T size, bool debugcrtalloc, bool ucrt, DWORD threadId, blockinfo_t* &pblockInfo)
 {
+    Report(L"[VLD_DEBUG] mapBlock: Tracking allocation at 0x%p, size=%Iu, heap=0x%p, thread=%u\n", 
+             mem, size, heap, threadId);
+
     // Record the block's information.
     blockinfo_t* blockinfo = new blockinfo_t();
     blockinfo->callStack = NULL;
@@ -2285,16 +2490,37 @@ FARPROC VisualLeakDetector::_RGetProcAddressForCaller(HMODULE module, LPCSTR pro
 NTSTATUS VisualLeakDetector::_LdrLoadDll (LPWSTR searchpath, PULONG flags, unicodestring_t *modulename,
     PHANDLE modulehandle)
 {
+    Report(L"[VLD_DEBUG] _LdrLoadDll called for module: %s\n", modulename ? modulename->buffer : L"(null)");
+    
     // Load the DLL
     NTSTATUS status = LdrLoadDll(searchpath, flags, modulename, modulehandle);
+    
+    if (NT_SUCCESS(status) && modulehandle && *modulehandle) {
+        Report(L"[VLD_DEBUG] _LdrLoadDll: DLL loaded successfully, calling RefreshModules\n");
+        // Refresh modules after successful load to ensure the new DLL is tracked
+        g_vld.RefreshModules();
+    }
+    
     return status;
 }
 
 NTSTATUS VisualLeakDetector::_LdrLoadDllWin8 (DWORD_PTR reserved, PULONG flags, unicodestring_t *modulename,
                                           PHANDLE modulehandle)
 {
+    Report(L"[VLD_DEBUG] _LdrLoadDllWin8 called for module: %s\n", modulename ? modulename->buffer : L"(null)");
+    
     // Load the DLL
     NTSTATUS status = LdrLoadDllWin8(reserved, flags, modulename, modulehandle);
+    
+    if (NT_SUCCESS(status) && modulehandle && *modulehandle) {
+        Report(L"[VLD_DEBUG] _LdrLoadDllWin8: DLL loaded successfully at 0x%p, calling RefreshModules\n", *modulehandle);
+        
+        // CRITICAL: We must patch the new DLL's imports BEFORE its DllMain runs.
+        // Since LdrLoadDll has already returned, DllMain has already executed.
+        // However, RefreshModules will ensure future allocations from this DLL are tracked.
+        g_vld.RefreshModules();
+    }
+    
     return status;
 }
 
@@ -2335,6 +2561,8 @@ VOID VisualLeakDetector::RefreshModules()
     if (m_options & VLD_OPT_VLDOFF)
         return;
 
+    Report(L"[VLD_DEBUG] RefreshModules: Starting module refresh\n");
+
     ModuleSet* newmodules = new ModuleSet();
     newmodules->reserve(MODULE_SET_RESERVE);
     {
@@ -2355,6 +2583,8 @@ VOID VisualLeakDetector::RefreshModules()
 
     // Free resources used by the old module list.
     delete oldmodules;
+
+    Report(L"[VLD_DEBUG] RefreshModules: Module refresh complete\n");
 }
 
 // Find the information for the module that initiated this reallocation.
@@ -2390,12 +2620,17 @@ SIZE_T VisualLeakDetector::GetLeaksCount()
     SIZE_T leaksCount = 0;
     // Generate a memory leak report for each heap in the process.
     CriticalSectionLocker<> cs(g_heapMapLock);
+    Report(L"[VLD_DEBUG] GetLeaksCount: Checking heaps\n");
     for (HeapMap::Iterator heapit = m_heapMap->begin(); heapit != m_heapMap->end(); ++heapit) {
         HANDLE heap = (*heapit).first;
         UNREFERENCED_PARAMETER(heap);
         heapinfo_t* heapinfo = (*heapit).second;
-        leaksCount += getLeaksCount(heapinfo);
+        SIZE_T heapLeaks = getLeaksCount(heapinfo);
+        Report(L"[VLD_DEBUG] GetLeaksCount: Heap 0x%p has %Iu leaks\n", 
+                 heap, heapLeaks);
+        leaksCount += heapLeaks;
     }
+    Report(L"[VLD_DEBUG] GetLeaksCount: Total leaks = %Iu\n", leaksCount);
     return leaksCount;
 }
 
