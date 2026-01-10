@@ -338,6 +338,15 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_functions_test/ignore_functions_tes
     )
     
     # This test requires its own vld.ini with IgnoreFunctionsList
+    # Determine dbghelp architecture for copying
+    if(VLD_PLATFORM STREQUAL "ARM64")
+        set(DBGHELP_ARCH "arm64")
+    elseif(VLD_PLATFORM STREQUAL "x64")
+        set(DBGHELP_ARCH "x64")
+    else()
+        set(DBGHELP_ARCH "x86")
+    endif()
+    
     add_custom_command(TARGET ignore_functions_test POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/ignore_functions_test/vld.ini"
@@ -345,7 +354,10 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_functions_test/ignore_functions_tes
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:vld>"
             "$<TARGET_FILE_DIR:ignore_functions_test>/$<TARGET_FILE_NAME:vld>"
-        COMMENT "Copying ignore_functions_test vld.ini and VLD DLL"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/setup/dbghelp/${DBGHELP_ARCH}/dbghelp.dll"
+            "$<TARGET_FILE_DIR:ignore_functions_test>/dbghelp.dll"
+        COMMENT "Copying ignore_functions_test vld.ini, VLD DLL, and dbghelp.dll"
     )
 endif()
 
