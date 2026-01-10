@@ -48,7 +48,10 @@ TEST_P(DynamicLoader, LoaderTests)
     int leaks = static_cast<int>(VLDGetLeaksCount());
     FreeLibrary(hdynLib);
 #else
-    //VLDMarkAllLeaksAsReported();
+    // Mark leaks after LoadLibrary to exclude system DLL initialization allocations
+    // that happen during DLL loading (especially on x86 where Windows runtime DLLs
+    // like msvcp_win.dll make allocations during LdrLoadDll)
+    VLDMarkAllLeaksAsReported();
     RunLoaderTests(hdynLib, GetParam());    // leaks 18
     FreeLibrary(hdynLib);
     int leaks = static_cast<int>(VLDGetLeaksCount());
