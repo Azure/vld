@@ -46,9 +46,11 @@ jobs:
 
   - task: CmdLine@2
     displayName: 'Run vld_unload.exe Debug'
+    condition: always()
     inputs:
       script: 'vld_unload.exe'
       workingDirectory: 'build_x64'
+      
 
 - job: Build_Windows_x64_RelWithDebInfo
   pool:
