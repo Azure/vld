@@ -3,7 +3,17 @@ resources:
 - repo: self
   clean: true
 jobs:
-- job: Build_Windows_x64_Debug
+- job: Build_Windows_Debug
+  strategy:
+    matrix:
+      x64:
+        archName: 'x64'
+        cmakeArch: 'x64'
+        platform: 'x64'
+      x86:
+        archName: 'x86'
+        cmakeArch: 'Win32'
+        platform: 'Win32'
   pool:
     name: Azure-MessagingStore-WinBuildPoolVS2022_0
     demands:
@@ -19,16 +29,16 @@ jobs:
       modifyEnvironment: true
 
   - task: CMake@1
-    displayName: 'CMake .. -DVLD_USE_MFC=OFF -A x64'
+    displayName: 'CMake .. -DVLD_USE_MFC=OFF -A $(cmakeArch)'
     inputs:
-      workingDirectory: 'build_x64'
-      cmakeArgs: '.. -DVLD_USE_MFC=OFF -A x64'
+      workingDirectory: 'build_$(archName)'
+      cmakeArgs: '.. -DVLD_USE_MFC=OFF -A $(cmakeArch)'
 
   - task: VSBuild@1
-    displayName: 'Build solution build_x64\*.sln'
+    displayName: 'Build solution build_$(archName)\*.sln'
     inputs:
-      solution: 'build_x64\*.sln'
-      platform: x64
+      solution: 'build_$(archName)\*.sln'
+      platform: $(platform)
       configuration: Debug
       msbuildArgs: '/t:restore /t:build'
       maximumCpuCount: true
@@ -37,9 +47,19 @@ jobs:
     displayName: 'Run ctest Debug'
     inputs:
       script: 'ctest -C "Debug" --output-on-failure'
-      workingDirectory: 'build_x64'
+      workingDirectory: 'build_$(archName)'
 
-- job: Build_Windows_x64_RelWithDebInfo
+- job: Build_Windows_RelWithDebInfo
+  strategy:
+    matrix:
+      x64:
+        archName: 'x64'
+        cmakeArch: 'x64'
+        platform: 'x64'
+      x86:
+        archName: 'x86'
+        cmakeArch: 'Win32'
+        platform: 'Win32'
   pool:
     name: Azure-MessagingStore-WinBuildPoolVS2022_0
     demands:
@@ -55,16 +75,16 @@ jobs:
       modifyEnvironment: true
 
   - task: CMake@1
-    displayName: 'CMake .. -DVLD_USE_MFC=OFF -A x64'
+    displayName: 'CMake .. -DVLD_USE_MFC=OFF -A $(cmakeArch)'
     inputs:
-      workingDirectory: 'build_x64'
-      cmakeArgs: '.. -DVLD_USE_MFC=OFF -A x64'
+      workingDirectory: 'build_$(archName)'
+      cmakeArgs: '.. -DVLD_USE_MFC=OFF -A $(cmakeArch)'
 
   - task: VSBuild@1
-    displayName: 'Build solution build_x64\*.sln'
+    displayName: 'Build solution build_$(archName)\*.sln'
     inputs:
-      solution: 'build_x64\*.sln'
-      platform: x64
+      solution: 'build_$(archName)\*.sln'
+      platform: $(platform)
       configuration: RelWithDebInfo
       msbuildArgs: '/t:restore /t:build'
       maximumCpuCount: true
@@ -73,4 +93,4 @@ jobs:
     displayName: 'Run ctest RelWithDebInfo'
     inputs:
       script: 'ctest -C "RelWithDebInfo" --output-on-failure'
-      workingDirectory: 'build_x64'
+      workingDirectory: 'build_$(archName)'
