@@ -48,7 +48,7 @@ jobs:
     displayName: 'Run vld_unload.exe Debug'
     condition: always()
     inputs:
-      script: 'vld_unload.exe'
+      script: 'bin\Debug\vld_unload.exe'
       workingDirectory: 'build_x64'
       
 
