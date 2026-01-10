@@ -3,63 +3,29 @@ resources:
 - repo: self
   clean: true
 jobs:
-- job: Build_Windows_Debug
+- job: Build_Windows
   strategy:
     matrix:
-      x64:
+      x64_Debug:
         archName: 'x64'
         cmakeArch: 'x64'
         platform: 'x64'
-      x86:
-        archName: 'x86'
-        cmakeArch: 'Win32'
-        platform: 'Win32'
-  pool:
-    name: Azure-MessagingStore-WinBuildPoolVS2022_0
-    demands:
-    - msbuild
-    - visualstudio
-    - Build
-  steps:
-
-  - task: BatchScript@1
-    displayName: 'Setup VS Vars'
-    inputs:
-      filename: '"c:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat"'
-      modifyEnvironment: true
-
-  - task: CMake@1
-    displayName: 'CMake .. -DVLD_USE_MFC=OFF -A $(cmakeArch)'
-    inputs:
-      workingDirectory: 'build_$(archName)'
-      cmakeArgs: '.. -DVLD_USE_MFC=OFF -A $(cmakeArch)'
-
-  - task: VSBuild@1
-    displayName: 'Build solution build_$(archName)\*.sln'
-    inputs:
-      solution: 'build_$(archName)\*.sln'
-      platform: $(platform)
-      configuration: Debug
-      msbuildArgs: '/t:restore /t:build'
-      maximumCpuCount: true
-
-  - task: CmdLine@2
-    displayName: 'Run ctest Debug'
-    inputs:
-      script: 'ctest -C "Debug" --output-on-failure'
-      workingDirectory: 'build_$(archName)'
-
-- job: Build_Windows_RelWithDebInfo
-  strategy:
-    matrix:
-      x64:
+        configuration: 'Debug'
+      x64_RelWithDebInfo:
         archName: 'x64'
         cmakeArch: 'x64'
         platform: 'x64'
-      x86:
+        configuration: 'RelWithDebInfo'
+      x86_Debug:
         archName: 'x86'
         cmakeArch: 'Win32'
         platform: 'Win32'
+        configuration: 'Debug'
+      x86_RelWithDebInfo:
+        archName: 'x86'
+        cmakeArch: 'Win32'
+        platform: 'Win32'
+        configuration: 'RelWithDebInfo'
   pool:
     name: Azure-MessagingStore-WinBuildPoolVS2022_0
     demands:
@@ -68,6 +34,7 @@ jobs:
     - visualstudio
     - Build
   steps:
+
   - task: BatchScript@1
     displayName: 'Setup VS Vars'
     inputs:
@@ -81,16 +48,16 @@ jobs:
       cmakeArgs: '.. -DVLD_USE_MFC=OFF -A $(cmakeArch)'
 
   - task: VSBuild@1
-    displayName: 'Build solution build_$(archName)\*.sln'
+    displayName: 'Build solution build_$(archName)\*.sln $(configuration)'
     inputs:
       solution: 'build_$(archName)\*.sln'
       platform: $(platform)
-      configuration: RelWithDebInfo
+      configuration: $(configuration)
       msbuildArgs: '/t:restore /t:build'
       maximumCpuCount: true
 
   - task: CmdLine@2
-    displayName: 'Run ctest RelWithDebInfo'
+    displayName: 'Run ctest $(configuration)'
     inputs:
-      script: 'ctest -C "RelWithDebInfo" --output-on-failure'
+      script: 'ctest -C "$(configuration)" --output-on-failure'
       workingDirectory: 'build_$(archName)'
