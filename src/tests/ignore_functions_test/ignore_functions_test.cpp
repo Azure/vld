@@ -14,10 +14,8 @@ class TestIgnoreFunctions : public ::testing::Test
     }
     virtual void TearDown()
     {
-        // Force resolve all callstacks first
-        int unresolved = VLDResolveCallstacks();
         // Check that callstack resolved without unresolved functions (required symbols for all dll's)
-        EXPECT_EQ(0, unresolved) << "VLDResolveCallstacks returned " << unresolved << " unresolved functions";
+        EXPECT_EQ(0, VLDResolveCallstacks());
     }
 };
 
