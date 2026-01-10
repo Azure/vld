@@ -22,6 +22,11 @@ class TestIgnoreFunctions : public ::testing::Test
 // Use new/malloc directly to have deterministic allocation counts.
 // These functions are added to IgnoreFunctionsList in vld.ini
 //
+// NOTE: We use explicit "new char[32]" instead of std::string because of
+// Small String Optimization (SSO). In release builds, std::string stores
+// short strings (<=15 chars) inline without any heap allocation, so there
+// would be nothing for VLD to track. Using new ensures exactly 1 allocation.
+//
 // IMPORTANT: We must disable optimizations for these functions to prevent
 // tail call optimization. When a function's last action is "return new ...",
 // the compiler can replace the "call new; ret" sequence with a direct "jmp new",
