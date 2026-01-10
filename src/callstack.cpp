@@ -543,6 +543,15 @@ UINT CallStack::isCrtStartupFunction( LPCWSTR functionName ) const
         || (wcscmp(functionName, L"_Getctype") == 0)
         || (wcscmp(functionName, L"std::_Facet_Register") == 0)
         || endWith(functionName, len, L">::_Getcat")
+        // DLL CRT initialization
+        || endWith(functionName, len, L"dllmain_crt_process_attach")
+        // x86 RelWithDebInfo CRT environment init (symbol resolution artifact)
+        || endWith(functionName, len, L"o_rand")
+        // Dynamic initializers for static/global objects (usually have matching atexit destructors)
+        || beginWith(functionName, len, L"`dynamic initializer for '")
+        // EXE pre-main CRT initialization
+        || endWith(functionName, len, L"pre_c_initialization")
+        || endWith(functionName, len, L"__scrt_set_unhandled_exception_filter")
         // Added fixes
         || endWith(functionName, len, L"initterm")
         ) {

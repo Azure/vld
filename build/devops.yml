@@ -2,69 +2,60 @@ name: $(BuildID)_$(BuildDefinitionName)_$(SourceBranchName)_$(Date:yyyyMMdd)$(Re
 resources:
 - repo: self
   clean: true
+
+parameters:
+- name: architectures
+  type: object
+  default:
+    - name: 'x64'
+      cmakeArch: 'x64'
+      platform: 'x64'
+    - name: 'x86'
+      cmakeArch: 'Win32'
+      platform: 'Win32'
+- name: configurations
+  type: object
+  default:
+    - 'Debug'
+    - 'RelWithDebInfo'
+
 jobs:
-- job: Build_Windows_x64_Debug
-  pool:
-    name: Azure-MessagingStore-WinBuildPoolVS2022_0
-    demands:
-    - msbuild
-    - visualstudio
-    - Build
-  steps:
+- ${{ each arch in parameters.architectures }}:
+  - ${{ each config in parameters.configurations }}:
+    - job: Build_Windows_${{ arch.name }}_${{ config }}
+      displayName: 'Build Windows ${{ arch.name }} ${{ config }}'
+      pool:
+        name: Azure-MessagingStore-WinBuildPoolVS2022_0
+        demands:
+        - Cmd
+        - msbuild
+        - visualstudio
+        - Build
+      steps:
 
-  - task: BatchScript@1
-    displayName: 'Setup VS Vars'
-    inputs:
-      filename: '"c:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat"'
-      modifyEnvironment: true
+      - task: BatchScript@1
+        displayName: 'Setup VS Vars'
+        inputs:
+          filename: '"c:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat"'
+          modifyEnvironment: true
 
-  - task: CMake@1
-    displayName: 'CMake .. -DVLD_USE_MFC=OFF -A x64'
-    inputs:
-      workingDirectory: 'build_x64'
-      cmakeArgs: '.. -DVLD_USE_MFC=OFF -A x64'
+      - task: CMake@1
+        displayName: 'CMake .. -DVLD_USE_MFC=OFF -A ${{ arch.cmakeArch }}'
+        inputs:
+          workingDirectory: 'build_${{ arch.name }}'
+          cmakeArgs: '.. -DVLD_USE_MFC=OFF -A ${{ arch.cmakeArch }}'
 
-  - task: VSBuild@1
-    displayName: 'Build solution build_x64\*.sln'
-    inputs:
-      solution: 'build_x64\*.sln'
-      platform: x64
-      configuration: Debug
-      msbuildArgs: '/t:restore /t:build'
-      maximumCpuCount: true
+      - task: VSBuild@1
+        displayName: 'Build solution ${{ config }}'
+        inputs:
+          solution: 'build_${{ arch.name }}\*.sln'
+          platform: ${{ arch.platform }}
+          configuration: ${{ config }}
+          msbuildArgs: '/t:restore /t:build'
+          maximumCpuCount: true
 
-  - task: CmdLine@2
-    displayName: 'Run ctest Debug'
-    inputs:
-      script: 'ctest -C "Debug" --output-on-failure'
-      workingDirectory: 'build_x64'
-
-- job: Build_Windows_x64_RelWithDebInfo
-  pool:
-    name: Azure-MessagingStore-WinBuildPoolVS2022_0
-    demands:
-    - Cmd
-    - msbuild
-    - visualstudio
-    - Build
-  steps:
-  - task: BatchScript@1
-    displayName: 'Setup VS Vars'
-    inputs:
-      filename: '"c:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat"'
-      modifyEnvironment: true
-
-  - task: CMake@1
-    displayName: 'CMake .. -DVLD_USE_MFC=OFF -A x64'
-    inputs:
-      workingDirectory: 'build_x64'
-      cmakeArgs: '.. -DVLD_USE_MFC=OFF -A x64'
-
-  - task: VSBuild@1
-    displayName: 'Build solution build_x64\*.sln'
-    inputs:
-      solution: 'build_x64\*.sln'
-      platform: x64
-      configuration: RelWithDebInfo
-      msbuildArgs: '/t:restore /t:build'
-      maximumCpuCount: true
+      - task: CmdLine@2
+        displayName: 'Run ctest ${{ config }}'
+        inputs:
+          script: 'ctest -C "${{ config }}" --output-on-failure'
+          workingDirectory: 'build_${{ arch.name }}'
