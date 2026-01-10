@@ -34,6 +34,7 @@ function(add_vld_test TARGET_NAME)
         _VARIADIC_MAX=10
         $<$<CONFIG:Debug>:_DEBUG>
         $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
+        $<$<NOT:$<CONFIG:Debug>>:VLD_FORCE_ENABLE>
     )
     
     # Unicode support (most tests need it)
