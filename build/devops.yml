@@ -44,6 +44,12 @@ jobs:
       script: 'ctest -C "Debug" --output-on-failure --verbose'
       workingDirectory: 'build_x64'
 
+  - task: CmdLine@2
+    displayName: 'Run vld_unload.exe Debug'
+    inputs:
+      script: 'vld_unload.exe'
+      workingDirectory: 'build_x64'
+
 - job: Build_Windows_x64_RelWithDebInfo
   pool:
     name: Azure-MessagingStore-WinBuildPoolVS2022_0
