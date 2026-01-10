@@ -2,7 +2,6 @@ name: $(BuildID)_$(BuildDefinitionName)_$(SourceBranchName)_$(Date:yyyyMMdd)$(Re
 resources:
 - repo: self
   clean: true
-<<<<<<< HEAD
 
 parameters:
 - name: architectures
@@ -60,71 +59,3 @@ jobs:
         inputs:
           script: 'ctest -C "${{ config }}" --output-on-failure'
           workingDirectory: 'build_${{ arch.name }}'
-=======
-jobs:
-- job: Build_Windows_x64_Debug
-  pool:
-    name: Azure-MessagingStore-WinBuildPoolVS2022_0
-    demands:
-    - msbuild
-    - visualstudio
-    - Build
-  steps:
-
-  - task: BatchScript@1
-    displayName: 'Setup VS Vars'
-    inputs:
-      filename: '"c:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat"'
-      modifyEnvironment: true
-
-  - task: CMake@1
-    displayName: 'CMake .. -DVLD_USE_MFC=OFF -A x64'
-    inputs:
-      workingDirectory: 'build_x64'
-      cmakeArgs: '.. -DVLD_USE_MFC=OFF -A x64'
-
-  - task: VSBuild@1
-    displayName: 'Build solution build_x64\*.sln'
-    inputs:
-      solution: 'build_x64\*.sln'
-      platform: x64
-      configuration: Debug
-      msbuildArgs: '/t:restore /t:build'
-      maximumCpuCount: true
-
-  - task: CmdLine@2
-    displayName: 'Run ctest Debug'
-    inputs:
-      script: 'ctest -C "Debug" --output-on-failure'
-      workingDirectory: 'build_x64'
-
-- job: Build_Windows_x64_RelWithDebInfo
-  pool:
-    name: Azure-MessagingStore-WinBuildPoolVS2022_0
-    demands:
-    - Cmd
-    - msbuild
-    - visualstudio
-    - Build
-  steps:
-  - task: BatchScript@1
-    displayName: 'Setup VS Vars'
-    inputs:
-      filename: '"c:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat"'
-      modifyEnvironment: true
-
-  - task: CMake@1
-    displayName: 'CMake .. -DVLD_USE_MFC=OFF -A x64'
-    inputs:
-      workingDirectory: 'build_x64'
-      cmakeArgs: '.. -DVLD_USE_MFC=OFF -A x64'
-
-  - task: VSBuild@1
-    displayName: 'Build solution build_x64\*.sln'
-    inputs:
-      solution: 'build_x64\*.sln'
-      platform: x64
-      configuration: RelWithDebInfo
-      msbuildArgs: '/t:restore /t:build'
-      maximumCpuCount: true
->>>>>>> master
