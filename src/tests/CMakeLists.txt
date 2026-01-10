@@ -158,6 +158,7 @@ add_vld_test(dynamic_app
 # Add dependency on test_mfc if MFC is enabled (runtime LoadLibrary dependency)
 if(VLD_USE_MFC AND TARGET test_mfc)
     add_dependencies(dynamic_app test_mfc)
+    target_compile_definitions(dynamic_app PRIVATE VLD_MFC_TESTS)
 endif()
 
 # ============================================================================

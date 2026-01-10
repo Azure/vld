@@ -78,6 +78,7 @@ TEST_P(DynamicLoader, MultithreadLoadingTests)
     ASSERT_EQ(correctLeaks, leaks);
 }
 
+#ifdef VLD_MFC_TESTS
 TEST_P(DynamicLoader, MfcLoaderTests)
 {
     HMODULE hmfcLib = LoadMFCTests();
@@ -96,7 +97,9 @@ TEST_P(DynamicLoader, MfcLoaderTests)
     if (11 != leaks) VLDReportLeaks();
     ASSERT_EQ(11, leaks);
 }
+#endif // VLD_MFC_TESTS
 
+#ifdef VLD_MFC_TESTS
 TEST_P(DynamicLoader, MfcMultithreadLoadingTests)
 {
     // Creates NUMTHREADS threads that each leaks 11 allocations
@@ -116,6 +119,7 @@ TEST_P(DynamicLoader, MfcMultithreadLoadingTests)
 #endif
     ASSERT_EQ(NUMTHREADS * 11, leaks);
 }
+#endif // VLD_MFC_TESTS
 
 INSTANTIATE_TEST_CASE_P(ResolveVal,
     DynamicLoader,
