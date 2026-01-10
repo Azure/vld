@@ -68,3 +68,9 @@ jobs:
       configuration: RelWithDebInfo
       msbuildArgs: '/t:restore /t:build'
       maximumCpuCount: true
+
+  - task: CmdLine@2
+    displayName: 'Run ctest RelWithDebInfo'
+    inputs:
+      script: 'ctest -C "RelWithDebInfo" --output-on-failure'
+      workingDirectory: 'build_x64'
