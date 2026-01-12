@@ -213,6 +213,8 @@ private:
     CaptureContext& operator=(const CaptureContext&);
 private:
     BOOL IsExcludedModule();
+    BOOL IsCrtModuleWithNoReporting(HMODULE hModule);
+    BOOL ShouldReportLeaksForModule(HMODULE hModule);
     void Reset();
 private:
     tls_t *m_tls;
@@ -323,6 +325,9 @@ private:
     VOID   mapHeap (HANDLE heap);
     VOID   remapBlock (HANDLE heap, LPCVOID mem, LPCVOID newmem, SIZE_T size,
         bool crtalloc, bool ucrt, DWORD threadId, blockinfo_t* &pblockInfo, const context_t &context);
+public:
+    VOID   PatchCurrentModule(HMODULE module);
+private:
     VOID   reportConfig ();
     static bool   isDebugCrtAlloc(LPCVOID block, blockinfo_t* info);
     SIZE_T reportHeapLeaks (HANDLE heap);

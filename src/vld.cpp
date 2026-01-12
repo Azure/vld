@@ -93,6 +93,9 @@ BOOLEAN WINAPI LdrpCallInitRoutine(IN PVOID BaseAddress, IN ULONG Reason, IN PVO
 
     if (Reason == DLL_PROCESS_ATTACH) {
         g_vld.RefreshModules();
+        // Explicitly patch the module being loaded, in case EnumerateLoadedModulesW64
+        // doesn't see it yet (race condition during DLL loading)
+        g_vld.PatchCurrentModule((HMODULE)BaseAddress);
     }
 
     return EntryPoint(BaseAddress, Reason, (PCONTEXT)Context);
@@ -2357,6 +2360,17 @@ VOID VisualLeakDetector::RefreshModules()
     delete oldmodules;
 }
 
+VOID VisualLeakDetector::PatchCurrentModule(HMODULE module)
+{
+    if (m_options & VLD_OPT_VLDOFF)
+        return;
+
+    // Patch the specified module directly. This is called from LdrpCallInitRoutine
+    // to ensure the module being loaded is patched, even if EnumerateLoadedModulesW64
+    // doesn't see it yet (race condition during DLL loading).
+    PatchModule(module, m_patchTable, _countof(m_patchTable));
+}
+
 // Find the information for the module that initiated this reallocation.
 bool VisualLeakDetector::isModuleExcluded(UINT_PTR address)
 {
@@ -2951,7 +2965,8 @@ CaptureContext::~CaptureContext() {
     if (!m_bFirst)
         return;
 
-    if ((m_tls->blockWithoutGuard) && (!IsExcludedModule())) {
+    BOOL excluded = IsExcludedModule();
+    if ((m_tls->blockWithoutGuard) && (!excluded)) {
         blockinfo_t* pblockInfo = NULL;
         CallStack* callstack = CallStack::Create();
         callstack->getStackTrace(g_vld.m_maxTraceFrames, m_tls->context);
@@ -3010,6 +3025,34 @@ void CaptureContext::Reset() {
     Set(NULL, NULL, NULL, NULL);
 }
 
+// Helper function to check if a module is a CRT with reportLeaks=FALSE
+BOOL CaptureContext::IsCrtModuleWithNoReporting(HMODULE hModule) {
+    UINT tablesize = _countof(g_vld.m_patchTable);
+    for (UINT index = 0; index < tablesize; index++) {
+        if (((HMODULE)g_vld.m_patchTable[index].moduleBase == hModule)) {
+            // Return TRUE only if reportLeaks is FALSE (meaning it's a CRT we don't report)
+            return !g_vld.m_patchTable[index].reportLeaks;
+        }
+    }
+    return FALSE;
+}
+
+// Helper function to check if a module should have leaks reported
+BOOL CaptureContext::ShouldReportLeaksForModule(HMODULE hModule) {
+    if (hModule == NULL || hModule == g_vld.m_dbghlpBase || hModule == g_vld.m_vldBase)
+        return FALSE;
+
+    UINT tablesize = _countof(g_vld.m_patchTable);
+    for (UINT index = 0; index < tablesize; index++) {
+        if (((HMODULE)g_vld.m_patchTable[index].moduleBase == hModule)) {
+            return g_vld.m_patchTable[index].reportLeaks;
+        }
+    }
+
+    // Unknown module - report leaks unless explicitly excluded
+    return !g_vld.isModuleExcluded((UINT_PTR)hModule);
+}
+
 BOOL CaptureContext::IsExcludedModule() {
     HMODULE hModule = GetCallingModule(m_context.fp);
     if (hModule == g_vld.m_dbghlpBase)
@@ -3018,8 +3061,42 @@ BOOL CaptureContext::IsExcludedModule() {
     UINT tablesize = _countof(g_vld.m_patchTable);
     for (UINT index = 0; index < tablesize; index++) {
         if (((HMODULE)g_vld.m_patchTable[index].moduleBase == hModule)) {
-            return !g_vld.m_patchTable[index].reportLeaks;
+            if (g_vld.m_patchTable[index].reportLeaks) {
+                return FALSE; // Not excluded
+            }
+            // The immediate caller is a CRT module with reportLeaks=FALSE.
+            // This could be because:
+            // 1. CRT is doing internal allocation (should exclude)
+            // 2. User module's IAT wasn't patched, so call went through unhooked CRT (should NOT exclude)
+            // Walk the stack to check if there's a user module in the chain.
+            break;
         }
+    }
+
+    // If we got here because the immediate caller is a CRT with reportLeaks=FALSE,
+    // walk the stack to look for a user module
+    if (IsCrtModuleWithNoReporting(hModule)) {
+        // Capture a few frames from the stack
+        const UINT32 maxframes = 32;
+        PVOID frames[32];
+        ULONG hash;
+        USHORT frameCount = RtlCaptureStackBackTrace(0, maxframes, frames, &hash);
+        
+        for (USHORT i = 0; i < frameCount; i++) {
+            HMODULE frameModule = GetCallingModule((UINT_PTR)frames[i]);
+            if (frameModule != NULL && 
+                frameModule != hModule &&  // Skip the CRT module we already checked
+                frameModule != g_vld.m_dbghlpBase &&
+                frameModule != g_vld.m_vldBase) {
+                // Check if this module should have leaks reported
+                if (ShouldReportLeaksForModule(frameModule)) {
+                    // Found a user module in the call chain - don't exclude this allocation
+                    return FALSE;
+                }
+            }
+        }
+        // Only CRT/VLD/excluded modules in the stack - exclude
+        return TRUE;
     }
 
     return g_vld.isModuleExcluded((UINT_PTR)hModule);

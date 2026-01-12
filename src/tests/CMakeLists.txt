@@ -34,6 +34,7 @@ function(add_vld_test TARGET_NAME)
         _VARIADIC_MAX=10
         $<$<CONFIG:Debug>:_DEBUG>
         $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
+        $<$<NOT:$<CONFIG:Debug>>:VLD_FORCE_ENABLE>
     )
     
     # Unicode support (most tests need it)
@@ -158,11 +159,8 @@ add_vld_test(dynamic_app
 # Add dependency on test_mfc if MFC is enabled (runtime LoadLibrary dependency)
 if(VLD_USE_MFC AND TARGET test_mfc)
     add_dependencies(dynamic_app test_mfc)
+    target_compile_definitions(dynamic_app PRIVATE VLD_MFC_TESTS)
 endif()
-
-# Known issue: VLDEnableModule() doesn't properly track leaks from dynamically loaded DLLs
-# on modern Windows. Mark test as expected to fail.
-set_tests_properties(dynamic_app PROPERTIES WILL_FAIL TRUE)
 
 # ============================================================================
 # corruption - Memory corruption tests
@@ -341,6 +339,15 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_functions_test/ignore_functions_tes
     )
     
     # This test requires its own vld.ini with IgnoreFunctionsList
+    # Determine dbghelp architecture for copying
+    if(VLD_PLATFORM STREQUAL "ARM64")
+        set(DBGHELP_ARCH "arm64")
+    elseif(VLD_PLATFORM STREQUAL "x64")
+        set(DBGHELP_ARCH "x64")
+    else()
+        set(DBGHELP_ARCH "x86")
+    endif()
+    
     add_custom_command(TARGET ignore_functions_test POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/ignore_functions_test/vld.ini"
@@ -348,7 +355,10 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_functions_test/ignore_functions_tes
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:vld>"
             "$<TARGET_FILE_DIR:ignore_functions_test>/$<TARGET_FILE_NAME:vld>"
-        COMMENT "Copying ignore_functions_test vld.ini and VLD DLL"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/setup/dbghelp/${DBGHELP_ARCH}/dbghelp.dll"
+            "$<TARGET_FILE_DIR:ignore_functions_test>/dbghelp.dll"
+        COMMENT "Copying ignore_functions_test vld.ini, VLD DLL, and dbghelp.dll"
     )
 endif()
 
@@ -398,11 +408,6 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vld_unload)
         if(TARGET vld_dll2)
             add_dependencies(vld_unload vld_dll2)
         endif()
-        
-        # Known issue: Sequence2 and Sequence3 tests fail due to VLD not tracking leaks
-        # correctly when multiple modules with static CRT are loaded simultaneously.
-        # Mark test as expected to fail for now.
-        set_tests_properties(vld_unload PROPERTIES WILL_FAIL TRUE)
     endif()
 endif()
 
