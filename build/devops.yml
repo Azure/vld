@@ -10,9 +10,15 @@ parameters:
     - name: 'x64'
       cmakeArch: 'x64'
       platform: 'x64'
+      pool: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
     - name: 'x86'
       cmakeArch: 'Win32'
       platform: 'Win32'
+      pool: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
+    - name: 'arm64'
+      cmakeArch: 'ARM64'
+      platform: 'ARM64'
+      pool: 'Azure-MessagingStore-WinBuildPoolARM'
 - name: configurations
   type: object
   default:
@@ -25,7 +31,7 @@ jobs:
     - job: Build_Windows_${{ arch.name }}_${{ config }}
       displayName: 'Build Windows ${{ arch.name }} ${{ config }}'
       pool:
-        name: Azure-MessagingStore-WinBuildPoolVS2022_0
+        name: ${{ arch.pool }}
         demands:
         - Cmd
         - msbuild
