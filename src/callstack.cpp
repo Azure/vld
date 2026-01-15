@@ -554,6 +554,8 @@ UINT CallStack::isCrtStartupFunction( LPCWSTR functionName ) const
         || endWith(functionName, len, L"__scrt_set_unhandled_exception_filter")
         // Added fixes
         || endWith(functionName, len, L"initterm")
+        // CRT exit-time allocations (Windows internal bookkeeping during process termination)
+        || endWith(functionName, len, L"AppPolicyGetProcessTerminationMethod")
         ) {
         return CALLSTACK_STATUS_STARTUPCRT;
     }
