@@ -24,6 +24,63 @@ Visual Leak Detector is [licensed][3] free of charge as a service to the Windows
 
 Read the documentation at [https://github.com/KindDragon/vld/wiki](https://github.com/KindDragon/vld/wiki)
 
+## Building from Source
+
+Visual Leak Detector uses CMake as its build system. Visual Studio project files (.sln/.vcxproj) have been removed in version 2.5.11.
+
+### Prerequisites
+
+* Visual Studio 2019 or later (2022 recommended)
+* CMake 3.16 or later
+
+### Supported Platforms
+
+* x86 (Win32)
+* x64 (AMD64)
+* ARM64
+
+### Build Instructions
+
+1. **Generate build files with CMake:**
+   ```powershell
+   cmake -B build -S . -G "Visual Studio 17 2022" -A x64
+   ```
+   
+   For other platforms:
+   * ARM64: `-A ARM64`
+   * Win32 (x86): `-A Win32`
+
+2. **Build:**
+   ```powershell
+   cmake --build build --config Debug
+   ```
+   
+   Or for Release/RelWithDebInfo:
+   ```powershell
+   cmake --build build --config Release
+   cmake --build build --config RelWithDebInfo
+   ```
+
+3. **Run tests:**
+   ```powershell
+   cd build
+   ctest -C Debug
+   ```
+
+### MFC Support
+
+To enable MFC support (includes MFC test projects):
+```powershell
+cmake -B build -S . -G "Visual Studio 17 2022" -A x64 -DVLD_USE_MFC=ON
+```
+
+### Output Location
+
+Built files are located in:
+* DLLs: `build/bin/<Configuration>/vld_<platform>.dll`
+* Libraries: `build/lib/<Configuration>/vld_<platform>.lib`
+* Tests: `build/bin/<Configuration>/`
+
 ## Contributing
 
 We encourage developers who've added their own features, or fixed bugs they've found, to contribute to the project. The full version-controlled source tree is available publicly via Git at the URL below. Feel free to clone from this URL and submit patches for consideration for inclusion in future versions. You can also issue pull requests for changes that you've made and would like to share.

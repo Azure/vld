@@ -4,7 +4,9 @@
 #include "../../vld.h"
 #include <assert.h>
 
-#ifdef _WIN64
+#if defined(_M_ARM64)
+    static const TCHAR* sVld_dll = _T("vld_arm64.dll");
+#elif defined(_M_X64)
     static const TCHAR* sVld_dll = _T("vld_x64.dll");
 #else
     static const TCHAR* sVld_dll = _T("vld_x86.dll");

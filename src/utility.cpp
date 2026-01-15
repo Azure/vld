@@ -514,6 +514,14 @@ LPVOID FindRealCode(LPVOID pCode)
     LPVOID result;
     if (pCode != NULL)
     {
+#if defined(_M_ARM64)
+        // ARM64: Different instruction encoding from x86/x64
+        // The x86/x64 JMP opcodes (0x25ff, 0xE9) don't exist in ARM64 instruction set
+        // ARM64 uses B/BR/BL instructions with different encoding
+        // Windows ARM64 typically doesn't use the same trampoline patterns
+        // If ARM64-specific trampolines are found to exist, implement ARM64 instruction decoding here
+        result = pCode;
+#else
         // we need to make sure we can read the first 7 ULONG_PTRs
         PROTECT_INSTANCE protect_1;
 
@@ -585,6 +593,7 @@ LPVOID FindRealCode(LPVOID pCode)
         {
             result = NULL;
         }
+#endif // !_M_ARM64
     }
     else
     {
@@ -1288,18 +1297,21 @@ HMODULE GetCallingModule(UINT_PTR pCaller )
 {
     HMODULE hModule = NULL;
 
-    /*MEMORY_BASIC_INFORMATION mbi;
-    if (VirtualQuery((LPCVOID)pCaller, &mbi, sizeof(MEMORY_BASIC_INFORMATION)) == sizeof(MEMORY_BASIC_INFORMATION))
-    {
-        // the allocation base is the beginning of a PE file
-        hModule = (HMODULE)mbi.AllocationBase;
-    }*/
-
+    // Try QueryVirtualMemoryInformation first (Windows 10 1607+)
     WIN32_MEMORY_REGION_INFORMATION memoryRegionInfo;
     if ( QueryVirtualMemoryInformation(GetCurrentProcess(), (LPCVOID)pCaller, MemoryRegionInfo, &memoryRegionInfo, sizeof(memoryRegionInfo), NULL) )
     {
         // the allocation base is the beginning of a PE file
         hModule = (HMODULE)memoryRegionInfo.AllocationBase;
+    }
+    else {
+        // Fall back to VirtualQuery for older systems or when QueryVirtualMemoryInformation fails
+        MEMORY_BASIC_INFORMATION mbi;
+        if (VirtualQuery((LPCVOID)pCaller, &mbi, sizeof(MEMORY_BASIC_INFORMATION)) == sizeof(MEMORY_BASIC_INFORMATION))
+        {
+            // the allocation base is the beginning of a PE file
+            hModule = (HMODULE)mbi.AllocationBase;
+        }
     }
     return hModule;
 }

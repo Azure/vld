@@ -51,10 +51,12 @@
 #define SELFTESTTEXTA       "Memory Leak Self-Test"
 #define SELFTESTTEXTW       L"Memory Leak Self-Test"
 #define VLDREGKEYPRODUCT    L"Software\\Visual Leak Detector"
-#ifndef WIN64
+#if defined(_M_IX86)
 #define VLDDLL				"vld_x86.dll"
-#else
+#elif defined(_M_X64)
 #define VLDDLL				"vld_x64.dll"
+#elif defined(_M_ARM64)
+#define VLDDLL				"vld_arm64.dll"
 #endif
 
 // The Visual Leak Detector APIs.
@@ -211,6 +213,8 @@ private:
     CaptureContext& operator=(const CaptureContext&);
 private:
     BOOL IsExcludedModule();
+    BOOL IsCrtModuleWithNoReporting(HMODULE hModule);
+    BOOL ShouldReportLeaksForModule(HMODULE hModule);
     void Reset();
 private:
     tls_t *m_tls;
@@ -321,6 +325,9 @@ private:
     VOID   mapHeap (HANDLE heap);
     VOID   remapBlock (HANDLE heap, LPCVOID mem, LPCVOID newmem, SIZE_T size,
         bool crtalloc, bool ucrt, DWORD threadId, blockinfo_t* &pblockInfo, const context_t &context);
+public:
+    VOID   PatchCurrentModule(HMODULE module);
+private:
     VOID   reportConfig ();
     static bool   isDebugCrtAlloc(LPCVOID block, blockinfo_t* info);
     SIZE_T reportHeapLeaks (HANDLE heap);

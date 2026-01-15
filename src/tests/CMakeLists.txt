@@ -34,6 +34,7 @@ function(add_vld_test TARGET_NAME)
         _VARIADIC_MAX=10
         $<$<CONFIG:Debug>:_DEBUG>
         $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
+        $<$<NOT:$<CONFIG:Debug>>:VLD_FORCE_ENABLE>
     )
     
     # Unicode support (most tests need it)
@@ -45,11 +46,7 @@ function(add_vld_test TARGET_NAME)
         target_compile_definitions(${TARGET_NAME} PRIVATE ${ARG_DEFINITIONS})
     endif()
     
-    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-        target_compile_definitions(${TARGET_NAME} PRIVATE WIN64)
-    else()
-        target_compile_definitions(${TARGET_NAME} PRIVATE WIN32)
-    endif()
+    target_compile_definitions(${TARGET_NAME} PRIVATE ${VLD_PLATFORM_DEFINE})
     
     # MFC support
     if(ARG_USE_MFC AND VLD_USE_MFC)
@@ -162,11 +159,8 @@ add_vld_test(dynamic_app
 # Add dependency on test_mfc if MFC is enabled (runtime LoadLibrary dependency)
 if(VLD_USE_MFC AND TARGET test_mfc)
     add_dependencies(dynamic_app test_mfc)
+    target_compile_definitions(dynamic_app PRIVATE VLD_MFC_TESTS)
 endif()
-
-# Known issue: VLDEnableModule() doesn't properly track leaks from dynamically loaded DLLs
-# on modern Windows. Mark test as expected to fail.
-set_tests_properties(dynamic_app PROPERTIES WILL_FAIL TRUE)
 
 # ============================================================================
 # corruption - Memory corruption tests
@@ -197,6 +191,14 @@ add_vld_test(vld_main
     HAS_PCH
     PCH_HEADER vld_main/stdafx.h
     NO_TEST  # This is a helper program, not a standalone test
+)
+
+# ============================================================================
+# tls_init_test - Multi-threaded TLS initialization stress test
+# ============================================================================
+add_vld_test(tls_init_test
+    SOURCES
+        tls_init_test/tls_init_test.cpp
 )
 
 # ============================================================================
@@ -270,11 +272,7 @@ if(VLD_USE_MFC)
         $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
     )
     
-    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-        target_compile_definitions(vldmfc PRIVATE WIN64)
-    else()
-        target_compile_definitions(vldmfc PRIVATE WIN32)
-    endif()
+    target_compile_definitions(vldmfc PRIVATE ${VLD_PLATFORM_DEFINE})
     
     # MFC settings - UseOfMfc=Dynamic corresponds to CMAKE_MFC_FLAG=2
     set_target_properties(vldmfc PROPERTIES
@@ -330,12 +328,37 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_functions_test/ignore_functions_tes
         HEADERS ${IGNORE_FUNCTIONS_TEST_HEADERS}
         DEPENDS gtest
     )
+    
+    # This test needs its own output subdirectory to avoid vld.ini conflicts with other tests
+    set_target_properties(ignore_functions_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/ignore_functions_test"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin/Debug/ignore_functions_test"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin/Release/ignore_functions_test"
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/bin/RelWithDebInfo/ignore_functions_test"
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/bin/MinSizeRel/ignore_functions_test"
+    )
+    
     # This test requires its own vld.ini with IgnoreFunctionsList
+    # Determine dbghelp architecture for copying
+    if(VLD_PLATFORM STREQUAL "ARM64")
+        set(DBGHELP_ARCH "arm64")
+    elseif(VLD_PLATFORM STREQUAL "x64")
+        set(DBGHELP_ARCH "x64")
+    else()
+        set(DBGHELP_ARCH "x86")
+    endif()
+    
     add_custom_command(TARGET ignore_functions_test POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/ignore_functions_test/vld.ini"
             "$<TARGET_FILE_DIR:ignore_functions_test>/vld.ini"
-        COMMENT "Copying ignore_functions_test vld.ini"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:vld>"
+            "$<TARGET_FILE_DIR:ignore_functions_test>/$<TARGET_FILE_NAME:vld>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/setup/dbghelp/${DBGHELP_ARCH}/dbghelp.dll"
+            "$<TARGET_FILE_DIR:ignore_functions_test>/dbghelp.dll"
+        COMMENT "Copying ignore_functions_test vld.ini, VLD DLL, and dbghelp.dll"
     )
 endif()
 
@@ -385,11 +408,6 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vld_unload)
         if(TARGET vld_dll2)
             add_dependencies(vld_unload vld_dll2)
         endif()
-        
-        # Known issue: Sequence2 and Sequence3 tests fail due to VLD not tracking leaks
-        # correctly when multiple modules with static CRT are loaded simultaneously.
-        # Mark test as expected to fail for now.
-        set_tests_properties(vld_unload PROPERTIES WILL_FAIL TRUE)
     endif()
 endif()
 
@@ -414,7 +432,9 @@ if(VLD_USE_MFC AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest/ComTest.idl)
         file(MAKE_DIRECTORY ${COMTEST_GENERATED_DIR})
         
         # Determine target environment for MIDL
-        if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        if(VLD_PLATFORM STREQUAL "ARM64")
+            set(MIDL_ENV "arm64")
+        elseif(VLD_PLATFORM STREQUAL "x64")
             set(MIDL_ENV "x64")
         else()
             set(MIDL_ENV "win32")
@@ -496,11 +516,7 @@ if(VLD_USE_MFC AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest/ComTest.idl)
             $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
         )
         
-        if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-            target_compile_definitions(ComTest PRIVATE WIN64)
-        else()
-            target_compile_definitions(ComTest PRIVATE WIN32)
-        endif()
+        target_compile_definitions(ComTest PRIVATE ${VLD_PLATFORM_DEFINE})
         
         # MFC settings
         set_target_properties(ComTest PROPERTIES
@@ -525,3 +541,5 @@ if(VLD_USE_MFC AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest/ComTest.idl)
         message(WARNING "COM Test skipped - MIDL compiler not found")
     endif()
 endif()
+
+

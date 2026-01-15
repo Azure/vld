@@ -3,7 +3,6 @@
 
 #include "stdafx.h"
 #include "vld.h"
-#include <string>
 
 #include <gtest/gtest.h>
 
@@ -20,46 +19,65 @@ class TestIgnoreFunctions : public ::testing::Test
     }
 };
 
-std::string GetOSVersion() 
+// Use new/malloc directly to have deterministic allocation counts.
+// These functions are added to IgnoreFunctionsList in vld.ini
+//
+// NOTE: We use explicit "new char[32]" instead of std::string because of
+// Small String Optimization (SSO). In release builds, std::string stores
+// short strings (<=15 chars) inline without any heap allocation, so there
+// would be nothing for VLD to track. Using new ensures exactly 1 allocation.
+//
+// IMPORTANT: We must disable optimizations for these functions to prevent
+// tail call optimization. When a function's last action is "return new ...",
+// the compiler can replace the "call new; ret" sequence with a direct "jmp new",
+// eliminating this function's stack frame entirely. This causes VLD to not see
+// these function names in the call stack, so they won't match the IgnoreFunctionsList.
+// Disabling optimization ensures proper stack frames are created.
+#pragma optimize("", off)
+void* GetOSVersion() 
 {
-    std::string osVersion = "Windows";
-    return osVersion;
+    void* ptr = new char[32];  // 1 allocation
+    return ptr;
 }
 
-std::string SomeOtherString() 
+void* SomeOtherString() 
 {
-    std::string osVersion = "Windows";
-    return osVersion;
+    void* ptr = new char[32];  // 1 allocation
+    return ptr;
 }
 
-std::string abcdefg() 
+void* abcdefg() 
 {
-    std::string osVersion = "Windows";
-    return osVersion;
+    void* ptr = new char[32];  // 1 allocation
+    return ptr;
 }
 
-std::string testOtherString() 
+void* testOtherString() 
 {
-    std::string osVersion = "Windows";
-    return osVersion;
+    void* ptr = new char[32];  // 1 allocation
+    return ptr;
 }
 
-std::string NotInTheList() 
+// This function is NOT in IgnoreFunctionsList
+void* NotInTheList() 
 {
-    std::string osVersion = "NotListed";
-    return osVersion;
+    void* ptr = new char[32];  // 1 allocation - should be detected as leak
+    return ptr;
 }
+#pragma optimize("", on)
 
 TEST_F(TestIgnoreFunctions, IgnoreFunctionsSuccess)
 {
     int leaks = static_cast<int>(VLDGetLeaksCount());
     ASSERT_EQ(0, leaks);
 
-    // All of these strings should be ignored.
-    static std::string const osVer = GetOSVersion();
-    static std::string const someOtherString = SomeOtherString();
-    static std::string const str3 = abcdefg();
-    static std::string const str4 = testOtherString();
+    // All of these allocations should be ignored because the functions
+    // are listed in IgnoreFunctionsList in vld.ini
+    static void* p1 = GetOSVersion();       // ignored
+    static void* p2 = SomeOtherString();    // ignored
+    static void* p3 = abcdefg();            // ignored
+    static void* p4 = testOtherString();    // ignored
+    (void)p1; (void)p2; (void)p3; (void)p4; // suppress unused warnings
 
     leaks = static_cast<int>(VLDGetLeaksCount());
     ASSERT_EQ(0, leaks);
@@ -70,13 +88,15 @@ TEST_F(TestIgnoreFunctions, IgnoreFunctionsReportsNonListedLeaks)
     int leaks = static_cast<int>(VLDGetLeaksCount());
     ASSERT_EQ(0, leaks);
 
-    // All of these strings should be ignored.
-    static std::string const osVer = GetOSVersion();
-    static std::string const someOtherString = SomeOtherString();
-    static std::string const str3 = abcdefg();
+    // These allocations should be ignored (functions in IgnoreFunctionsList)
+    static void* p1 = GetOSVersion();       // ignored
+    static void* p2 = SomeOtherString();    // ignored
+    static void* p3 = abcdefg();            // ignored
+    (void)p1; (void)p2; (void)p3;
 
-    //This should be detected as leak
-    static std::string const str4 = NotInTheList();
+    // This should be detected as leak - NotInTheList is NOT in IgnoreFunctionsList
+    static void* p4 = NotInTheList();       // NOT ignored - 1 leak
+    (void)p4;
 
     leaks = static_cast<int>(VLDGetLeaksCount());
     ASSERT_EQ(1, leaks);
@@ -87,13 +107,15 @@ TEST_F(TestIgnoreFunctions, IgnoreFunctionsReportsStaticStringLeaks)
     int leaks = static_cast<int>(VLDGetLeaksCount());
     ASSERT_EQ(0, leaks);
 
-    // All of these strings should be ignored.
-    static std::string const someOtherString = SomeOtherString();
-    static std::string const str3 = abcdefg();
+    // These allocations should be ignored (functions in IgnoreFunctionsList)
+    static void* p1 = SomeOtherString();    // ignored
+    static void* p2 = abcdefg();            // ignored
+    (void)p1; (void)p2;
 
-    //This should be detected as leak
-    static std::string const osVer = "LeakString";
-    static std::string const str4 = NotInTheList();
+    // These should be detected as leaks
+    static void* p3 = new char[64];         // NOT ignored - 1 leak (inline allocation)
+    static void* p4 = NotInTheList();       // NOT ignored - 1 leak
+    (void)p3; (void)p4;
 
     leaks = static_cast<int>(VLDGetLeaksCount());
     ASSERT_EQ(2, leaks);

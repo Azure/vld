@@ -45,7 +45,10 @@ add_library(vld SHARED
 )
 
 # Platform-specific output name
-if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+if(VLD_PLATFORM STREQUAL "ARM64")
+    set_target_properties(vld PROPERTIES OUTPUT_NAME "vld_arm64")
+    set(VLD_MANIFEST vld.dll.dependency.arm64.manifest)
+elseif(VLD_PLATFORM STREQUAL "x64")
     set_target_properties(vld PROPERTIES OUTPUT_NAME "vld_x64")
     set(VLD_MANIFEST vld.dll.dependency.x64.manifest)
 else()
@@ -66,13 +69,17 @@ target_include_directories(vld PRIVATE
 target_link_libraries(vld PRIVATE libformat)
 
 # DbgHelp library path
-if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+if(VLD_PLATFORM STREQUAL "ARM64")
+    # ARM64: Use Windows SDK dbghelp instead of custom library
+    message(STATUS "ARM64 build: Using Windows SDK dbghelp")
+    target_link_libraries(vld PRIVATE dbghelp)
+elseif(VLD_PLATFORM STREQUAL "x64")
     target_link_directories(vld PRIVATE ${CMAKE_SOURCE_DIR}/lib/dbghelp/lib/x64)
+    target_link_libraries(vld PRIVATE dbghelp)
 else()
     target_link_directories(vld PRIVATE ${CMAKE_SOURCE_DIR}/lib/dbghelp/lib/Win32)
+    target_link_libraries(vld PRIVATE dbghelp)
 endif()
-
-target_link_libraries(vld PRIVATE dbghelp)
 
 # Compile definitions
 target_compile_definitions(vld PRIVATE
@@ -100,10 +107,18 @@ if(MSVC)
     )
     
     # Linker settings
-    target_link_options(vld PRIVATE
-        /SUBSYSTEM:WINDOWS
-        /BASE:0x03200000
-    )
+    if(VLD_PLATFORM STREQUAL "ARM64")
+        # ARM64 requires base address >= 4GB
+        target_link_options(vld PRIVATE
+            /SUBSYSTEM:WINDOWS
+            /BASE:0x100000000
+        )
+    else()
+        target_link_options(vld PRIVATE
+            /SUBSYSTEM:WINDOWS
+            /BASE:0x03200000
+        )
+    endif()
     
     # Additional Windows libraries
     target_link_libraries(vld PRIVATE
@@ -124,4 +139,20 @@ add_custom_command(TARGET vld POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/vld.ini"
         "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/vld.ini"
+)
+
+# Copy dbghelp.dll based on platform
+if(VLD_PLATFORM STREQUAL "ARM64")
+    set(DBGHELP_ARCH "arm64")
+elseif(VLD_PLATFORM STREQUAL "x64")
+    set(DBGHELP_ARCH "x64")
+else()
+    set(DBGHELP_ARCH "x86")
+endif()
+
+add_custom_command(TARGET vld POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E echo "Copying dbghelp.dll (${DBGHELP_ARCH})"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/setup/dbghelp/${DBGHELP_ARCH}/dbghelp.dll"
+        "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/dbghelp.dll"
 )

@@ -1,7 +1,20 @@
-Visual Leak Detector (VLD) Version 2.5.10
+Visual Leak Detector (VLD) Version 2.5.11
 
 
   Change Log / Release Notes
+
+2.5.11 (9 January 2026)
+----------------------------
+  Enhancements:
+  + ARM64 architecture support added.
+  + CMake-only build system - Visual Studio project files removed.
+  + Changed to DLL runtime (/MD) for better compatibility.
+
+  Bugs Fixed:
+  + Fixed early initialization with #pragma init_seg(lib).
+  + Fixed ARM64 DLL name detection in tests.
+  + Removed unnecessary code (VLD_TLS_INCALL, s_inVldCall, ARM64 frame skipping fallback).
+  + Improved platform detection using VLD_PLATFORM consistently.
 
 2.5.10 (5 November 2025)
 ----------------------------

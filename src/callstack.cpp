@@ -543,8 +543,19 @@ UINT CallStack::isCrtStartupFunction( LPCWSTR functionName ) const
         || (wcscmp(functionName, L"_Getctype") == 0)
         || (wcscmp(functionName, L"std::_Facet_Register") == 0)
         || endWith(functionName, len, L">::_Getcat")
+        // DLL CRT initialization
+        || endWith(functionName, len, L"dllmain_crt_process_attach")
+        // x86 RelWithDebInfo CRT environment init (symbol resolution artifact)
+        || endWith(functionName, len, L"o_rand")
+        // Dynamic initializers for static/global objects (usually have matching atexit destructors)
+        || beginWith(functionName, len, L"`dynamic initializer for '")
+        // EXE pre-main CRT initialization
+        || endWith(functionName, len, L"pre_c_initialization")
+        || endWith(functionName, len, L"__scrt_set_unhandled_exception_filter")
         // Added fixes
         || endWith(functionName, len, L"initterm")
+        // CRT exit-time allocations (Windows internal bookkeeping during process termination)
+        || endWith(functionName, len, L"AppPolicyGetProcessTerminationMethod")
         ) {
         return CALLSTACK_STATUS_STARTUPCRT;
     }
@@ -704,6 +715,8 @@ VOID FastCallStack::getStackTrace (UINT32 maxdepth, const context_t& context)
     maxframes = RtlCaptureStackBackTrace(0, maxframes, reinterpret_cast<PVOID*>(myFrames), &BackTraceHash);
     m_hashValue = BackTraceHash;
     UINT32  startIndex = 0;
+    
+    // Find the frame matching context.fp to skip VLD internal frames
     while (count < maxframes) {
         if (myFrames[count] == 0)
             break;
@@ -711,6 +724,7 @@ VOID FastCallStack::getStackTrace (UINT32 maxdepth, const context_t& context)
             startIndex = count;
         count++;
     }
+    
     count = startIndex;
     while (count < maxframes) {
         if (myFrames[count] == 0)
@@ -751,13 +765,13 @@ VOID SafeCallStack::getStackTrace (UINT32 maxdepth, const context_t& context)
         push_back(function);
     }
 
-    if (context.IPREG == NULL)
+    if (CONTEXT_IPREG(context) == NULL)
     {
         return;
     }
 
     count++;
-    push_back(context.IPREG);
+    push_back(CONTEXT_IPREG(context));
 
     DWORD   architecture   = X86X64ARCHITECTURE;
 
@@ -765,18 +779,18 @@ VOID SafeCallStack::getStackTrace (UINT32 maxdepth, const context_t& context)
     // to be passed to StackWalk64(). Required fields are AddrPC and AddrFrame.
     CONTEXT currentContext;
     memset(&currentContext, 0, sizeof(currentContext));
-    currentContext.SPREG = context.SPREG;
-    currentContext.BPREG = context.BPREG;
-    currentContext.IPREG = context.IPREG;
+    CONTEXT_SPREG(currentContext) = CONTEXT_SPREG(context);
+    CONTEXT_BPREG(currentContext) = CONTEXT_BPREG(context);
+    CONTEXT_IPREG(currentContext) = CONTEXT_IPREG(context);
 
     // Initialize the STACKFRAME64 structure.
     STACKFRAME64 frame;
     memset(&frame, 0x0, sizeof(frame));
-    frame.AddrPC.Offset       = currentContext.IPREG;
+    frame.AddrPC.Offset       = CONTEXT_IPREG(currentContext);
     frame.AddrPC.Mode         = AddrModeFlat;
-    frame.AddrStack.Offset    = currentContext.SPREG;
+    frame.AddrStack.Offset    = CONTEXT_SPREG(currentContext);
     frame.AddrStack.Mode      = AddrModeFlat;
-    frame.AddrFrame.Offset    = currentContext.BPREG;
+    frame.AddrFrame.Offset    = CONTEXT_BPREG(currentContext);
     frame.AddrFrame.Mode      = AddrModeFlat;
     frame.Virtual             = TRUE;
 
