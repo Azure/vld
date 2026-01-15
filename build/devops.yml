@@ -9,14 +9,19 @@ parameters:
   default:
     - name: 'x64'
       cmakeArch: 'x64'
+      vcvarsArg: 'amd64'
       platform: 'x64'
       pool: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
     - name: 'x86'
       cmakeArch: 'Win32'
+      # Use x64-hosted cross-compiler for x86 target (faster than native x86)
+      vcvarsArg: 'amd64_x86'
       platform: 'Win32'
       pool: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
     - name: 'arm64'
       cmakeArch: 'ARM64'
+      # Use native ARM64 compiler on ARM64 build agents
+      vcvarsArg: 'arm64'
       platform: 'ARM64'
       pool: 'Azure-MessagingStore-WinBuildPoolARM'
 - name: configurations
@@ -40,9 +45,10 @@ jobs:
       steps:
 
       - task: BatchScript@1
-        displayName: 'Setup VS Vars'
+        displayName: 'Setup VC++ Environment (${{ arch.vcvarsArg }})'
         inputs:
-          filename: '"c:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat"'
+          filename: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"'
+          arguments: '${{ arch.vcvarsArg }}'
           modifyEnvironment: true
 
       - task: CMake@1
