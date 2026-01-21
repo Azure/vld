@@ -363,6 +363,17 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_functions_test/ignore_functions_tes
 endif()
 
 # ============================================================================
+# Deep Callstack Test - Tests for excessively long stack traces (PR #37)
+# ============================================================================
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/deep_callstack_test/deep_callstack_test.cpp)
+    add_vld_test(deep_callstack_test
+        SOURCES
+            deep_callstack_test/deep_callstack_test.cpp
+        NO_TEST  # Don't add to CTest - this is a manual stress test
+    )
+endif()
+
+# ============================================================================
 # VLD DLLs for unload testing
 # ============================================================================
 # vld_dll1
