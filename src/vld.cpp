@@ -1705,22 +1705,28 @@ bool VisualLeakDetector::isDebugCrtAlloc( LPCVOID block, blockinfo_t* info )
 {
     // Autodetection allocations from statically linked CRT
     if (!info->debugCrtAlloc) {
-        crtdbgblockheader_t* crtheader = (crtdbgblockheader_t*)block;
-        SIZE_T nSize = sizeof(crtdbgblockheader_t) + crtheader->size + GAPSIZE;
-        int nValid = _CrtIsValidPointer(block, (unsigned int)info->size, TRUE);
-        if (_BLOCK_TYPE_IS_VALID(crtheader->use) && nValid && (nSize == info->size)) {
-            info->debugCrtAlloc = true;
-            info->ucrt = false;
+        // Check if block is large enough to contain CRT debug header
+        if (info->size >= sizeof(crtdbgblockheader_t)) {
+            crtdbgblockheader_t* crtheader = (crtdbgblockheader_t*)block;
+            SIZE_T nSize = sizeof(crtdbgblockheader_t) + crtheader->size + GAPSIZE;
+            int nValid = _CrtIsValidPointer(block, (unsigned int)info->size, TRUE);
+            if (_BLOCK_TYPE_IS_VALID(crtheader->use) && nValid && (nSize == info->size)) {
+                info->debugCrtAlloc = true;
+                info->ucrt = false;
+            }
         }
     }
 
     if (!info->debugCrtAlloc) {
-        crtdbgblockheaderucrt_t* crtheader = (crtdbgblockheaderucrt_t*)block;
-        SIZE_T nSize = sizeof(crtdbgblockheaderucrt_t) + crtheader->size + GAPSIZE;
-        int nValid = _CrtIsValidPointer(block, (unsigned int)info->size, TRUE);
-        if (_BLOCK_TYPE_IS_VALID(crtheader->use) && nValid && (nSize == info->size)) {
-            info->debugCrtAlloc = true;
-            info->ucrt = true;
+        // Check if block is large enough to contain UCRT debug header
+        if (info->size >= sizeof(crtdbgblockheaderucrt_t)) {
+            crtdbgblockheaderucrt_t* crtheader = (crtdbgblockheaderucrt_t*)block;
+            SIZE_T nSize = sizeof(crtdbgblockheaderucrt_t) + crtheader->size + GAPSIZE;
+            int nValid = _CrtIsValidPointer(block, (unsigned int)info->size, TRUE);
+            if (_BLOCK_TYPE_IS_VALID(crtheader->use) && nValid && (nSize == info->size)) {
+                info->debugCrtAlloc = true;
+                info->ucrt = true;
+            }
         }
     }
 
