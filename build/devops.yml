@@ -20,8 +20,9 @@ parameters:
       pool: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
     - name: 'arm64'
       cmakeArch: 'ARM64'
-      # Use native ARM64-hosted ARM64 compiler on ARM64 build agents (host_target format)
-      vcvarsArg: 'arm64_arm64'
+      # Note: ARM64-hosted tools (arm64_arm64) not available in current VS image.
+      # Using 'arm64' which auto-selects available host (typically amd64 cross-compiler).
+      vcvarsArg: 'arm64'
       platform: 'ARM64'
       pool: 'Azure-MessagingStore-WinBuildPoolARM'
 - name: configurations
