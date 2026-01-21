@@ -62,6 +62,7 @@ if(MSVC)
     # Treat warnings as errors if enabled
     if(VLD_WARNINGS_AS_ERRORS)
         add_compile_options(/WX)
+        add_link_options(/WX)
     endif()
     
     add_compile_definitions(
