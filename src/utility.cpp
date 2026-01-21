@@ -896,7 +896,8 @@ VOID Print (LPWSTR messagew)
             const size_t MAXMESSAGELENGTH = 5119;
             size_t  count = 0;
             CHAR    messagea [MAXMESSAGELENGTH + 1];
-            if (wcstombs_s(&count, messagea, MAXMESSAGELENGTH + 1, messagew, _TRUNCATE) != 0) {
+            errno_t err = wcstombs_s(&count, messagea, MAXMESSAGELENGTH + 1, messagew, _TRUNCATE);
+            if (err != 0 && err != STRUNCATE) {
                 // Failed to convert the Unicode message to ASCII.
                 assert(FALSE);
                 return;
