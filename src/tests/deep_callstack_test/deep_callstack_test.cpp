@@ -1,10 +1,31 @@
 // deep_callstack_test.cpp
 // Test to expose crash caused by excessively long stack traces (PR #37)
 // 
+// PROBLEM:
+// VLD's Print() function in utility.cpp uses wcstombs_s() with _TRUNCATE to
+// convert Unicode messages to ANSI. The output buffer is MAXMESSAGELENGTH=5119
+// bytes. When the message exceeds this size, wcstombs_s() returns STRUNCATE
+// (not 0) to indicate successful truncation. The old code treated STRUNCATE
+// as an error and called assert(err == 0), causing a crash.
+//
+// TEST STRATEGY:
 // This test creates deeply nested function calls to generate long call stacks,
 // then triggers a memory leak to force VLD to print the full stack trace.
-// If the Print() function in utility.cpp doesn't handle long messages properly,
-// this will crash.
+// 
+// BUFFER SIZE CALCULATION:
+// - MAXMESSAGELENGTH = 5119 bytes (defined in utility.cpp line ~896)
+// - Each stack frame prints approximately:
+//       "    recursive_func_15() + 0x42 (File: deep_callstack_test.cpp, Line: 78)\n"
+//   which is roughly 70-80 characters per frame
+// - 300 frames × ~70 chars = ~21,000 characters (about 4× the 5119 byte buffer)
+// - This provides comfortable margin to reliably trigger truncation
+//
+// NOTE: This is an empirical estimate, not a programmatic check. The test uses
+// 300 frames as a "definitely big enough" depth based on the calculation above.
+//
+// SUCCESS CRITERIA:
+// The test completes and prints "Test completed successfully!" without crashing.
+// If the STRUNCATE bug exists, this test will crash with an assertion failure.
 
 #include <windows.h>
 #include <cstdlib>
@@ -98,7 +119,12 @@ __declspec(noinline) void recursive_func_19(int depth) {
 
 // Test with configurable recursion depth
 // Each "cycle" through the 20 functions adds 20 stack frames
-// depth=200 means 200 total frames (10 cycles through the 20 functions)
+// depth=300 means 300 total frames (15 cycles through the 20 functions)
+// 
+// Why 300? See calculation in file header:
+// - 300 frames × ~70 chars/frame = ~21KB output
+// - MAXMESSAGELENGTH = 5119 bytes
+// - 21KB >> 5KB, so truncation is guaranteed
 void test_deep_callstack(int total_depth) {
     printf("Testing with call stack depth: %d\n", total_depth);
     printf("This will generate a stack trace with ~%d frames\n", total_depth);
@@ -123,7 +149,10 @@ void test_deep_callstack(int total_depth) {
 }
 
 int main(int argc, char* argv[]) {
-    int depth = 300; // Default: 300 stack frames - should exceed MAXMESSAGELENGTH
+    // Default depth: 300 stack frames
+    // This generates ~21KB of output, well exceeding MAXMESSAGELENGTH (5119 bytes)
+    // See file header for detailed calculation
+    int depth = 300;
     
     if (argc > 1) {
         depth = atoi(argv[1]);
