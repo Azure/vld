@@ -7,7 +7,7 @@
 #include <iostream>
 #include <string>
 
-#define VLD_FORCE_ENABLE
+// VLD_FORCE_ENABLE is defined via CMake for non-Debug builds
 #include <vld.h>
 
 static std::string str("my_string"); // 10

@@ -140,7 +140,7 @@ TEST_P(TestBasics, GetProcMalloc)
     ASSERT_EQ(correctLeaks, leaks);
 }
 
-INSTANTIATE_TEST_CASE_P(FreeVal,
+INSTANTIATE_TEST_SUITE_P(FreeVal,
     TestBasics,
     ::testing::Bool());
 

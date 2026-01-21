@@ -124,7 +124,7 @@ TEST_P(DynamicLoader, MfcMultithreadLoadingTests)
 }
 #endif // VLD_MFC_TESTS
 
-INSTANTIATE_TEST_CASE_P(ResolveVal,
+INSTANTIATE_TEST_SUITE_P(ResolveVal,
     DynamicLoader,
     ::testing::Bool());
 

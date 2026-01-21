@@ -9,7 +9,7 @@
 #include <sstream>
 #include <algorithm>
 #include <locale>
-#include <codecvt>
+#include <windows.h>
 
 #include <gtest/gtest.h>
 
@@ -100,8 +100,17 @@ static const int recursion = 3;
             return ::testing::AssertionFailure()
                 << resultStream.str() << actual_expr << " contain less lines than " << expected_expr << "";
         }
-        std::wstring_convert<std::codecvt_utf8<wchar_t>, wchar_t> converter;
-        std::string actualLine(converter.to_bytes(wactualLine));
+        // Convert wide string to UTF-8 using Windows API
+        std::string actualLine;
+        if (!wactualLine.empty()) {
+            int size_needed = WideCharToMultiByte(CP_UTF8, 0, wactualLine.c_str(), 
+                static_cast<int>(wactualLine.size()), nullptr, 0, nullptr, nullptr);
+            if (size_needed > 0) {
+                actualLine.resize(size_needed);
+                WideCharToMultiByte(CP_UTF8, 0, wactualLine.c_str(), 
+                    static_cast<int>(wactualLine.size()), &actualLine[0], size_needed, nullptr, nullptr);
+            }
+        }
         std::transform(actualLine.begin(), actualLine.end(), actualLine.begin(), ::tolower);
         if (!RE::FullMatch(actualLine, RE(expectedLine)))
         {

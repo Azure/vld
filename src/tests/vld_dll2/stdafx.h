@@ -11,7 +11,7 @@
 // Windows Header Files:
 #include <windows.h>
 
-#define VLD_FORCE_ENABLE
+// VLD_FORCE_ENABLE is defined via CMake for non-Debug builds
 #include <vld.h>
 
 

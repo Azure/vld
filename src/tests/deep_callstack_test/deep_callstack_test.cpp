@@ -10,7 +10,7 @@
 #include <cstdlib>
 #include <cstdio>
 
-#define VLD_FORCE_ENABLE
+// VLD_FORCE_ENABLE is defined via CMake for non-Debug builds
 #include <vld.h>
 
 // Use volatile to prevent compiler from optimizing away the recursion

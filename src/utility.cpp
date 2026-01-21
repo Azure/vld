@@ -1247,7 +1247,7 @@ static const DWORD crctab[256] = {
 
 DWORD CalculateCRC32(UINT_PTR p, UINT startValue)
 {
-    register DWORD hash = startValue;
+    DWORD hash = startValue;
     hash = (hash >> 8) ^ crctab[(hash & 0xff) ^ ((p >>  0) & 0xff)];
     hash = (hash >> 8) ^ crctab[(hash & 0xff) ^ ((p >>  8) & 0xff)];
     hash = (hash >> 8) ^ crctab[(hash & 0xff) ^ ((p >> 16) & 0xff)];
