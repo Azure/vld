@@ -369,7 +369,6 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/deep_callstack_test/deep_callstack_test.cp
     add_vld_test(deep_callstack_test
         SOURCES
             deep_callstack_test/deep_callstack_test.cpp
-        NO_TEST  # Don't add to CTest - this is a manual stress test
     )
 endif()
 

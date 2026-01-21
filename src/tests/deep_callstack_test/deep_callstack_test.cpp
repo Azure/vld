@@ -140,5 +140,5 @@ int main(int argc, char* argv[]) {
     test_deep_callstack(depth);
     
     printf("\nTest completed successfully!\n");
-    return 0;
+    return 0; // Return 0 = success (VLD handled long stack trace without crash)
 }
