@@ -380,6 +380,7 @@ void ConvertModulePathToAscii( LPCWSTR modulename, LPSTR * modulenamea )
 
 	int count = ::WideCharToMultiByte(CP_ACP, 0/*flags*/, modulename, (int)-1, *modulenamea, (int)length, &defaultChar, &defaultCharUsed);
 	assert(count != 0);
+	(void)count; // Used only in debug assert
 	if ( defaultCharUsed )
 	{
 		::OutputDebugStringW(__FILEW__ L": " __FUNCTIONW__ L" - defaultChar was used while conversion from \"");
@@ -444,6 +445,8 @@ typedef struct PROTECT_INSTANCE_TAG* PROTECT_HANDLE;
 
 #define PAGE_SIZE 0x1000
 
+#if !defined(_M_ARM64)
+// These functions are only used for x86/x64 trampoline detection
 static BOOL VLDVirtualProtect(PROTECT_HANDLE protect_handle, LPVOID address, SIZE_T size, DWORD protect)
 {
     BOOL result = TRUE;
@@ -508,6 +511,7 @@ static void VLDVirtualRestore(PROTECT_HANDLE protect_handle)
     }
 
 }
+#endif // !defined(_M_ARM64)
 
 LPVOID FindRealCode(LPVOID pCode)
 {

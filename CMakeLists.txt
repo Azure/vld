@@ -56,8 +56,8 @@ if(MSVC)
     # VLD core library overrides this to use static runtime
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
     
-    # Common compile options
-    add_compile_options(/W3)
+    # Common compile options - use highest warning level
+    add_compile_options(/W4)
     
     # Treat warnings as errors if enabled
     if(VLD_WARNINGS_AS_ERRORS)

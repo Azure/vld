@@ -27,7 +27,12 @@
 #include "utility.h"    // Provides various utility functions.
 #include "vldheap.h"    // Provides internal new and delete operators.
 #include "vldint.h"     // Provides access to VLD internals.
+
+// Disable warnings from third-party cppformat library
+#pragma warning(push)
+#pragma warning(disable: 4127) // conditional expression is constant
 #include "cppformat\format.h"
+#pragma warning(pop)
 
 // Imported global variables.
 extern HANDLE             g_currentProcess;
