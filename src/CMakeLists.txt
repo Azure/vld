@@ -60,13 +60,13 @@ endif()
 target_include_directories(vld PRIVATE
     ${CMAKE_SOURCE_DIR}/lib/dbghelp/include
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/lib/cppformat
+    ${CMAKE_SOURCE_DIR}/lib/cppformat/include
     ${CMAKE_SOURCE_DIR}/lib
     ${CMAKE_SOURCE_DIR}/setup
 )
 
 # Link libraries
-target_link_libraries(vld PRIVATE libformat)
+target_link_libraries(vld PRIVATE fmt)
 
 # DbgHelp library path
 if(VLD_PLATFORM STREQUAL "ARM64")

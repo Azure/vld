@@ -92,8 +92,14 @@ add_subdirectory(lib/cppformat)
 add_subdirectory(src)
 add_subdirectory(src/tests)
 
+# Third-party libraries: don't treat warnings as errors and use static runtime
+if(MSVC)
+    target_compile_options(fmt PRIVATE /W3 /WX-)
+    set_property(TARGET fmt PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 # IDE folder organization
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 set_target_properties(gtest PROPERTIES FOLDER "Libraries")
-set_target_properties(libformat PROPERTIES FOLDER "Libraries")
+set_target_properties(fmt PROPERTIES FOLDER "Libraries")
 set_target_properties(vld PROPERTIES FOLDER "VLD")
