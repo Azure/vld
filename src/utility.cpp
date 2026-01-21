@@ -892,11 +892,16 @@ VOID Print (LPWSTR messagew)
             const size_t MAXMESSAGELENGTH = 5119;
             size_t  count = 0;
             CHAR    messagea [MAXMESSAGELENGTH + 1];
-            if (wcstombs_s(&count, messagea, MAXMESSAGELENGTH + 1, messagew, _TRUNCATE) != 0) {
+            if (wcstombs_s(&count, messagea, MAXMESSAGELENGTH + 1, messagew, MAXMESSAGELENGTH) != 0) {
                 // Failed to convert the Unicode message to ASCII.
                 assert(FALSE);
                 return;
             }
+            if (count >= MAXMESSAGELENGTH)
+            {
+                Report(L"!!! Print Warning, the message was too long and has been truncated.\n");
+            }
+
             messagea[MAXMESSAGELENGTH] = '\0';
 
             if (s_reportFile != NULL) {
