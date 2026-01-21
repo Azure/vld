@@ -27,11 +27,7 @@
 #include "utility.h"    // Provides various utility functions.
 
 // Include {fmt} before vldheap.h which defines a 'new' macro
-// Suppress warnings from third-party code
-#pragma warning(push)
-#pragma warning(disable: 4127) // conditional expression is constant
 #include <fmt/xchar.h>  // Wide character support for {fmt}
-#pragma warning(pop)
 
 #include "vldheap.h"    // Provides internal new and delete operators.
 #include "vldint.h"     // Provides access to VLD internals.
