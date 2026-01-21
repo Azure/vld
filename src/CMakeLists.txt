@@ -107,13 +107,14 @@ if(MSVC)
     )
     
     # Linker settings
-    if(VLD_PLATFORM STREQUAL "ARM64")
-        # ARM64 requires base address >= 4GB
+    if(VLD_PLATFORM STREQUAL "ARM64" OR VLD_PLATFORM STREQUAL "x64")
+        # ARM64 and x64 require base address >= 4GB for ASLR optimization
         target_link_options(vld PRIVATE
             /SUBSYSTEM:WINDOWS
             /BASE:0x100000000
         )
     else()
+        # x86 (32-bit) uses lower base address
         target_link_options(vld PRIVATE
             /SUBSYSTEM:WINDOWS
             /BASE:0x03200000
