@@ -11,7 +11,7 @@ class CriticalSection
 public:
 	void Initialize()
 	{
-		m_critRegion.OwningThread = 0;
+		m_ownerThreadId = 0;
 		__try {
 			InitializeCriticalSection(&m_critRegion);
 		} __except (GetExceptionCode() == STATUS_NO_MEMORY ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
@@ -23,32 +23,41 @@ public:
 	// enter the section
 	void Enter()
 	{
-		ULONG_PTR ownerThreadId = (ULONG_PTR)m_critRegion.OwningThread;
-		UNREFERENCED_PARAMETER(ownerThreadId);
 		EnterCriticalSection(&m_critRegion);
+		m_ownerThreadId = GetCurrentThreadId();
 	}
 
 	bool IsLocked()
 	{
-		return (m_critRegion.OwningThread != NULL);
+		return (m_ownerThreadId != 0);
 	}
 
 	bool IsLockedByCurrentThread()
 	{
-		if (m_critRegion.OwningThread == NULL)
-			return false;
-		HANDLE ownerThreadId = (HANDLE)GetCurrentThreadId();
-		return m_critRegion.OwningThread == ownerThreadId;
+		return m_ownerThreadId == GetCurrentThreadId();
 	}
 
 	// try enter the section
-	bool TryEnter()		{ return (TryEnterCriticalSection(&m_critRegion) != 0); }
+	bool TryEnter()
+	{
+		if (TryEnterCriticalSection(&m_critRegion) != 0)
+		{
+			m_ownerThreadId = GetCurrentThreadId();
+			return true;
+		}
+		return false;
+	}
 
 	// leave the critical section
-	void Leave()		{ LeaveCriticalSection(&m_critRegion); }
+	void Leave()
+	{
+		m_ownerThreadId = 0;
+		LeaveCriticalSection(&m_critRegion);
+	}
 
 private:
 	CRITICAL_SECTION m_critRegion;
+	volatile DWORD m_ownerThreadId;
 };
 
 template<typename T = CriticalSection>

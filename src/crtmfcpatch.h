@@ -23,6 +23,10 @@
 
 #pragma once
 
+// Disable warning for nameless struct/union - intentionally used for type-punning
+#pragma warning(push)
+#pragma warning(disable: 4201)
+
 #ifndef VLDBUILD
 #error \
 "This header should only be included by Visual Leak Detector when building it from source. \
@@ -162,6 +166,8 @@ public:
         };
     };
 };
+
+#pragma warning(pop)
 
 ////////////////////////////////////////////////////////////////////////////////
 //

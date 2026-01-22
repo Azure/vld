@@ -60,13 +60,13 @@ endif()
 target_include_directories(vld PRIVATE
     ${CMAKE_SOURCE_DIR}/lib/dbghelp/include
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/lib/cppformat
+    ${CMAKE_SOURCE_DIR}/lib/cppformat/include
     ${CMAKE_SOURCE_DIR}/lib
     ${CMAKE_SOURCE_DIR}/setup
 )
 
 # Link libraries
-target_link_libraries(vld PRIVATE libformat)
+target_link_libraries(vld PRIVATE fmt)
 
 # DbgHelp library path
 if(VLD_PLATFORM STREQUAL "ARM64")
@@ -107,13 +107,14 @@ if(MSVC)
     )
     
     # Linker settings
-    if(VLD_PLATFORM STREQUAL "ARM64")
-        # ARM64 requires base address >= 4GB
+    if(VLD_PLATFORM STREQUAL "ARM64" OR VLD_PLATFORM STREQUAL "x64")
+        # ARM64 and x64 require base address >= 4GB for ASLR optimization
         target_link_options(vld PRIVATE
             /SUBSYSTEM:WINDOWS
             /BASE:0x100000000
         )
     else()
+        # x86 (32-bit) uses lower base address
         target_link_options(vld PRIVATE
             /SUBSYSTEM:WINDOWS
             /BASE:0x03200000

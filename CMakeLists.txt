@@ -53,8 +53,10 @@ if(MSVC)
     # VLD core library overrides this to use static runtime
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
     
-    # Common compile options
-    add_compile_options(/W3)
+    # Common compile options - use highest warning level and treat warnings as errors
+    add_compile_options(/W4 /WX)
+    add_link_options(/WX)
+    
     add_compile_definitions(
         _CRT_SECURE_NO_WARNINGS
         _VARIADIC_MAX=10
@@ -82,8 +84,14 @@ add_subdirectory(lib/cppformat)
 add_subdirectory(src)
 add_subdirectory(src/tests)
 
+# Third-party libraries: don't treat warnings as errors and use static runtime
+if(MSVC)
+    target_compile_options(fmt PRIVATE /W3 /WX-)
+    set_property(TARGET fmt PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 # IDE folder organization
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 set_target_properties(gtest PROPERTIES FOLDER "Libraries")
-set_target_properties(libformat PROPERTIES FOLDER "Libraries")
+set_target_properties(fmt PROPERTIES FOLDER "Libraries")
 set_target_properties(vld PROPERTIES FOLDER "VLD")

@@ -25,9 +25,16 @@
 #define VLDBUILD
 #include "callstack.h"  // This class' header.
 #include "utility.h"    // Provides various utility functions.
+
+// Include {fmt} before vldheap.h which defines a 'new' macro
+// Suppress C4127 warning from third-party code (conditional expression is constant)
+#pragma warning(push)
+#pragma warning(disable: 4127)
+#include <fmt/xchar.h>  // Wide character support for {fmt}
+#pragma warning(pop)
+
 #include "vldheap.h"    // Provides internal new and delete operators.
 #include "vldint.h"     // Provides access to VLD internals.
-#include "cppformat\format.h"
 
 // Imported global variables.
 extern HANDLE             g_currentProcess;
@@ -213,9 +220,9 @@ LPCWSTR CallStack::getFunctionName(SIZE_T programCounter, DWORD64& displacement6
     }
     else {
         // GetFormattedMessage( GetLastError() );
-        fmt::WArrayWriter wf(functionInfo->Name, MAX_SYMBOL_NAME_LENGTH);
-        wf.write(L"" ADDRESSCPPFORMAT, programCounter);
-        functionName = wf.c_str();
+        auto result = fmt::format_to_n(functionInfo->Name, MAX_SYMBOL_NAME_LENGTH - 1, L"" ADDRESSCPPFORMAT, programCounter);
+        *result.out = L'\0';
+        functionName = functionInfo->Name;
         displacement64 = 0;
     }
     return functionName;
@@ -239,19 +246,19 @@ DWORD CallStack::resolveFunction(SIZE_T programCounter, IMAGEHLP_LINEW64* source
             moduleName = callingModuleName;
     }
 
-    fmt::WArrayWriter w(stack_line, stackLineSize);
+    fmt::format_to_n_result<wchar_t*> result;
     // Display the current stack frame's information.
     if (sourceInfo)
     {
         if (displacement == 0)
         {
-            w.write(L"    {} ({}): {}!{}()\n",
+            result = fmt::format_to_n(stack_line, stackLineSize - 1, L"    {} ({}): {}!{}()\n",
                 sourceInfo->FileName, sourceInfo->LineNumber, moduleName,
                 functionName);
         }
         else
         {
-            w.write(L"    {} ({}): {}!{}() + 0x{:X} bytes\n",
+            result = fmt::format_to_n(stack_line, stackLineSize - 1, L"    {} ({}): {}!{}() + 0x{:X} bytes\n",
                 sourceInfo->FileName, sourceInfo->LineNumber, moduleName,
                 functionName, displacement);
         }
@@ -260,17 +267,17 @@ DWORD CallStack::resolveFunction(SIZE_T programCounter, IMAGEHLP_LINEW64* source
     {
         if (displacement == 0)
         {
-            w.write(L"    {}!{}()\n",
+            result = fmt::format_to_n(stack_line, stackLineSize - 1, L"    {}!{}()\n",
                 moduleName, functionName);
         }
         else
         {
-            w.write(L"    {}!{}() + 0x{:X} bytes\n",
+            result = fmt::format_to_n(stack_line, stackLineSize - 1, L"    {}!{}() + 0x{:X} bytes\n",
                 moduleName, functionName, displacement);
         }
     }
-    DWORD NumChars = (DWORD)w.size();
-    stack_line[NumChars] = '\0';
+    DWORD NumChars = static_cast<DWORD>(result.size);
+    stack_line[NumChars] = L'\0';
     return NumChars;
 }
 

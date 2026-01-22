@@ -380,6 +380,7 @@ void ConvertModulePathToAscii( LPCWSTR modulename, LPSTR * modulenamea )
 
 	int count = ::WideCharToMultiByte(CP_ACP, 0/*flags*/, modulename, (int)-1, *modulenamea, (int)length, &defaultChar, &defaultCharUsed);
 	assert(count != 0);
+	(void)count; // Used only in debug assert
 	if ( defaultCharUsed )
 	{
 		::OutputDebugStringW(__FILEW__ L": " __FUNCTIONW__ L" - defaultChar was used while conversion from \"");
@@ -444,6 +445,8 @@ typedef struct PROTECT_INSTANCE_TAG* PROTECT_HANDLE;
 
 #define PAGE_SIZE 0x1000
 
+#if !defined(_M_ARM64)
+// These functions are only used for x86/x64 trampoline detection
 static BOOL VLDVirtualProtect(PROTECT_HANDLE protect_handle, LPVOID address, SIZE_T size, DWORD protect)
 {
     BOOL result = TRUE;
@@ -508,6 +511,7 @@ static void VLDVirtualRestore(PROTECT_HANDLE protect_handle)
     }
 
 }
+#endif // !defined(_M_ARM64)
 
 LPVOID FindRealCode(LPVOID pCode)
 {
@@ -892,7 +896,8 @@ VOID Print (LPWSTR messagew)
             const size_t MAXMESSAGELENGTH = 5119;
             size_t  count = 0;
             CHAR    messagea [MAXMESSAGELENGTH + 1];
-            if (wcstombs_s(&count, messagea, MAXMESSAGELENGTH + 1, messagew, _TRUNCATE) != 0) {
+            errno_t err = wcstombs_s(&count, messagea, MAXMESSAGELENGTH + 1, messagew, _TRUNCATE);
+            if (err != 0 && err != STRUNCATE) {
                 // Failed to convert the Unicode message to ASCII.
                 assert(FALSE);
                 return;
@@ -1247,7 +1252,7 @@ static const DWORD crctab[256] = {
 
 DWORD CalculateCRC32(UINT_PTR p, UINT startValue)
 {
-    register DWORD hash = startValue;
+    DWORD hash = startValue;
     hash = (hash >> 8) ^ crctab[(hash & 0xff) ^ ((p >>  0) & 0xff)];
     hash = (hash >> 8) ^ crctab[(hash & 0xff) ^ ((p >>  8) & 0xff)];
     hash = (hash >> 8) ^ crctab[(hash & 0xff) ^ ((p >> 16) & 0xff)];
