@@ -13,9 +13,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Option to enable/disable MFC support
 option(VLD_USE_MFC "Build with MFC support (includes MFC test projects)" OFF)
 
-# Option to treat warnings as errors
-option(VLD_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
-
 # Configure output directories
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -56,14 +53,9 @@ if(MSVC)
     # VLD core library overrides this to use static runtime
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
     
-    # Common compile options - use highest warning level
-    add_compile_options(/W4)
-    
-    # Treat warnings as errors if enabled
-    if(VLD_WARNINGS_AS_ERRORS)
-        add_compile_options(/WX)
-        add_link_options(/WX)
-    endif()
+    # Common compile options - use highest warning level and treat warnings as errors
+    add_compile_options(/W4 /WX)
+    add_link_options(/WX)
     
     add_compile_definitions(
         _CRT_SECURE_NO_WARNINGS
@@ -77,7 +69,6 @@ endif()
 message(STATUS "Configuring Visual Leak Detector v${PROJECT_VERSION}")
 message(STATUS "Platform: ${VLD_PLATFORM}")
 message(STATUS "MFC Support: ${VLD_USE_MFC}")
-message(STATUS "Warnings as Errors: ${VLD_WARNINGS_AS_ERRORS}")
 
 # Enable testing
 enable_testing()
