@@ -1,4 +1,0 @@
-F:/Azure/libs/vld/lib/gtest/msvc/CMakeFiles/gtest.dir
-F:/Azure/libs/vld/lib/gtest/msvc/CMakeFiles/gtest_main.dir
-F:/Azure/libs/vld/lib/gtest/msvc/CMakeFiles/ALL_BUILD.dir
-F:/Azure/libs/vld/lib/gtest/msvc/CMakeFiles/ZERO_CHECK.dir
