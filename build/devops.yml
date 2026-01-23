@@ -45,55 +45,58 @@ jobs:
       steps:
 
       # =============================================================================
-      # ARM64 NATIVE BUILD ENVIRONMENT SETUP
+      # ARM64 NATIVE BUILD: ESCAPING WoW64 EMULATION
       # =============================================================================
-      # The Azure DevOps agent on ARM64 machines runs as a 32-bit x86 process under
-      # WoW64 emulation. This causes vcvarsall.bat to reject 'arm64_arm64' and forces
-      # MSBuild to use the x86-hosted cross-compiler (HostX86/arm64) instead of the
-      # native ARM64 compiler (Hostarm64/arm64).
+      # PROBLEM: The Azure DevOps agent on ARM64 Windows machines runs as a 32-bit
+      # x86 process under WoW64 emulation. This causes:
+      # - vcvarsall.bat to reject 'arm64_arm64' (only x86_arm64 cross-compile available)
+      # - MSBuild/VSBuild tasks to discover and use x86-hosted MSBuild
+      # - The x86 MSBuild selects HostX86/arm64/cl.exe (runs under emulation)
       #
-      # Solution: Use %SystemRoot%\SysNative to escape WoW64 and run vcvarsall in
-      # native ARM64 context. SysNative is a virtual folder that redirects to the
-      # real System32 (native binaries) when accessed from a WoW64 process.
+      # GOAL: Use native ARM64 compiler at Hostarm64/arm64/cl.exe for best performance.
       #
-      # This task:
-      # 1. Escapes WoW64 via SysNative\cmd.exe
-      # 2. Runs vcvarsall.bat arm64_arm64 to set up native ARM64 build environment
-      # 3. Adds VS CMake to PATH using prependpath (setvariable doesn't work for PATH)
-      # 4. Sets ARM64_MSBUILD variable pointing to native ARM64 MSBuild
+      # SOLUTION: Use %SystemRoot%\SysNative to escape WoW64. SysNative is a virtual
+      # folder that redirects to real System32 (native ARM64 binaries) when accessed
+      # from a WoW64 process. By invoking SysNative\cmd.exe, we run in native ARM64
+      # context where vcvarsall arm64_arm64 works and ARM64 MSBuild can be invoked.
+      #
+      # NOTE: VSBuild task's msbuildLocation parameter is DEPRECATED and IGNORED.
+      # The task uses its own x86 vswhere-based discovery. Therefore, for ARM64 we
+      # must use CmdLine to invoke ARM64 MSBuild directly via SysNative.
       # =============================================================================
       - ${{ if eq(arch.name, 'arm64') }}:
         - task: PowerShell@2
-          displayName: 'Setup ARM64 native build environment (escape WoW64)'
+          displayName: 'Setup ARM64 native environment (escape WoW64 via SysNative)'
           inputs:
             targetType: 'inline'
             script: |
+              # Escape WoW64 by calling vcvarsall through native ARM64 cmd.exe
               $vcvarsall = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"
               $nativeCmd = "$env:SystemRoot\SysNative\cmd.exe"
               
-              Write-Host "Escaping WoW64 via SysNative to run vcvarsall arm64_arm64..."
+              Write-Host "Current process architecture: $([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)"
+              Write-Host "Escaping WoW64 via $nativeCmd to run: vcvarsall.bat arm64_arm64"
+              
+              # Run vcvarsall in native context and capture environment
               $envOutput = & $nativeCmd /c "`"$vcvarsall`" arm64_arm64 >nul 2>&1 && set" 2>&1
               
-              # Add VS CMake to PATH - must use prependpath, not setvariable for PATH
+              # Add VS CMake to PATH (must use prependpath; setvariable doesn't work for PATH)
               $cmakePath = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin"
               Write-Host "##vso[task.prependpath]$cmakePath"
-              Write-Host "Added to PATH: $cmakePath"
               
+              # Export key environment variables from vcvarsall for subsequent tasks
+              $varsToExport = @('INCLUDE', 'LIB', 'LIBPATH', 'VCToolsInstallDir', 'VCToolsVersion', 
+                                'VisualStudioVersion', 'WindowsSdkDir', 'WindowsSDKVersion', 'VCINSTALLDIR')
               foreach ($line in $envOutput) {
                 if ($line -match '^([^=]+)=(.*)$') {
                   $name = $matches[1]
                   $value = $matches[2]
-                  # Export environment variables that vcvarsall sets
-                  if ($name -match '^(PATH|INCLUDE|LIB|LIBPATH|VCToolsInstallDir|VCToolsVersion|VisualStudioVersion|VSCMD_ARG_HOST_ARCH|VSCMD_ARG_TGT_ARCH|WindowsSdkDir|WindowsSDKVersion|VCINSTALLDIR|DevEnvDir)$') {
+                  if ($varsToExport -contains $name) {
                     Write-Host "##vso[task.setvariable variable=$name]$value"
                   }
                 }
               }
-              
-              # Export the native ARM64 MSBuild path for VSBuild task
-              $arm64Msbuild = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\arm64\msbuild.exe"
-              Write-Host "##vso[task.setvariable variable=ARM64_MSBUILD]$arm64Msbuild"
-              Write-Host "ARM64 native environment configured. MSBuild: $arm64Msbuild"
+              Write-Host "ARM64 native build environment configured via SysNative escape."
 
       # x64/x86: Setup VC++ environment via vcvarsall (runs natively, no escape needed)
       - ${{ if ne(arch.vcvarsArg, 'arm64_arm64') }}:
@@ -110,17 +113,14 @@ jobs:
           workingDirectory: 'build_${{ arch.name }}'
           cmakeArgs: '.. -DVLD_USE_MFC=OFF -A ${{ arch.cmakeArch }}'
 
-      # ARM64: Use VSBuild with explicit ARM64 MSBuild path
+      # ARM64: Invoke ARM64 MSBuild directly via SysNative (VSBuild ignores msbuildLocation)
       - ${{ if eq(arch.name, 'arm64') }}:
-        - task: VSBuild@1
-          displayName: 'Build solution ${{ config }}'
+        - task: CmdLine@2
+          displayName: 'Build solution ${{ config }} (ARM64 native MSBuild)'
           inputs:
-            solution: 'build_${{ arch.name }}\*.sln'
-            msbuildLocation: '$(ARM64_MSBUILD)'
-            platform: ${{ arch.platform }}
-            configuration: ${{ config }}
-            msbuildArgs: '/t:restore /t:build'
-            maximumCpuCount: true
+            script: |
+              @echo Invoking native ARM64 MSBuild via SysNative escape...
+              "%SystemRoot%\SysNative\cmd.exe" /c ""C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\arm64\msbuild.exe" "build_${{ arch.name }}\VLD.sln" /t:restore /t:build /p:Configuration=${{ config }} /p:Platform=${{ arch.platform }} /m /v:minimal"
 
       # x64/x86: Use VSBuild normally
       - ${{ if ne(arch.name, 'arm64') }}:
