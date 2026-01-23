@@ -59,7 +59,7 @@ jobs:
       # This task:
       # 1. Escapes WoW64 via SysNative\cmd.exe
       # 2. Runs vcvarsall.bat arm64_arm64 to set up native ARM64 build environment
-      # 3. Exports the environment variables to subsequent pipeline tasks
+      # 3. Adds VS CMake to PATH using prependpath (setvariable doesn't work for PATH)
       # 4. Sets ARM64_MSBUILD variable pointing to native ARM64 MSBuild
       # =============================================================================
       - ${{ if eq(arch.name, 'arm64') }}:
@@ -73,6 +73,11 @@ jobs:
               
               Write-Host "Escaping WoW64 via SysNative to run vcvarsall arm64_arm64..."
               $envOutput = & $nativeCmd /c "`"$vcvarsall`" arm64_arm64 >nul 2>&1 && set" 2>&1
+              
+              # Add VS CMake to PATH - must use prependpath, not setvariable for PATH
+              $cmakePath = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin"
+              Write-Host "##vso[task.prependpath]$cmakePath"
+              Write-Host "Added to PATH: $cmakePath"
               
               foreach ($line in $envOutput) {
                 if ($line -match '^([^=]+)=(.*)$') {
