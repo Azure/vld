@@ -1,0 +1,150 @@
+# =============================================================================
+# TEMPLATE: escape-wow64.yml
+# =============================================================================
+# PURPOSE: Escape from WoW64 emulation on ARM64 Windows build agents
+#
+# PROBLEM: Azure DevOps agents on ARM64 Windows machines run as 32-bit x86
+# processes under WoW64 emulation. This causes:
+#   - vcvarsall.bat to reject 'arm64_arm64' configuration
+#   - VSBuild/MSBuild tasks to select x86-hosted cross-compilers
+#   - Builds to use HostX86/arm64/cl.exe running under emulation
+#   - Suboptimal build performance due to x86 emulation overhead
+#
+# SOLUTION: Use %SystemRoot%\SysNative to invoke native ARM64 binaries.
+# SysNative is a virtual folder that redirects to real System32 (native
+# binaries) when accessed from a WoW64 process.
+#
+# USAGE:
+#   - template: build/templates/escape-wow64.yml
+#     parameters:
+#       vcvarsArg: 'arm64_arm64'           # Optional, defaults to arm64_arm64
+#       includeDiagnostics: true           # Optional, defaults to false
+#
+# OUTPUTS (pipeline variables):
+#   - ARM64_MSBUILD: Path to native ARM64 MSBuild executable
+#   - ARM64_ESCAPED: 'true' if escape was successful
+#
+# NOTE: This template should only be used for ARM64 builds on ARM64 hardware.
+# For x64/x86 builds, use standard vcvarsall via BatchScript task.
+# =============================================================================
+
+parameters:
+  - name: vcvarsArg
+    type: string
+    default: 'arm64_arm64'
+  - name: includeDiagnostics
+    type: boolean
+    default: false
+
+steps:
+# -----------------------------------------------------------------------------
+# OPTIONAL: Diagnostics to document the WoW64 issue
+# -----------------------------------------------------------------------------
+- ${{ if eq(parameters.includeDiagnostics, true) }}:
+  - task: PowerShell@2
+    displayName: 'DIAGNOSTIC: ARM64 Agent Architecture Info'
+    inputs:
+      targetType: 'inline'
+      script: |
+        Write-Host "============================================================"
+        Write-Host "ARM64 AGENT DIAGNOSTICS"
+        Write-Host "============================================================"
+        Write-Host ""
+        Write-Host "PROCESSOR_ARCHITECTURE:     $env:PROCESSOR_ARCHITECTURE"
+        Write-Host "PROCESSOR_ARCHITEW6432:     $env:PROCESSOR_ARCHITEW6432"
+        Write-Host "PROCESSOR_IDENTIFIER:       $env:PROCESSOR_IDENTIFIER"
+        Write-Host ""
+        Write-Host "Process Architecture:       $([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)"
+        Write-Host "OS Architecture:            $([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)"
+        Write-Host ""
+        Write-Host "Agent.Name:                 $env:AGENT_NAME"
+        Write-Host "Agent.OSArchitecture:       $env:AGENT_OSARCHITECTURE"
+        Write-Host "Agent.Version:              $env:AGENT_VERSION"
+        Write-Host "Agent.HomeDirectory:        $env:AGENT_HOMEDIRECTORY"
+        Write-Host ""
+        Write-Host "Running under WoW64:        $(Test-Path "$env:SystemRoot\SysNative")"
+        Write-Host ""
+        
+        # Check agent executable architecture
+        $agentExe = Join-Path $env:AGENT_HOMEDIRECTORY "bin\Agent.Worker.exe"
+        if (Test-Path $agentExe) {
+          try {
+            $bytes = [System.IO.File]::ReadAllBytes($agentExe)
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+            $machineType = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+            $archName = switch ($machineType) {
+              0x014c { "x86 (32-bit)" }
+              0x8664 { "x64 (AMD64)" }
+              0xAA64 { "ARM64" }
+              default { "Unknown (0x$($machineType.ToString('X4')))" }
+            }
+            Write-Host "Agent.Worker.exe PE Arch:   $archName"
+          } catch { }
+        }
+        Write-Host "============================================================"
+
+# -----------------------------------------------------------------------------
+# CORE: Escape WoW64 and setup native ARM64 build environment
+# -----------------------------------------------------------------------------
+- task: PowerShell@2
+  displayName: 'Setup ARM64 native environment (escape WoW64)'
+  inputs:
+    targetType: 'inline'
+    script: |
+      # Verify we're in a WoW64 context that needs escaping
+      $sysNativeExists = Test-Path "$env:SystemRoot\SysNative"
+      if (-not $sysNativeExists) {
+        Write-Host "##[warning]SysNative not found - not running under WoW64. Skipping escape."
+        Write-Host "##vso[task.setvariable variable=ARM64_ESCAPED]false"
+        exit 0
+      }
+      
+      Write-Host "Detected WoW64 context. Escaping via SysNative..."
+      
+      # Paths to Visual Studio tools
+      $vcvarsall = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"
+      $nativeCmd = "$env:SystemRoot\SysNative\cmd.exe"
+      $arm64Msbuild = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\arm64\msbuild.exe"
+      $cmakePath = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin"
+      
+      # Verify paths exist
+      if (-not (Test-Path $vcvarsall)) {
+        Write-Host "##[error]vcvarsall.bat not found at: $vcvarsall"
+        exit 1
+      }
+      if (-not (Test-Path $arm64Msbuild)) {
+        Write-Host "##[error]ARM64 MSBuild not found at: $arm64Msbuild"
+        exit 1
+      }
+      
+      # Escape WoW64 and run vcvarsall in native ARM64 context
+      Write-Host "Invoking: $nativeCmd /c vcvarsall.bat ${{ parameters.vcvarsArg }}"
+      $envOutput = & $nativeCmd /c "`"$vcvarsall`" ${{ parameters.vcvarsArg }} >nul 2>&1 && set" 2>&1
+      
+      # Add VS CMake to PATH (must use prependpath; setvariable doesn't work for PATH)
+      if (Test-Path $cmakePath) {
+        Write-Host "##vso[task.prependpath]$cmakePath"
+        Write-Host "Added to PATH: $cmakePath"
+      }
+      
+      # Export key environment variables from vcvarsall
+      $varsToExport = @('INCLUDE', 'LIB', 'LIBPATH', 'VCToolsInstallDir', 'VCToolsVersion', 
+                        'VisualStudioVersion', 'WindowsSdkDir', 'WindowsSDKVersion', 'VCINSTALLDIR')
+      foreach ($line in $envOutput) {
+        if ($line -match '^([^=]+)=(.*)$') {
+          $name = $matches[1]
+          $value = $matches[2]
+          if ($varsToExport -contains $name) {
+            Write-Host "##vso[task.setvariable variable=$name]$value"
+          }
+        }
+      }
+      
+      # Export ARM64 MSBuild path for use in build steps
+      Write-Host "##vso[task.setvariable variable=ARM64_MSBUILD]$arm64Msbuild"
+      Write-Host "##vso[task.setvariable variable=ARM64_ESCAPED]true"
+      
+      Write-Host ""
+      Write-Host "ARM64 native build environment configured successfully."
+      Write-Host "  vcvarsArg: ${{ parameters.vcvarsArg }}"
+      Write-Host "  ARM64_MSBUILD: $arm64Msbuild"
