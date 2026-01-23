@@ -45,6 +45,132 @@ jobs:
       steps:
 
       # =============================================================================
+      # ARM64 AGENT DIAGNOSTICS - EVIDENCE FOR ARM64 AGENT REQUEST
+      # =============================================================================
+      # This diagnostic task gathers comprehensive information about the Azure DevOps
+      # agent to document that it runs as an x86 process under WoW64 emulation on
+      # native ARM64 hardware, which prevents optimal ARM64 builds.
+      # =============================================================================
+      - ${{ if eq(arch.name, 'arm64') }}:
+        - task: PowerShell@2
+          displayName: 'DIAGNOSTIC: Gather ARM64 Agent Information'
+          inputs:
+            targetType: 'inline'
+            script: |
+              Write-Host "============================================================"
+              Write-Host "AZURE DEVOPS AGENT DIAGNOSTICS - ARM64 POOL"
+              Write-Host "============================================================"
+              Write-Host ""
+              
+              Write-Host "=== SYSTEM ARCHITECTURE ==="
+              Write-Host "PROCESSOR_ARCHITECTURE:     $env:PROCESSOR_ARCHITECTURE"
+              Write-Host "PROCESSOR_ARCHITEW6432:     $env:PROCESSOR_ARCHITEW6432"
+              Write-Host "NUMBER_OF_PROCESSORS:       $env:NUMBER_OF_PROCESSORS"
+              Write-Host "PROCESSOR_IDENTIFIER:       $env:PROCESSOR_IDENTIFIER"
+              Write-Host ""
+              
+              Write-Host "=== .NET RUNTIME INFO ==="
+              Write-Host "Process Architecture:       $([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)"
+              Write-Host "OS Architecture:            $([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)"
+              Write-Host "Framework Description:      $([System.Runtime.InteropServices.RuntimeInformation]::FrameworkDescription)"
+              Write-Host "OS Description:             $([System.Runtime.InteropServices.RuntimeInformation]::OSDescription)"
+              Write-Host ""
+              
+              Write-Host "=== CURRENT PROCESS INFO ==="
+              $proc = Get-Process -Id $PID
+              Write-Host "Process Name:               $($proc.ProcessName)"
+              Write-Host "Process ID:                 $($proc.Id)"
+              Write-Host "Process Path:               $($proc.Path)"
+              Write-Host "Process StartTime:          $($proc.StartTime)"
+              # Check if running under WoW64 (SysNative only exists from WoW64 processes)
+              $isWow64 = Test-Path "$env:SystemRoot\SysNative"
+              Write-Host "Running under WoW64:        $isWow64"
+              Write-Host ""
+              
+              Write-Host "=== AZURE DEVOPS AGENT VARIABLES ==="
+              Write-Host "Agent.Name:                 $env:AGENT_NAME"
+              Write-Host "Agent.MachineName:          $env:AGENT_MACHINENAME"
+              Write-Host "Agent.OS:                   $env:AGENT_OS"
+              Write-Host "Agent.OSArchitecture:       $env:AGENT_OSARCHITECTURE"
+              Write-Host "Agent.Version:              $env:AGENT_VERSION"
+              Write-Host "Agent.HomeDirectory:        $env:AGENT_HOMEDIRECTORY"
+              Write-Host "Agent.ToolsDirectory:       $env:AGENT_TOOLSDIRECTORY"
+              Write-Host "Agent.WorkFolder:           $env:AGENT_WORKFOLDER"
+              Write-Host ""
+              
+              Write-Host "=== AGENT EXECUTABLE ANALYSIS ==="
+              $agentExe = Join-Path $env:AGENT_HOMEDIRECTORY "bin\Agent.Worker.exe"
+              if (Test-Path $agentExe) {
+                Write-Host "Agent.Worker.exe Path:      $agentExe"
+                $agentInfo = Get-Item $agentExe
+                Write-Host "Agent.Worker.exe Size:      $($agentInfo.Length) bytes"
+                Write-Host "Agent.Worker.exe Modified:  $($agentInfo.LastWriteTime)"
+                
+                # Check PE header for architecture
+                try {
+                  $bytes = [System.IO.File]::ReadAllBytes($agentExe)
+                  $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+                  $machineType = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+                  $archName = switch ($machineType) {
+                    0x014c { "x86 (32-bit)" }
+                    0x0200 { "IA64" }
+                    0x8664 { "x64 (AMD64)" }
+                    0xAA64 { "ARM64" }
+                    0x01c4 { "ARM (32-bit)" }
+                    default { "Unknown (0x$($machineType.ToString('X4')))" }
+                  }
+                  Write-Host "Agent.Worker.exe PE Arch:   $archName (Machine: 0x$($machineType.ToString('X4')))"
+                } catch {
+                  Write-Host "Agent.Worker.exe PE Arch:   Unable to determine"
+                }
+              } else {
+                Write-Host "Agent.Worker.exe:           NOT FOUND at expected path"
+              }
+              Write-Host ""
+              
+              Write-Host "=== SYSTEM DIRECTORIES ==="
+              Write-Host "System32:                   $env:SystemRoot\System32"
+              Write-Host "SysWOW64:                   $env:SystemRoot\SysWOW64"
+              Write-Host "SysNative exists:           $(Test-Path "$env:SystemRoot\SysNative")"
+              Write-Host "(SysNative only visible from WoW64 processes)"
+              Write-Host ""
+              
+              Write-Host "=== AVAILABLE COMPILERS ==="
+              $vcToolsPath = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC"
+              if (Test-Path $vcToolsPath) {
+                Get-ChildItem $vcToolsPath | ForEach-Object {
+                  $ver = $_.Name
+                  $binPath = Join-Path $_.FullName "bin"
+                  if (Test-Path $binPath) {
+                    Get-ChildItem $binPath -Directory | ForEach-Object {
+                      Write-Host "  MSVC $ver : $($_.Name)"
+                    }
+                  }
+                }
+              }
+              Write-Host ""
+              
+              Write-Host "=== CONCLUSION ==="
+              if ($env:PROCESSOR_ARCHITECTURE -eq "x86" -and $env:PROCESSOR_ARCHITEW6432 -eq "ARM64") {
+                Write-Host "*** ISSUE DETECTED ***"
+                Write-Host "The Azure DevOps agent is running as a 32-bit x86 process under"
+                Write-Host "WoW64 emulation on native ARM64 hardware."
+                Write-Host ""
+                Write-Host "IMPACT:"
+                Write-Host "  - vcvarsall.bat rejects 'arm64_arm64' configuration"
+                Write-Host "  - VSBuild/MSBuild tasks select x86-hosted cross-compilers"
+                Write-Host "  - Builds use HostX86/arm64/cl.exe running under emulation"
+                Write-Host "  - Suboptimal build performance due to x86 emulation overhead"
+                Write-Host ""
+                Write-Host "RECOMMENDATION:"
+                Write-Host "  Deploy a native ARM64 Azure DevOps agent to enable:"
+                Write-Host "  - Native ARM64 tool execution without emulation"
+                Write-Host "  - Use of Hostarm64/arm64/cl.exe (native ARM64 compiler)"
+                Write-Host "  - Faster builds with no emulation overhead"
+              }
+              Write-Host "============================================================"
+
+      # =============================================================================
       # ARM64 NATIVE BUILD: ESCAPING WoW64 EMULATION
       # =============================================================================
       # PROBLEM: The Azure DevOps agent on ARM64 Windows machines runs as a 32-bit
