@@ -141,14 +141,16 @@ steps:
       # Export key environment variables from vcvarsall
       Write-Host "Captured $($envOutput.Count) lines from vcvarsall"
       
-      $varsToExport = @('INCLUDE', 'LIB', 'LIBPATH', 'VCToolsInstallDir', 'VCToolsVersion', 
-                        'VisualStudioVersion', 'WindowsSdkDir', 'WindowsSDKVersion', 'VCINSTALLDIR')
+      # Use uppercase for comparison - cmd.exe 'set' outputs uppercase var names
+      $varsToExport = @('INCLUDE', 'LIB', 'LIBPATH', 'VCTOOLSINSTALLDIR', 'VCTOOLSVERSION', 
+                        'VISUALSTUDIOVERSION', 'WINDOWSSDKDIR', 'WINDOWSSDKVERSION', 'VCINSTALLDIR')
       $exportedCount = 0
       foreach ($line in $envOutput) {
         if ($line -match '^([^=]+)=(.*)$') {
           $name = $matches[1]
           $value = $matches[2]
-          if ($varsToExport -contains $name) {
+          # Case-insensitive comparison
+          if ($varsToExport -contains $name.ToUpper()) {
             Write-Host "Exporting: $name"
             Write-Host "##vso[task.setvariable variable=$name]$value"
             $exportedCount++
@@ -156,6 +158,10 @@ steps:
         }
       }
       Write-Host "Exported $exportedCount environment variables"
+      
+      # Debug: show a few lines that look like VS variables
+      Write-Host "DEBUG: VS-related vars found:"
+      $envOutput | Where-Object { $_ -match '^(VC|VS|INCLUDE|LIB|Windows)' } | Select-Object -First 10 | ForEach-Object { Write-Host "  $_" }
       
       # Export ARM64 MSBuild path for use in build steps
       Write-Host "##vso[task.setvariable variable=ARM64_MSBUILD]$arm64Msbuild"
