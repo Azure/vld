@@ -3,176 +3,44 @@ resources:
 - repo: self
   clean: true
 
-parameters:
-- name: architectures
-  type: object
-  default:
-    - name: 'x64'
-      cmakeArch: 'x64'
-      vcvarsArg: 'amd64'
-      platform: 'x64'
-      pool: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
-    - name: 'x86'
-      cmakeArch: 'Win32'
-      # Use x64-hosted cross-compiler for x86 target (faster than native x86)
-      vcvarsArg: 'amd64_x86'
-      platform: 'Win32'
-      pool: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
-    - name: 'arm64'
-      cmakeArch: 'ARM64'
-      # Skip vcvarsall for ARM64 - let CMake auto-detect native compiler
-      vcvarsArg: ''
-      platform: 'ARM64'
-      pool: 'Azure-MessagingStore-WinBuildPoolARM'
-- name: configurations
-  type: object
-  default:
-    - 'Debug'
-    - 'RelWithDebInfo'
-
 jobs:
-- ${{ each arch in parameters.architectures }}:
-  - ${{ each config in parameters.configurations }}:
-    - job: Build_Windows_${{ arch.name }}_${{ config }}
-      displayName: 'Build Windows ${{ arch.name }} ${{ config }}'
-      pool:
-        name: ${{ arch.pool }}
-        demands:
-        - Cmd
-        - msbuild
-        - visualstudio
-        - Build
-      steps:
+- job: Build_ARM64
+  displayName: 'Build ARM64 Simple Test'
+  pool:
+    name: 'Azure-MessagingStore-WinBuildPoolARM'
+    demands:
+    - Cmd
+    - msbuild
+    - visualstudio
+  steps:
 
-      # Diagnostic: Show machine info and available compilers for ARM64 builds
-      - ${{ if eq(arch.name, 'arm64') }}:
-        - task: PowerShell@2
-          displayName: 'Diagnostic: Machine architecture and VS info'
-          inputs:
-            targetType: 'inline'
-            script: |
-              Write-Host "=== Machine Architecture ==="
-              Write-Host "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE"
-              Write-Host "PROCESSOR_ARCHITEW6432: $env:PROCESSOR_ARCHITEW6432"
-              Write-Host "PowerShell version: $($PSVersionTable.PSVersion)"
-              Write-Host "[System.Environment]::Is64BitProcess: $([System.Environment]::Is64BitProcess)"
-              Write-Host "[System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture: $([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)"
-              Write-Host ""
-              Write-Host "=== Finding CMake ==="
-              $cmakePaths = @(
-                "C:\Program Files\CMake\bin\cmake.exe",
-                "C:\Program Files (x86)\CMake\bin\cmake.exe",
-                "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
-              )
-              foreach ($p in $cmakePaths) {
-                if (Test-Path $p) {
-                  Write-Host "Found CMake: $p"
-                  & $p --version
-                }
-              }
-              Write-Host ""
-              Write-Host "=== Checking VC compiler directories ==="
-              $vcToolsPath = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC"
-              if (Test-Path $vcToolsPath) {
-                Get-ChildItem $vcToolsPath | ForEach-Object {
-                  $binPath = Join-Path $_.FullName "bin"
-                  if (Test-Path $binPath) {
-                    Write-Host "Version: $($_.Name)"
-                    Get-ChildItem $binPath -Directory | ForEach-Object { Write-Host "  Host: $($_.Name)" }
-                  }
-                }
-              }
-              Write-Host ""
-              Write-Host "=== Hostarm64 compiler details ==="
-              $hostarm64 = Get-ChildItem "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\*\bin\Hostarm64" -ErrorAction SilentlyContinue -Recurse -Directory
-              if ($hostarm64) {
-                $hostarm64 | ForEach-Object { 
-                  Write-Host "Path: $($_.FullName)"
-                  Get-ChildItem $_.FullName -Directory | ForEach-Object { Write-Host "  Target: $($_.Name)" }
-                }
-              } else {
-                Write-Host "No Hostarm64 directory found"
-              }
+  - task: PowerShell@2
+    displayName: 'Diagnostic: Show architecture'
+    inputs:
+      targetType: 'inline'
+      script: |
+        Write-Host "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE"
+        Write-Host "PROCESSOR_ARCHITEW6432: $env:PROCESSOR_ARCHITEW6432"
 
-        # Set up ARM64 native environment using PowerShell to launch correct vcvarsall
-        - task: PowerShell@2
-          displayName: 'Setup ARM64 native build environment'
-          inputs:
-            targetType: 'inline'
-            script: |
-              # Find the VS CMake
-              $cmakePath = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin"
-              if (Test-Path $cmakePath) {
-                Write-Host "Adding CMake to PATH: $cmakePath"
-                Write-Host "##vso[task.prependpath]$cmakePath"
-              }
-              
-              # Find the vcvarsall
-              $vcvarsall = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"
-              
-              # We need to run vcvarsall in a native ARM64 cmd.exe context
-              # The trick is to use the native ARM64 cmd.exe from System32 (not SysWOW64)
-              $nativeCmd = "$env:SystemRoot\SysNative\cmd.exe"
-              if (Test-Path $nativeCmd) {
-                Write-Host "Native ARM64 cmd.exe found: $nativeCmd"
-              } else {
-                $nativeCmd = "$env:SystemRoot\System32\cmd.exe"
-                Write-Host "Using System32 cmd.exe: $nativeCmd"
-              }
-              
-              # Call vcvarsall and capture environment
-              Write-Host "Calling vcvarsall.bat arm64_arm64..."
-              $envOutput = & $nativeCmd /c "`"$vcvarsall`" arm64_arm64 >nul 2>&1 && set" 2>&1
-              
-              foreach ($line in $envOutput) {
-                if ($line -match '^([^=]+)=(.*)$') {
-                  $name = $matches[1]
-                  $value = $matches[2]
-                  # Export key variables to pipeline
-                  if ($name -match '^(PATH|INCLUDE|LIB|LIBPATH|VCToolsInstallDir|VCToolsVersion|VisualStudioVersion|VSCMD_ARG_HOST_ARCH|VSCMD_ARG_TGT_ARCH)$') {
-                    Write-Host "##vso[task.setvariable variable=$name]$value"
-                    Write-Host "Set $name"
-                  }
-                }
-              }
+  - task: PowerShell@2
+    displayName: 'Add CMake to PATH'
+    inputs:
+      targetType: 'inline'
+      script: |
+        $cmakePath = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin"
+        Write-Host "##vso[task.prependpath]$cmakePath"
 
-      - ${{ if ne(arch.vcvarsArg, '') }}:
-        - task: BatchScript@1
-          displayName: 'Setup VC++ Environment (${{ arch.vcvarsArg }})'
-          inputs:
-            filename: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"'
-            arguments: '${{ arch.vcvarsArg }}'
-            modifyEnvironment: true
+  - task: CMake@1
+    displayName: 'CMake -A ARM64'
+    inputs:
+      workingDirectory: 'build_arm64'
+      cmakeArgs: '.. -A ARM64'
 
-      - task: CMake@1
-        displayName: 'CMake .. -DVLD_USE_MFC=OFF -A ${{ arch.cmakeArch }}'
-        inputs:
-          workingDirectory: 'build_${{ arch.name }}'
-          cmakeArgs: '.. -DVLD_USE_MFC=OFF -A ${{ arch.cmakeArch }}'
-
-      - ${{ if eq(arch.name, 'arm64') }}:
-        - task: VSBuild@1
-          displayName: 'Build solution ${{ config }}'
-          inputs:
-            solution: 'build_${{ arch.name }}\*.sln'
-            platform: ${{ arch.platform }}
-            configuration: ${{ config }}
-            # Force MSBuild to use the native ARM64-hosted compiler instead of x86 cross-compiler
-            msbuildArgs: '/t:restore /t:build /p:PreferredToolArchitecture=ARM64'
-            maximumCpuCount: true
-
-      - ${{ if ne(arch.name, 'arm64') }}:
-        - task: VSBuild@1
-          displayName: 'Build solution ${{ config }}'
-          inputs:
-            solution: 'build_${{ arch.name }}\*.sln'
-            platform: ${{ arch.platform }}
-            configuration: ${{ config }}
-            msbuildArgs: '/t:restore /t:build'
-            maximumCpuCount: true
-
-      - task: CmdLine@2
-        displayName: 'Run ctest ${{ config }}'
-        inputs:
-          script: 'ctest -C "${{ config }}" --output-on-failure'
-          workingDirectory: 'build_${{ arch.name }}'
+  - task: VSBuild@1
+    displayName: 'Build solution'
+    inputs:
+      solution: 'build_arm64\*.sln'
+      platform: ARM64
+      configuration: Debug
+      msbuildArgs: '/p:PreferredToolArchitecture=ARM64'
+      maximumCpuCount: true
