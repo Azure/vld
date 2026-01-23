@@ -36,11 +36,11 @@ jobs:
       workingDirectory: 'build_arm64'
       cmakeArgs: '.. -A ARM64'
 
-  - task: VSBuild@1
-    displayName: 'Build solution'
+  # Use ARM64 MSBuild directly instead of VSBuild task
+  - task: CmdLine@2
+    displayName: 'Build with ARM64 MSBuild'
     inputs:
-      solution: 'build_arm64\*.sln'
-      platform: ARM64
-      configuration: Debug
-      msbuildArgs: '/p:PreferredToolArchitecture=ARM64'
-      maximumCpuCount: true
+      script: |
+        echo Using native ARM64 MSBuild...
+        "%SystemRoot%\SysNative\cmd.exe" /c ""C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\arm64\msbuild.exe" build_arm64\SimpleTest.sln /p:Configuration=Debug /p:Platform=ARM64 /v:normal"
+      workingDirectory: '$(Build.SourcesDirectory)'
