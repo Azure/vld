@@ -7,17 +7,18 @@
 # USAGE:
 #   - template: build/templates/setup-vcvars.yml
 #     parameters:
-#       vcvarsArg: 'arm64_arm64'  # or 'amd64', 'amd64_x86', etc.
-#       isArm64: true
-#       includeDiagnostics: false
+#       vcvarsArg: 'amd64'          # Required for x64/x86, ignored for ARM64
+#       isArm64: true               # Set to true for ARM64 builds
+#       includeDiagnostics: false   # Optional: show diagnostic info
 #
-# This template eliminates the need for repeated if/else blocks by handling
-# the ARM64 WoW64 workaround internally.
+# NOTE: For ARM64, vcvarsall.bat doesn't support arm64_arm64 - only x86/amd64 hosts.
+# CMake auto-detects native ARM64 compiler, so vcvarsArg is ignored for ARM64 builds.
 # =============================================================================
 
 parameters:
   - name: vcvarsArg
     type: string
+    default: ''
   - name: isArm64
     type: boolean
     default: false
@@ -26,11 +27,10 @@ parameters:
     default: false
 
 steps:
-# ARM64: Use escape-wow64 template
+# ARM64: Use escape-wow64 template (vcvarsArg not used - CMake auto-detects native compiler)
 - ${{ if eq(parameters.isArm64, true) }}:
   - template: escape-wow64.yml
     parameters:
-      vcvarsArg: ${{ parameters.vcvarsArg }}
       includeDiagnostics: ${{ parameters.includeDiagnostics }}
 
 # x64/x86: Use BatchScript directly

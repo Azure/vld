@@ -5,7 +5,7 @@
 #
 # PROBLEM: Azure DevOps agents on ARM64 Windows machines run as 32-bit x86
 # processes under WoW64 emulation. This causes:
-#   - vcvarsall.bat to reject 'arm64_arm64' configuration
+#   - vcvarsall.bat to reject 'arm64_arm64' configuration (not a valid option)
 #   - VSBuild/MSBuild tasks to select x86-hosted cross-compilers
 #   - Builds to use HostX86/arm64/cl.exe running under emulation
 #   - Suboptimal build performance due to x86 emulation overhead
@@ -14,10 +14,14 @@
 # SysNative is a virtual folder that redirects to real System32 (native
 # binaries) when accessed from a WoW64 process.
 #
+# KEY INSIGHT: vcvarsall.bat does NOT support arm64_arm64 configuration - the
+# valid host architectures are x86 and amd64 only. However, this is OK because
+# CMake auto-detects the native ARM64 compiler when run from ARM64 context, and
+# MSBuild invoked via SysNative uses the correct ARM64 toolchain.
+#
 # USAGE:
 #   - template: build/templates/escape-wow64.yml
 #     parameters:
-#       vcvarsArg: 'arm64_arm64'           # Optional, defaults to arm64_arm64
 #       includeDiagnostics: true           # Optional, defaults to false
 #
 # OUTPUTS (pipeline variables):
@@ -29,9 +33,6 @@
 # =============================================================================
 
 parameters:
-  - name: vcvarsArg
-    type: string
-    default: 'arm64_arm64'
   - name: includeDiagnostics
     type: boolean
     default: false
@@ -102,37 +103,21 @@ steps:
       Write-Host "Detected WoW64 context. Escaping via SysNative..."
       
       # Paths to Visual Studio tools
-      $vcvarsall = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"
-      $nativeCmd = "$env:SystemRoot\SysNative\cmd.exe"
       $arm64Msbuild = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\arm64\msbuild.exe"
       $cmakePath = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin"
       
       # Verify paths exist
-      if (-not (Test-Path $vcvarsall)) {
-        Write-Host "##[error]vcvarsall.bat not found at: $vcvarsall"
-        exit 1
-      }
       if (-not (Test-Path $arm64Msbuild)) {
         Write-Host "##[error]ARM64 MSBuild not found at: $arm64Msbuild"
         exit 1
       }
       
-      # Escape WoW64 and run vcvarsall in native ARM64 context
-      Write-Host "Invoking: $nativeCmd /c vcvarsall.bat ${{ parameters.vcvarsArg }}"
-      # Run vcvarsall and capture all env vars afterwards
-      # Note: vcvarsall output is NOT suppressed so we can see if it runs successfully
-      $envOutput = & $nativeCmd /c "`"$vcvarsall`" ${{ parameters.vcvarsArg }} && set" 2>&1
-      
-      # Debug: What did we capture?
-      Write-Host "DEBUG: envOutput type = $($envOutput.GetType().FullName)"
-      Write-Host "DEBUG: envOutput is null = $($null -eq $envOutput)"
-      if ($envOutput) {
-        Write-Host "DEBUG: envOutput count/length = $($envOutput.Count) / $($envOutput.Length)"
-        Write-Host "DEBUG: First 10 lines:"
-        $envOutput | Select-Object -First 10 | ForEach-Object { Write-Host "  $_" }
-      } else {
-        Write-Host "DEBUG: envOutput is empty/null!"
-      }
+      # NOTE: vcvarsall.bat does NOT recognize arm64_arm64 configuration even from native ARM64 context.
+      # The valid architectures are: x86, amd64, x86_amd64, x86_arm, x86_arm64, amd64_x86, amd64_arm, amd64_arm64
+      # However, this is OK because:
+      #   1. CMake auto-detects the native ARM64 compiler when run from ARM64 context
+      #   2. MSBuild invoked via SysNative uses the correct ARM64 toolchain
+      # We skip the vcvarsall call entirely since it's not needed.
       
       # Add VS CMake to PATH (must use prependpath; setvariable doesn't work for PATH)
       if (Test-Path $cmakePath) {
@@ -140,36 +125,10 @@ steps:
         Write-Host "Added to PATH: $cmakePath"
       }
       
-      # Export key environment variables from vcvarsall
-      Write-Host "Captured $($envOutput.Count) lines from vcvarsall"
-      
-      # Use uppercase for comparison - cmd.exe 'set' outputs uppercase var names
-      $varsToExport = @('INCLUDE', 'LIB', 'LIBPATH', 'VCTOOLSINSTALLDIR', 'VCTOOLSVERSION', 
-                        'VISUALSTUDIOVERSION', 'WINDOWSSDKDIR', 'WINDOWSSDKVERSION', 'VCINSTALLDIR')
-      $exportedCount = 0
-      foreach ($line in $envOutput) {
-        if ($line -match '^([^=]+)=(.*)$') {
-          $name = $matches[1]
-          $value = $matches[2]
-          # Case-insensitive comparison
-          if ($varsToExport -contains $name.ToUpper()) {
-            Write-Host "Exporting: $name"
-            Write-Host "##vso[task.setvariable variable=$name]$value"
-            $exportedCount++
-          }
-        }
-      }
-      Write-Host "Exported $exportedCount environment variables"
-      
-      # Debug: show a few lines that look like VS variables
-      Write-Host "DEBUG: VS-related vars found:"
-      $envOutput | Where-Object { $_ -match '^(VC|VS|INCLUDE|LIB|Windows)' } | Select-Object -First 10 | ForEach-Object { Write-Host "  $_" }
-      
       # Export ARM64 MSBuild path for use in build steps
       Write-Host "##vso[task.setvariable variable=ARM64_MSBUILD]$arm64Msbuild"
       Write-Host "##vso[task.setvariable variable=ARM64_ESCAPED]true"
       
       Write-Host ""
       Write-Host "ARM64 native build environment configured successfully."
-      Write-Host "  vcvarsArg: ${{ parameters.vcvarsArg }}"
       Write-Host "  ARM64_MSBUILD: $arm64Msbuild"
