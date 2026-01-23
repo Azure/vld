@@ -1,0 +1,43 @@
+# =============================================================================
+# TEMPLATE: setup-vcvars.yml
+# =============================================================================
+# PURPOSE: Unified VC++ environment setup that handles both ARM64 (WoW64 escape)
+#          and x64/x86 (native vcvarsall) transparently.
+#
+# USAGE:
+#   - template: build/templates/setup-vcvars.yml
+#     parameters:
+#       vcvarsArg: 'arm64_arm64'  # or 'amd64', 'amd64_x86', etc.
+#       isArm64: true
+#       includeDiagnostics: false
+#
+# This template eliminates the need for repeated if/else blocks by handling
+# the ARM64 WoW64 workaround internally.
+# =============================================================================
+
+parameters:
+  - name: vcvarsArg
+    type: string
+  - name: isArm64
+    type: boolean
+    default: false
+  - name: includeDiagnostics
+    type: boolean
+    default: false
+
+steps:
+# ARM64: Use escape-wow64 template
+- ${{ if eq(parameters.isArm64, true) }}:
+  - template: escape-wow64.yml
+    parameters:
+      vcvarsArg: ${{ parameters.vcvarsArg }}
+      includeDiagnostics: ${{ parameters.includeDiagnostics }}
+
+# x64/x86: Use BatchScript directly
+- ${{ if eq(parameters.isArm64, false) }}:
+  - task: BatchScript@1
+    displayName: 'Setup VC++ Environment (${{ parameters.vcvarsArg }})'
+    inputs:
+      filename: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"'
+      arguments: '${{ parameters.vcvarsArg }}'
+      modifyEnvironment: true
