@@ -121,6 +121,17 @@ steps:
       Write-Host "Invoking: $nativeCmd /c vcvarsall.bat ${{ parameters.vcvarsArg }}"
       $envOutput = & $nativeCmd /c "`"$vcvarsall`" ${{ parameters.vcvarsArg }} >nul 2>&1 && set" 2>&1
       
+      # Debug: What did we capture?
+      Write-Host "DEBUG: envOutput type = $($envOutput.GetType().FullName)"
+      Write-Host "DEBUG: envOutput is null = $($null -eq $envOutput)"
+      if ($envOutput) {
+        Write-Host "DEBUG: envOutput count/length = $($envOutput.Count) / $($envOutput.Length)"
+        Write-Host "DEBUG: First 5 lines:"
+        $envOutput | Select-Object -First 5 | ForEach-Object { Write-Host "  $_" }
+      } else {
+        Write-Host "DEBUG: envOutput is empty/null!"
+      }
+      
       # Add VS CMake to PATH (must use prependpath; setvariable doesn't work for PATH)
       if (Test-Path $cmakePath) {
         Write-Host "##vso[task.prependpath]$cmakePath"
@@ -128,17 +139,23 @@ steps:
       }
       
       # Export key environment variables from vcvarsall
+      Write-Host "Captured $($envOutput.Count) lines from vcvarsall"
+      
       $varsToExport = @('INCLUDE', 'LIB', 'LIBPATH', 'VCToolsInstallDir', 'VCToolsVersion', 
                         'VisualStudioVersion', 'WindowsSdkDir', 'WindowsSDKVersion', 'VCINSTALLDIR')
+      $exportedCount = 0
       foreach ($line in $envOutput) {
         if ($line -match '^([^=]+)=(.*)$') {
           $name = $matches[1]
           $value = $matches[2]
           if ($varsToExport -contains $name) {
+            Write-Host "Exporting: $name"
             Write-Host "##vso[task.setvariable variable=$name]$value"
+            $exportedCount++
           }
         }
       }
+      Write-Host "Exported $exportedCount environment variables"
       
       # Export ARM64 MSBuild path for use in build steps
       Write-Host "##vso[task.setvariable variable=ARM64_MSBUILD]$arm64Msbuild"
