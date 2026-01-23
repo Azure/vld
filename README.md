@@ -32,6 +32,21 @@ Visual Leak Detector uses CMake as its build system. Visual Studio project files
 
 * Visual Studio 2019 or later (2022 recommended)
 * CMake 3.16 or later
+* Git (for cloning with submodules)
+
+### Cloning the Repository
+
+This repository uses Git submodules for third-party dependencies (fmt and googletest). When cloning, use the `--recurse-submodules` flag:
+
+```powershell
+git clone --recurse-submodules https://github.com/Azure/vld.git
+```
+
+If you've already cloned the repository without submodules, initialize them with:
+
+```powershell
+git submodule update --init
+```
 
 ### Supported Platforms
 
