@@ -65,7 +65,8 @@ jobs:
           workingDirectory: 'build_${{ arch.name }}'
           cmakeArgs: '.. -DVLD_USE_MFC=OFF -A ${{ arch.cmakeArch }}'
 
-      # ARM64: Invoke ARM64 MSBuild directly via SysNative (VSBuild ignores msbuildLocation)
+      # ARM64: Invoke ARM64 MSBuild directly via SysNative
+      # (MSBuild task would use x86 MSBuild due to WoW64 agent)
       - ${{ if eq(arch.name, 'arm64') }}:
         - task: CmdLine@2
           displayName: 'Build solution ${{ config }} (ARM64 native MSBuild)'
@@ -74,15 +75,15 @@ jobs:
               @echo Invoking native ARM64 MSBuild via SysNative escape...
               "%SystemRoot%\SysNative\cmd.exe" /c ""$(ARM64_MSBUILD)" "build_${{ arch.name }}\VLD.sln" /t:restore /t:build /p:Configuration=${{ config }} /p:Platform=${{ arch.platform }} /m /v:minimal"
 
-      # x64/x86: Use VSBuild normally
+      # x64/x86: Use MSBuild task (vcvarsall already set up the environment)
       - ${{ if ne(arch.name, 'arm64') }}:
-        - task: VSBuild@1
+        - task: MSBuild@1
           displayName: 'Build solution ${{ config }}'
           inputs:
             solution: 'build_${{ arch.name }}\*.sln'
             platform: ${{ arch.platform }}
             configuration: ${{ config }}
-            msbuildArgs: '/t:restore /t:build'
+            msbuildArguments: '/t:restore /t:build'
             maximumCpuCount: true
 
       - task: CmdLine@2
