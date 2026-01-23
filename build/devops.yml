@@ -73,7 +73,7 @@ jobs:
           inputs:
             script: |
               @echo Invoking native ARM64 MSBuild via SysNative escape...
-              "%SystemRoot%\SysNative\cmd.exe" /c ""$(ARM64_MSBUILD)" "build_${{ arch.name }}\VLD.sln" /t:restore /t:build /p:Configuration=${{ config }} /p:Platform=${{ arch.platform }} /m /v:minimal"
+              "%SystemRoot%\SysNative\cmd.exe" /c ""$(ARM64_MSBUILD)" "build_${{ arch.name }}\VLD.sln" /t:restore /t:build /p:Configuration=${{ config }} /p:Platform=${{ arch.platform }} /m"
 
       # x64/x86: Use MSBuild task (vcvarsall already set up the environment)
       - ${{ if ne(arch.name, 'arm64') }}:
