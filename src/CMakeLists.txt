@@ -106,6 +106,11 @@ if(MSVC)
         $<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/Ob0>  # Disable inlining
     )
     
+    # Disable C4244 warning for x86 builds (fmt library triggers this with 64-bit to 32-bit conversions)
+    if(VLD_PLATFORM STREQUAL "Win32")
+        target_compile_options(vld PRIVATE /wd4244)
+    endif()
+    
     # Linker settings
     if(VLD_PLATFORM STREQUAL "ARM64" OR VLD_PLATFORM STREQUAL "x64")
         # ARM64 and x64 require base address >= 4GB for ASLR optimization

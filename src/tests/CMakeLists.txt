@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.16)
 # Common include directories for all tests
 set(VLD_TEST_INCLUDE_DIRS
     ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/lib/gtest/include
+    ${CMAKE_SOURCE_DIR}/lib/gtest/googletest/include
 )
 
 # Common function to set up VLD test targets
