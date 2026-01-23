@@ -119,15 +119,17 @@ steps:
       
       # Escape WoW64 and run vcvarsall in native ARM64 context
       Write-Host "Invoking: $nativeCmd /c vcvarsall.bat ${{ parameters.vcvarsArg }}"
-      $envOutput = & $nativeCmd /c "`"$vcvarsall`" ${{ parameters.vcvarsArg }} >nul 2>&1 && set" 2>&1
+      # Run vcvarsall and capture all env vars afterwards
+      # Note: vcvarsall output is NOT suppressed so we can see if it runs successfully
+      $envOutput = & $nativeCmd /c "`"$vcvarsall`" ${{ parameters.vcvarsArg }} && set" 2>&1
       
       # Debug: What did we capture?
       Write-Host "DEBUG: envOutput type = $($envOutput.GetType().FullName)"
       Write-Host "DEBUG: envOutput is null = $($null -eq $envOutput)"
       if ($envOutput) {
         Write-Host "DEBUG: envOutput count/length = $($envOutput.Count) / $($envOutput.Length)"
-        Write-Host "DEBUG: First 5 lines:"
-        $envOutput | Select-Object -First 5 | ForEach-Object { Write-Host "  $_" }
+        Write-Host "DEBUG: First 10 lines:"
+        $envOutput | Select-Object -First 10 | ForEach-Object { Write-Host "  $_" }
       } else {
         Write-Host "DEBUG: envOutput is empty/null!"
       }
