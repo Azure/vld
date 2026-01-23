@@ -20,8 +20,8 @@ parameters:
       pool: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
     - name: 'arm64'
       cmakeArch: 'ARM64'
-      # Use native ARM64 compiler on ARM64 machines (available since VS2022 17.3+)
-      vcvarsArg: 'arm64_arm64'
+      # Skip vcvarsall for ARM64 - let CMake auto-detect native compiler
+      vcvarsArg: ''
       platform: 'ARM64'
       pool: 'Azure-MessagingStore-WinBuildPoolARM'
 - name: configurations
@@ -44,12 +44,41 @@ jobs:
         - Build
       steps:
 
-      - task: BatchScript@1
-        displayName: 'Setup VC++ Environment (${{ arch.vcvarsArg }})'
-        inputs:
-          filename: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"'
-          arguments: '${{ arch.vcvarsArg }}'
-          modifyEnvironment: true
+      # Diagnostic: Show machine info and available compilers for ARM64 builds
+      - ${{ if eq(arch.name, 'arm64') }}:
+        - task: CmdLine@2
+          displayName: 'Diagnostic: Machine architecture and VS info'
+          inputs:
+            script: |
+              echo === Machine Architecture ===
+              echo PROCESSOR_ARCHITECTURE=%PROCESSOR_ARCHITECTURE%
+              echo PROCESSOR_ARCHITEW6432=%PROCESSOR_ARCHITEW6432%
+              echo.
+              echo === Visual Studio Installation ===
+              dir "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC" /b 2>nul || echo No MSVC folder found
+              echo.
+              echo === Available Host Compiler Directories ===
+              for /d %%d in ("C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\*") do (
+                echo %%d
+                dir "%%d\bin" /b 2>nul
+              )
+              echo.
+              echo === Checking for ARM64 hosted compilers ===
+              dir "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\*\bin\Hostarm64" /s /b 2>nul || echo No Hostarm64 compilers found
+              echo.
+              echo === Checking for ARM64 target compilers ===
+              dir "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\*\bin\*\arm64\cl.exe" /s /b 2>nul || echo No arm64 target compilers found
+              echo.
+              echo === vcvarsall.bat available options ===
+              type "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" | findstr /i "arch"
+
+      - ${{ if ne(arch.vcvarsArg, '') }}:
+        - task: BatchScript@1
+          displayName: 'Setup VC++ Environment (${{ arch.vcvarsArg }})'
+          inputs:
+            filename: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"'
+            arguments: '${{ arch.vcvarsArg }}'
+            modifyEnvironment: true
 
       - task: CMake@1
         displayName: 'CMake .. -DVLD_USE_MFC=OFF -A ${{ arch.cmakeArch }}'
