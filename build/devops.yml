@@ -150,14 +150,26 @@ jobs:
           workingDirectory: 'build_${{ arch.name }}'
           cmakeArgs: '.. -DVLD_USE_MFC=OFF -A ${{ arch.cmakeArch }}'
 
-      - task: VSBuild@1
-        displayName: 'Build solution ${{ config }}'
-        inputs:
-          solution: 'build_${{ arch.name }}\*.sln'
-          platform: ${{ arch.platform }}
-          configuration: ${{ config }}
-          msbuildArgs: '/t:restore /t:build'
-          maximumCpuCount: true
+      - ${{ if eq(arch.name, 'arm64') }}:
+        - task: VSBuild@1
+          displayName: 'Build solution ${{ config }}'
+          inputs:
+            solution: 'build_${{ arch.name }}\*.sln'
+            platform: ${{ arch.platform }}
+            configuration: ${{ config }}
+            # Force MSBuild to use the native ARM64-hosted compiler instead of x86 cross-compiler
+            msbuildArgs: '/t:restore /t:build /p:PreferredToolArchitecture=ARM64'
+            maximumCpuCount: true
+
+      - ${{ if ne(arch.name, 'arm64') }}:
+        - task: VSBuild@1
+          displayName: 'Build solution ${{ config }}'
+          inputs:
+            solution: 'build_${{ arch.name }}\*.sln'
+            platform: ${{ arch.platform }}
+            configuration: ${{ config }}
+            msbuildArgs: '/t:restore /t:build'
+            maximumCpuCount: true
 
       - task: CmdLine@2
         displayName: 'Run ctest ${{ config }}'
