@@ -46,31 +46,95 @@ jobs:
 
       # Diagnostic: Show machine info and available compilers for ARM64 builds
       - ${{ if eq(arch.name, 'arm64') }}:
-        - task: CmdLine@2
+        - task: PowerShell@2
           displayName: 'Diagnostic: Machine architecture and VS info'
           inputs:
+            targetType: 'inline'
             script: |
-              echo === Machine Architecture ===
-              echo PROCESSOR_ARCHITECTURE=%PROCESSOR_ARCHITECTURE%
-              echo PROCESSOR_ARCHITEW6432=%PROCESSOR_ARCHITEW6432%
-              echo.
-              echo === Visual Studio Installation ===
-              dir "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC" /b 2>nul || echo No MSVC folder found
-              echo.
-              echo === Available Host Compiler Directories ===
-              for /d %%d in ("C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\*") do (
-                echo %%d
-                dir "%%d\bin" /b 2>nul
+              Write-Host "=== Machine Architecture ==="
+              Write-Host "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE"
+              Write-Host "PROCESSOR_ARCHITEW6432: $env:PROCESSOR_ARCHITEW6432"
+              Write-Host "PowerShell version: $($PSVersionTable.PSVersion)"
+              Write-Host "[System.Environment]::Is64BitProcess: $([System.Environment]::Is64BitProcess)"
+              Write-Host "[System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture: $([System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture)"
+              Write-Host ""
+              Write-Host "=== Finding CMake ==="
+              $cmakePaths = @(
+                "C:\Program Files\CMake\bin\cmake.exe",
+                "C:\Program Files (x86)\CMake\bin\cmake.exe",
+                "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
               )
-              echo.
-              echo === Checking for ARM64 hosted compilers ===
-              dir "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\*\bin\Hostarm64" /s /b 2>nul || echo No Hostarm64 compilers found
-              echo.
-              echo === Checking for ARM64 target compilers ===
-              dir "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\*\bin\*\arm64\cl.exe" /s /b 2>nul || echo No arm64 target compilers found
-              echo.
-              echo === vcvarsall.bat available options ===
-              type "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" | findstr /i "arch"
+              foreach ($p in $cmakePaths) {
+                if (Test-Path $p) {
+                  Write-Host "Found CMake: $p"
+                  & $p --version
+                }
+              }
+              Write-Host ""
+              Write-Host "=== Checking VC compiler directories ==="
+              $vcToolsPath = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC"
+              if (Test-Path $vcToolsPath) {
+                Get-ChildItem $vcToolsPath | ForEach-Object {
+                  $binPath = Join-Path $_.FullName "bin"
+                  if (Test-Path $binPath) {
+                    Write-Host "Version: $($_.Name)"
+                    Get-ChildItem $binPath -Directory | ForEach-Object { Write-Host "  Host: $($_.Name)" }
+                  }
+                }
+              }
+              Write-Host ""
+              Write-Host "=== Hostarm64 compiler details ==="
+              $hostarm64 = Get-ChildItem "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\*\bin\Hostarm64" -ErrorAction SilentlyContinue -Recurse -Directory
+              if ($hostarm64) {
+                $hostarm64 | ForEach-Object { 
+                  Write-Host "Path: $($_.FullName)"
+                  Get-ChildItem $_.FullName -Directory | ForEach-Object { Write-Host "  Target: $($_.Name)" }
+                }
+              } else {
+                Write-Host "No Hostarm64 directory found"
+              }
+
+        # Set up ARM64 native environment using PowerShell to launch correct vcvarsall
+        - task: PowerShell@2
+          displayName: 'Setup ARM64 native build environment'
+          inputs:
+            targetType: 'inline'
+            script: |
+              # Find the VS CMake
+              $cmakePath = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin"
+              if (Test-Path $cmakePath) {
+                Write-Host "Adding CMake to PATH: $cmakePath"
+                Write-Host "##vso[task.prependpath]$cmakePath"
+              }
+              
+              # Find the vcvarsall
+              $vcvarsall = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"
+              
+              # We need to run vcvarsall in a native ARM64 cmd.exe context
+              # The trick is to use the native ARM64 cmd.exe from System32 (not SysWOW64)
+              $nativeCmd = "$env:SystemRoot\SysNative\cmd.exe"
+              if (Test-Path $nativeCmd) {
+                Write-Host "Native ARM64 cmd.exe found: $nativeCmd"
+              } else {
+                $nativeCmd = "$env:SystemRoot\System32\cmd.exe"
+                Write-Host "Using System32 cmd.exe: $nativeCmd"
+              }
+              
+              # Call vcvarsall and capture environment
+              Write-Host "Calling vcvarsall.bat arm64_arm64..."
+              $envOutput = & $nativeCmd /c "`"$vcvarsall`" arm64_arm64 >nul 2>&1 && set" 2>&1
+              
+              foreach ($line in $envOutput) {
+                if ($line -match '^([^=]+)=(.*)$') {
+                  $name = $matches[1]
+                  $value = $matches[2]
+                  # Export key variables to pipeline
+                  if ($name -match '^(PATH|INCLUDE|LIB|LIBPATH|VCToolsInstallDir|VCToolsVersion|VisualStudioVersion|VSCMD_ARG_HOST_ARCH|VSCMD_ARG_TGT_ARCH)$') {
+                    Write-Host "##vso[task.setvariable variable=$name]$value"
+                    Write-Host "Set $name"
+                  }
+                }
+              }
 
       - ${{ if ne(arch.vcvarsArg, '') }}:
         - task: BatchScript@1
