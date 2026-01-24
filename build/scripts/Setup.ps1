@@ -7,15 +7,49 @@
     the x86 agent binaries with native ARM64 binaries. This eliminates WoW64
     emulation overhead and enables native ARM64 compilation.
     
+    WHY THIS IS NEEDED:
+    Azure DevOps 1ES Hosted Pools ship with an x86 agent on ARM64 machines.
+    This x86 agent runs under WoW64 emulation, causing:
+    - Incorrect PROCESSOR_ARCHITECTURE environment variable (reports x86)
+    - File system redirection hiding native ARM64 tools
+    - CMake/MSBuild selecting cross-compilers instead of native compilers
+    - Performance overhead from emulation
+    
+    WHY RUNTIME PATCHING DOESN'T WORK:
+    The agent cannot be patched during pipeline execution because Agent.Worker.exe
+    and Agent.Listener.exe are running - Windows prevents overwriting files in use.
+    
+    STEP-BY-STEP OPERATION:
+    1. Detect if running on ARM64 machine (using OS architecture, not process arch)
+    2. Find agent installation at C:\vss-agent\<version>
+    3. Check if agent is already ARM64 (skip if so - idempotent)
+    4. Stop any agent services (shouldn't be running at provisioning time)
+    5. Backup configuration files (.agent, .credentials, etc.)
+    6. Download matching ARM64 agent from official Azure DevOps URL
+    7. Extract ARM64 agent over existing installation (overwrite)
+    8. Restore configuration files
+    9. Verify agent is now ARM64
+    
+    OBSERVABILITY:
+    Logs are written to Azure Blob Storage and can be viewed at:
+    https://winbuildpoolarm.blob.core.windows.net/insights-logs-provisioningscriptlogs
+    
+    Filter by:
+    - category: "ProvisioningScriptLogs"
+    - Look for script version in output (e.g., "ARM64 Agent Provisioning Script v1.3.0")
+    
 .NOTES
     - Runs as provisioning script in 1ES image configuration
     - Agent is NOT running at this point, so files are not locked
     - Idempotent: skips patching if already ARM64
     - Preserves agent configuration files (.credentials, .agent, etc.)
+    
+    SOURCE: build/scripts/Setup.ps1 in the VLD repository
+    DOCS:   build/docs/ARM64-AGENT-PATCHING.md
 #>
 
 $ErrorActionPreference = "Stop"
-$ScriptVersion = "1.2.0"
+$ScriptVersion = "1.3.0"
 
 # Logging helper
 function Write-Log {
