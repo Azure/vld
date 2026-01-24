@@ -120,3 +120,26 @@ If ARM64 builds fail with architecture verification errors:
 - [Azure DevOps Agent Releases](https://github.com/microsoft/azure-pipelines-agent/releases)
 - [1ES Hosted Pools Documentation](https://eng.ms/docs/cloud-ai-platform/devdiv/one-engineering-system-1es/1es-docs)
 - [WoW64 Implementation Details](https://docs.microsoft.com/en-us/windows/win32/winprog64/wow64-implementation-details)
+
+## Additional ARM64 Build Considerations
+
+### MSBuild Task Selection
+
+Even with a native ARM64 agent, the Azure DevOps `MSBuild@1` task still uses the
+**x86 MSBuild executable** (`MSBuild\Current\Bin\msbuild.exe`). This causes x86
+compilers to be selected even when targeting ARM64.
+
+**Solution**: For ARM64 builds, the pipeline invokes the ARM64 MSBuild directly:
+```
+C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\arm64\MSBuild.exe
+```
+
+This ensures the native ARM64 compiler (`Hostarm64\arm64\cl.exe`) is used instead
+of the cross-compiler (`HostX86\arm64\cl.exe`).
+
+### Compiler Path Summary
+
+| MSBuild Used | Compiler Path | Performance |
+|--------------|---------------|-------------|
+| x86 MSBuild (`Bin\msbuild.exe`) | `HostX86\arm64\cl.exe` | Slow (x86 emulation) |
+| ARM64 MSBuild (`Bin\arm64\msbuild.exe`) | `Hostarm64\arm64\cl.exe` | Fast (native) |
