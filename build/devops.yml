@@ -56,6 +56,39 @@ jobs:
           isArm64: ${{ arch.isArm64 }}
           includeDiagnostics: ${{ arch.isArm64 }}  # Only for ARM64
 
+      # Ensure cmake is in PATH (Visual Studio bundled cmake)
+      - ${{ if eq(arch.isArm64, true) }}:
+        - task: PowerShell@2
+          displayName: 'Add CMake to PATH'
+          inputs:
+            targetType: 'inline'
+            script: |
+              # Find cmake from Visual Studio installation
+              $cmakePaths = @(
+                  "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin",
+                  "C:\Program Files\CMake\bin",
+                  "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin"
+              )
+              
+              foreach ($path in $cmakePaths) {
+                  if (Test-Path "$path\cmake.exe") {
+                      Write-Host "Found cmake at: $path"
+                      Write-Host "##vso[task.prependpath]$path"
+                      exit 0
+                  }
+              }
+              
+              # Fallback: search Program Files
+              $found = Get-ChildItem -Path "C:\Program Files" -Recurse -Filter "cmake.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+              if ($found) {
+                  $cmakeDir = $found.DirectoryName
+                  Write-Host "Found cmake at: $cmakeDir"
+                  Write-Host "##vso[task.prependpath]$cmakeDir"
+                  exit 0
+              }
+              
+              Write-Host "##vso[task.logissue type=warning]Could not find cmake.exe"
+
       - task: CMake@1
         displayName: 'CMake .. -DVLD_USE_MFC=OFF -A ${{ arch.cmakeArch }}'
         inputs:
