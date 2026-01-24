@@ -111,21 +111,18 @@ jobs:
           workingDirectory: 'build_${{ arch.name }}'
           cmakeArgs: '.. -DVLD_USE_MFC=OFF -A ${{ arch.cmakeArch }}'
 
-      # Build solution - use native MSBuild for ARM64 to get native ARM64 compiler
-      - ${{ if eq(arch.name, 'arm64') }}:
-        - task: CmdLine@2
-          displayName: 'Build solution ${{ config }} (ARM64 native MSBuild)'
-          inputs:
-            script: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\arm64\MSBuild.exe" "build_${{ arch.name }}\VLD.sln" /nologo /m /p:Platform=${{ arch.platform }} /p:Configuration=${{ config }} /t:restore /t:build'
-      - ${{ if ne(arch.name, 'arm64') }}:
-        - task: MSBuild@1
-          displayName: 'Build solution ${{ config }}'
-          inputs:
-            solution: 'build_${{ arch.name }}\VLD.sln'
-            platform: ${{ arch.platform }}
-            configuration: ${{ config }}
-            msbuildArguments: '/t:restore /t:build'
-            maximumCpuCount: true
+      # Build solution
+      # ARM64: Use msbuildLocation to point to native ARM64 MSBuild (avoids x86 emulation)
+      - task: MSBuild@1
+        displayName: 'Build solution ${{ config }}'
+        inputs:
+          solution: 'build_${{ arch.name }}\VLD.sln'
+          platform: ${{ arch.platform }}
+          configuration: ${{ config }}
+          msbuildArguments: '/t:restore /t:build'
+          maximumCpuCount: true
+          ${{ if eq(arch.name, 'arm64') }}:
+            msbuildLocation: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\arm64'
 
       - task: CmdLine@2
         displayName: 'Run ctest ${{ config }}'
