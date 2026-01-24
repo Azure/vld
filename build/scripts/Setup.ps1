@@ -15,7 +15,7 @@
 #>
 
 $ErrorActionPreference = "Stop"
-$ScriptVersion = "1.1.0"
+$ScriptVersion = "1.2.0"
 
 # Logging helper
 function Write-Log {
@@ -242,18 +242,20 @@ try {
     $extracted = 0
     
     foreach ($entry in $zip.Entries) {
-        $destPath = Join-Path $agentPath $entry.FullName
+        # Normalize path separators
+        $relativePath = $entry.FullName -replace '/', '\'
+        $destPath = Join-Path $agentPath $relativePath
         
-        if ($entry.FullName.EndsWith('/')) {
+        if ($entry.FullName.EndsWith('/') -or $entry.FullName.EndsWith('\')) {
             # Directory entry
             if (-not (Test-Path $destPath)) {
                 New-Item -ItemType Directory -Path $destPath -Force | Out-Null
             }
         }
         else {
-            # File entry
+            # File entry - ensure parent directory exists
             $destDir = Split-Path $destPath -Parent
-            if (-not (Test-Path $destDir)) {
+            if ($destDir -and -not (Test-Path $destDir)) {
                 New-Item -ItemType Directory -Path $destDir -Force | Out-Null
             }
             
