@@ -92,7 +92,7 @@ steps:
     }
     
     # Extract with overwrite
-    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [System.IO.Compression.ZipFile]::OpenRead("$downloadPath\$agentZip")
     foreach ($entry in $zip.Entries) {
         $destPath = Join-Path $agentPath $entry.FullName
