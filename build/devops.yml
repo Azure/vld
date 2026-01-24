@@ -98,9 +98,12 @@ jobs:
               Write-Host "============================================================"
 
       # Setup VC++ environment
-      - template: templates/setup-vcvars.yml
-        parameters:
-          vcvarsArg: ${{ arch.vcvarsArg }}
+      - task: BatchScript@1
+        displayName: 'Setup VC++ Environment (${{ arch.vcvarsArg }})'
+        inputs:
+          filename: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"'
+          arguments: '${{ arch.vcvarsArg }}'
+          modifyEnvironment: true
 
       - task: CMake@1
         displayName: 'CMake .. -DVLD_USE_MFC=OFF -A ${{ arch.cmakeArch }}'
@@ -109,11 +112,14 @@ jobs:
           cmakeArgs: '.. -DVLD_USE_MFC=OFF -A ${{ arch.cmakeArch }}'
 
       # Build solution
-      - template: templates/build-solution.yml
-        parameters:
+      - task: MSBuild@1
+        displayName: 'Build solution ${{ config }}'
+        inputs:
           solution: 'build_${{ arch.name }}\VLD.sln'
           platform: ${{ arch.platform }}
           configuration: ${{ config }}
+          msbuildArguments: '/t:restore /t:build'
+          maximumCpuCount: true
 
       - task: CmdLine@2
         displayName: 'Run ctest ${{ config }}'
