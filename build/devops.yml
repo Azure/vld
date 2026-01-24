@@ -12,19 +12,16 @@ parameters:
       vcvarsArg: 'amd64'
       platform: 'x64'
       pool: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
-      isArm64: false
     - name: 'x86'
       cmakeArch: 'Win32'
       vcvarsArg: 'amd64_x86'
       platform: 'Win32'
       pool: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
-      isArm64: false
     - name: 'arm64'
       cmakeArch: 'ARM64'
-      vcvarsArg: 'arm64_arm64'
+      vcvarsArg: 'arm64'
       platform: 'ARM64'
       pool: 'Azure-MessagingStore-WinBuildPoolARM'
-      isArm64: true
 - name: configurations
   type: object
   default:
@@ -46,7 +43,7 @@ jobs:
       steps:
 
       # Verify ARM64 agent architecture (provisioning script should have patched it)
-      - ${{ if eq(arch.isArm64, true) }}:
+      - ${{ if eq(arch.name, 'arm64') }}:
         - task: PowerShell@2
           displayName: 'Verify ARM64 Agent Architecture'
           inputs:
@@ -100,12 +97,10 @@ jobs:
               
               Write-Host "============================================================"
 
-      # Setup VC++ environment (handles ARM64 WoW64 escape internally)
+      # Setup VC++ environment
       - template: templates/setup-vcvars.yml
         parameters:
           vcvarsArg: ${{ arch.vcvarsArg }}
-          isArm64: ${{ arch.isArm64 }}
-          includeDiagnostics: ${{ arch.isArm64 }}  # Only for ARM64
 
       - task: CMake@1
         displayName: 'CMake .. -DVLD_USE_MFC=OFF -A ${{ arch.cmakeArch }}'
@@ -113,13 +108,12 @@ jobs:
           workingDirectory: 'build_${{ arch.name }}'
           cmakeArgs: '.. -DVLD_USE_MFC=OFF -A ${{ arch.cmakeArch }}'
 
-      # Build solution (handles ARM64 SysNative MSBuild internally)
+      # Build solution
       - template: templates/build-solution.yml
         parameters:
           solution: 'build_${{ arch.name }}\VLD.sln'
           platform: ${{ arch.platform }}
           configuration: ${{ config }}
-          isArm64: ${{ arch.isArm64 }}
 
       - task: CmdLine@2
         displayName: 'Run ctest ${{ config }}'

@@ -1,8 +1,7 @@
 # =============================================================================
 # TEMPLATE: build-solution.yml
 # =============================================================================
-# PURPOSE: Unified build step that handles both ARM64 (via SysNative) and
-#          x64/x86 (via MSBuild task) builds transparently.
+# PURPOSE: Build a Visual Studio solution using MSBuild.
 #
 # USAGE:
 #   - template: build/templates/build-solution.yml
@@ -10,10 +9,9 @@
 #       solution: 'build_arm64\VLD.sln'
 #       platform: 'ARM64'
 #       configuration: 'Debug'
-#       isArm64: true  # or use expression: ${{ eq(arch.name, 'arm64') }}
 #
-# This template eliminates the need for repeated if/else blocks in the main
-# pipeline by handling the ARM64 WoW64 workaround internally.
+# NOTE: With native ARM64 agent (via 1ES provisioning script), we can use
+# standard MSBuild task for all architectures. No SysNative workarounds needed.
 # =============================================================================
 
 parameters:
@@ -23,30 +21,16 @@ parameters:
     type: string
   - name: configuration
     type: string
-  - name: isArm64
-    type: boolean
-    default: false
   - name: msbuildArguments
     type: string
     default: '/t:restore /t:build'
 
 steps:
-# ARM64: Use CmdLine with SysNative to invoke native ARM64 MSBuild
-- ${{ if eq(parameters.isArm64, true) }}:
-  - task: CmdLine@2
-    displayName: 'Build solution ${{ parameters.configuration }}'
-    inputs:
-      script: |
-        @echo Invoking native ARM64 MSBuild via SysNative...
-        "%SystemRoot%\SysNative\cmd.exe" /c ""$(ARM64_MSBUILD)" "${{ parameters.solution }}" ${{ parameters.msbuildArguments }} /p:Configuration=${{ parameters.configuration }} /p:Platform=${{ parameters.platform }} /m"
-
-# x64/x86: Use MSBuild task directly
-- ${{ if eq(parameters.isArm64, false) }}:
-  - task: MSBuild@1
-    displayName: 'Build solution ${{ parameters.configuration }}'
-    inputs:
-      solution: '${{ parameters.solution }}'
-      platform: ${{ parameters.platform }}
-      configuration: ${{ parameters.configuration }}
-      msbuildArguments: '${{ parameters.msbuildArguments }}'
-      maximumCpuCount: true
+- task: MSBuild@1
+  displayName: 'Build solution ${{ parameters.configuration }}'
+  inputs:
+    solution: '${{ parameters.solution }}'
+    platform: ${{ parameters.platform }}
+    configuration: ${{ parameters.configuration }}
+    msbuildArguments: '${{ parameters.msbuildArguments }}'
+    maximumCpuCount: true

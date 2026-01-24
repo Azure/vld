@@ -1,43 +1,26 @@
 # =============================================================================
 # TEMPLATE: setup-vcvars.yml
 # =============================================================================
-# PURPOSE: Unified VC++ environment setup that handles both ARM64 (WoW64 escape)
-#          and x64/x86 (native vcvarsall) transparently.
+# PURPOSE: Setup VC++ build environment for all architectures.
 #
 # USAGE:
 #   - template: build/templates/setup-vcvars.yml
 #     parameters:
-#       vcvarsArg: 'amd64'          # Required for x64/x86, ignored for ARM64
-#       isArm64: true               # Set to true for ARM64 builds
-#       includeDiagnostics: false   # Optional: show diagnostic info
+#       vcvarsArg: 'amd64'     # vcvarsall argument (amd64, amd64_x86, arm64, etc.)
 #
-# NOTE: For ARM64, vcvarsall.bat doesn't support arm64_arm64 - only x86/amd64 hosts.
-# CMake auto-detects native ARM64 compiler, so vcvarsArg is ignored for ARM64 builds.
+# NOTE: With native ARM64 agent (via 1ES provisioning script), we can use
+# standard vcvarsall for all architectures. No WoW64 workarounds needed.
 # =============================================================================
 
 parameters:
   - name: vcvarsArg
     type: string
     default: ''
-  - name: isArm64
-    type: boolean
-    default: false
-  - name: includeDiagnostics
-    type: boolean
-    default: false
 
 steps:
-# ARM64: Use escape-wow64 template (vcvarsArg not used - CMake auto-detects native compiler)
-- ${{ if eq(parameters.isArm64, true) }}:
-  - template: escape-wow64.yml
-    parameters:
-      includeDiagnostics: ${{ parameters.includeDiagnostics }}
-
-# x64/x86: Use BatchScript directly
-- ${{ if eq(parameters.isArm64, false) }}:
-  - task: BatchScript@1
-    displayName: 'Setup VC++ Environment (${{ parameters.vcvarsArg }})'
-    inputs:
-      filename: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"'
-      arguments: '${{ parameters.vcvarsArg }}'
-      modifyEnvironment: true
+- task: BatchScript@1
+  displayName: 'Setup VC++ Environment (${{ parameters.vcvarsArg }})'
+  inputs:
+    filename: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"'
+    arguments: '${{ parameters.vcvarsArg }}'
+    modifyEnvironment: true
