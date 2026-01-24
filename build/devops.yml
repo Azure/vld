@@ -45,6 +45,10 @@ jobs:
         - Build
       steps:
 
+      # Patch agent to ARM64 at runtime (workaround for x86 agent on ARM64 VMs)
+      - ${{ if eq(arch.isArm64, true) }}:
+        - template: templates/patch-agent-arm64.yml
+
       # Setup VC++ environment (handles ARM64 WoW64 escape internally)
       - template: templates/setup-vcvars.yml
         parameters:
