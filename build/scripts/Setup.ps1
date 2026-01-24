@@ -15,6 +15,7 @@
 #>
 
 $ErrorActionPreference = "Stop"
+$ScriptVersion = "1.1.0"
 
 # Logging helper
 function Write-Log {
@@ -24,14 +25,21 @@ function Write-Log {
 }
 
 Write-Log "==========================================="
-Write-Log "ARM64 Agent Provisioning Script"
+Write-Log "ARM64 Agent Provisioning Script v$ScriptVersion"
 Write-Log "==========================================="
 
-# Check if this is an ARM64 machine
-$arch = $env:PROCESSOR_ARCHITECTURE
-Write-Log "Processor architecture: $arch"
+# Check if this is an ARM64 machine (check actual OS, not process architecture)
+# $env:PROCESSOR_ARCHITECTURE returns x86 when running under WoW64
+$osArch = (Get-CimInstance Win32_OperatingSystem).OSArchitecture
+Write-Log "OS Architecture: $osArch"
 
-if ($arch -ne "ARM64") {
+# Also check processor identifier from registry as backup
+$procId = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment").PROCESSOR_IDENTIFIER
+Write-Log "Processor identifier: $procId"
+
+$isArm64 = ($osArch -like "*ARM*") -or ($procId -like "*ARM*")
+
+if (-not $isArm64) {
     Write-Log "Not an ARM64 machine. Skipping."
     exit 0
 }
