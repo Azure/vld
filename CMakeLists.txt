@@ -74,7 +74,15 @@ if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
     
     # Common compile options - use highest warning level and treat warnings as errors
-    add_compile_options(/W4 /WX)
+    # Explicitly set all MSVC flags to ensure identical builds across generators
+    # (Visual Studio generator sets some flags in .vcxproj, Ninja sets them in CMAKE_CXX_FLAGS)
+    add_compile_options(
+        /W4 /WX          # Warning level 4, treat warnings as errors
+        /GS              # Buffer security check
+        /fp:precise      # Precise floating-point model
+        /Gd              # __cdecl calling convention (default)
+        /EHsc            # C++ exception handling
+    )
     add_link_options(/WX)
     
     add_compile_definitions(
