@@ -12,16 +12,19 @@ parameters:
       vcvarsArg: 'amd64'
       platform: 'x64'
       pool: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
+      msbuildPath: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\amd64\MSBuild.exe'
     - name: 'x86'
       cmakeArch: 'Win32'
       vcvarsArg: 'amd64_x86'
       platform: 'Win32'
       pool: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
+      msbuildPath: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\amd64\MSBuild.exe'
     - name: 'arm64'
       cmakeArch: 'ARM64'
       vcvarsArg: 'arm64'
       platform: 'ARM64'
       pool: 'Azure-MessagingStore-WinBuildPoolARM'
+      msbuildPath: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\arm64\MSBuild.exe'
 - name: configurations
   type: object
   default:
@@ -60,15 +63,11 @@ jobs:
           workingDirectory: 'build_${{ arch.name }}'
           cmakeArgs: '.. -DVLD_USE_MFC=OFF -A ${{ arch.cmakeArch }}'
 
-      # Build solution using VSBuild task
-      - task: VSBuild@1
+      # Build solution using MSBuild directly (VSBuild/MSBuild tasks use x86 compiler on ARM64)
+      - task: CmdLine@2
         displayName: 'Build solution ${{ config }}'
         inputs:
-          solution: 'build_${{ arch.name }}\VLD.sln'
-          platform: ${{ arch.platform }}
-          configuration: ${{ config }}
-          msbuildArgs: '/t:restore /t:build'
-          maximumCpuCount: true
+          script: '"${{ arch.msbuildPath }}" "build_${{ arch.name }}\VLD.sln" /t:restore /t:build /p:Platform=${{ arch.platform }} /p:Configuration=${{ config }} /m'
 
       - task: CmdLine@2
         displayName: 'Run ctest ${{ config }}'
