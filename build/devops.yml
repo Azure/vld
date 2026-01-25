@@ -44,58 +44,7 @@ jobs:
 
       # Verify ARM64 agent architecture (provisioning script should have patched it)
       - ${{ if eq(arch.name, 'arm64') }}:
-        - task: PowerShell@2
-          displayName: 'Verify ARM64 Agent Architecture'
-          inputs:
-            targetType: 'inline'
-            script: |
-              Write-Host "============================================================"
-              Write-Host "ARM64 AGENT VERIFICATION"
-              Write-Host "============================================================"
-              
-              # Check process architecture
-              $procArch = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture
-              Write-Host "Process Architecture: $procArch"
-              Write-Host "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE"
-              
-              # Check Agent.Worker.exe PE header
-              $agentDir = $env:AGENT_HOMEDIRECTORY
-              $workerExe = Join-Path $agentDir "bin\Agent.Worker.exe"
-              
-              if (Test-Path $workerExe) {
-                  $bytes = [System.IO.File]::ReadAllBytes($workerExe)
-                  $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
-                  $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
-                  
-                  $archName = switch ($machine) {
-                      0x014C { "x86" }
-                      0x8664 { "x64" }
-                      0xAA64 { "ARM64" }
-                      default { "Unknown (0x$($machine.ToString('X4')))" }
-                  }
-                  Write-Host "Agent.Worker.exe Architecture: $archName"
-                  
-                  if ($archName -ne "ARM64") {
-                      Write-Host ""
-                      Write-Host "##[error]ARM64 agent verification FAILED!"
-                      Write-Host "##[error]Expected ARM64 agent but found $archName agent."
-                      Write-Host ""
-                      Write-Host "The 1ES provisioning script should patch the agent to ARM64."
-                      Write-Host "Please investigate the provisioning script logs at:"
-                      Write-Host "  https://winbuildpoolarm.blob.core.windows.net/insights-logs-provisioningscriptlogs"
-                      Write-Host ""
-                      Write-Host "Look for 'ARM64 Agent Provisioning Script' entries."
-                      Write-Host "See build/docs/ARM64-AGENT-PATCHING.md for troubleshooting."
-                      exit 1
-                  }
-                  
-                  Write-Host ""
-                  Write-Host "ARM64 agent verification PASSED!"
-              } else {
-                  Write-Host "##[warning]Could not find Agent.Worker.exe at $workerExe"
-              }
-              
-              Write-Host "============================================================"
+        - template: templates/verify-arm64-agent.yml
 
       # Setup VC++ environment
       - task: BatchScript@1
