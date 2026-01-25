@@ -28,10 +28,8 @@ endforeach()
 
 # Platform detection
 # Use CMAKE_VS_PLATFORM_NAME for reliable ARM64 detection in Visual Studio generator
-# NOTE: This requires Visual Studio generators. For other generators (Ninja, NMake, etc.),
-#       you would need to detect platform using CMAKE_SYSTEM_PROCESSOR and CMAKE_SIZEOF_VOID_P:
-#       - Check CMAKE_SYSTEM_PROCESSOR for "ARM64" or "aarch64" 
-#       - Fall back to CMAKE_SIZEOF_VOID_P to distinguish x64 (8 bytes) from Win32 (4 bytes)
+# For other generators (Ninja, NMake, etc.), detect platform using CMAKE_GENERATOR_PLATFORM
+# or fall back to CMAKE_SYSTEM_PROCESSOR
 if(DEFINED CMAKE_VS_PLATFORM_NAME)
     if(CMAKE_VS_PLATFORM_NAME STREQUAL "ARM64")
         set(VLD_PLATFORM "ARM64")
@@ -43,8 +41,30 @@ if(DEFINED CMAKE_VS_PLATFORM_NAME)
         set(VLD_PLATFORM "Win32")
         set(VLD_PLATFORM_DEFINE "WIN32")
     endif()
+elseif(DEFINED CMAKE_GENERATOR_PLATFORM AND NOT CMAKE_GENERATOR_PLATFORM STREQUAL "")
+    # For generators that support -A flag but don't set CMAKE_VS_PLATFORM_NAME
+    if(CMAKE_GENERATOR_PLATFORM STREQUAL "ARM64")
+        set(VLD_PLATFORM "ARM64")
+        set(VLD_PLATFORM_DEFINE "WIN64")
+    elseif(CMAKE_GENERATOR_PLATFORM STREQUAL "x64")
+        set(VLD_PLATFORM "x64")
+        set(VLD_PLATFORM_DEFINE "WIN64")
+    else()
+        set(VLD_PLATFORM "Win32")
+        set(VLD_PLATFORM_DEFINE "WIN32")
+    endif()
 else()
-    message(FATAL_ERROR "VLD requires Visual Studio generator. CMAKE_VS_PLATFORM_NAME is not defined.")
+    # Fallback for Ninja, NMake, etc. - detect from compiler/system
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64")
+        set(VLD_PLATFORM "ARM64")
+        set(VLD_PLATFORM_DEFINE "WIN64")
+    elseif(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(VLD_PLATFORM "x64")
+        set(VLD_PLATFORM_DEFINE "WIN64")
+    else()
+        set(VLD_PLATFORM "Win32")
+        set(VLD_PLATFORM_DEFINE "WIN32")
+    endif()
 endif()
 
 # MSVC specific settings
