@@ -111,27 +111,15 @@ jobs:
           workingDirectory: 'build_${{ arch.name }}'
           cmakeArgs: '.. -DVLD_USE_MFC=OFF -A ${{ arch.cmakeArch }}'
 
-      # Build solution
-      # For ARM64: Use CmdLine to invoke native ARM64 MSBuild directly (MSBuild@1 task ignores msbuildLocation)
-      - ${{ if eq(arch.name, 'arm64') }}:
-        - task: CmdLine@2
-          displayName: 'Build solution ${{ config }} (ARM64 native MSBuild)'
-          inputs:
-            script: |
-              echo "Using native ARM64 MSBuild..."
-              "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\arm64\MSBuild.exe" "build_${{ arch.name }}\VLD.sln" /p:Platform=${{ arch.platform }} /p:Configuration=${{ config }} /t:restore /t:build /m
-            workingDirectory: '$(Build.SourcesDirectory)'
-
-      # For x86/x64: Use MSBuild@1 task (works fine on x64 agents)
-      - ${{ if ne(arch.name, 'arm64') }}:
-        - task: MSBuild@1
-          displayName: 'Build solution ${{ config }}'
-          inputs:
-            solution: 'build_${{ arch.name }}\VLD.sln'
-            platform: ${{ arch.platform }}
-            configuration: ${{ config }}
-            msbuildArguments: '/t:restore /t:build'
-            maximumCpuCount: true
+      # Build solution using VSBuild task
+      - task: VSBuild@1
+        displayName: 'Build solution ${{ config }}'
+        inputs:
+          solution: 'build_${{ arch.name }}\VLD.sln'
+          platform: ${{ arch.platform }}
+          configuration: ${{ config }}
+          msbuildArgs: '/t:restore /t:build'
+          maximumCpuCount: true
 
       - task: CmdLine@2
         displayName: 'Run ctest ${{ config }}'
