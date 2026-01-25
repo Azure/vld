@@ -145,6 +145,10 @@ add_custom_command(TARGET vld POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/vld.ini"
         "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/vld.ini"
+    # Also copy to base bin directory for single-config generators (Ninja, NMake)
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/vld.ini"
+        "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/vld.ini"
 )
 
 # Copy dbghelp.dll based on platform
@@ -161,4 +165,8 @@ add_custom_command(TARGET vld POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/setup/dbghelp/${DBGHELP_ARCH}/dbghelp.dll"
         "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/$<CONFIG>/dbghelp.dll"
+    # Also copy to base bin directory for single-config generators (Ninja, NMake)
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/setup/dbghelp/${DBGHELP_ARCH}/dbghelp.dll"
+        "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/dbghelp.dll"
 )
