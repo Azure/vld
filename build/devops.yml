@@ -30,47 +30,71 @@ parameters:
   default:
     - 'Debug'
     - 'RelWithDebInfo'
+- name: generators
+  type: object
+  default:
+    - name: 'MSBuild'
+      cmakeGenerator: 'Visual Studio 17 2022'
+      useMSBuild: true
+    - name: 'Ninja'
+      cmakeGenerator: 'Ninja'
+      useMSBuild: false
 
 jobs:
 - ${{ each arch in parameters.architectures }}:
   - ${{ each config in parameters.configurations }}:
-    - job: Build_Windows_${{ arch.name }}_${{ config }}
-      displayName: 'Build Windows ${{ arch.name }} ${{ config }}'
-      pool:
-        name: ${{ arch.pool }}
-        demands:
-        - Cmd
-        - msbuild
-        - visualstudio
-        - Build
-      steps:
+    - ${{ each gen in parameters.generators }}:
+      - job: Build_${{ gen.name }}_${{ arch.name }}_${{ config }}
+        displayName: 'Build ${{ gen.name }} ${{ arch.name }} ${{ config }}'
+        pool:
+          name: ${{ arch.pool }}
+          demands:
+          - Cmd
+          - msbuild
+          - visualstudio
+          - Build
+        steps:
 
-      # Verify ARM64 agent architecture (provisioning script should have patched it)
-      - ${{ if eq(arch.name, 'arm64') }}:
-        - template: templates/verify-arm64-agent.yml
+        # Verify ARM64 agent architecture (provisioning script should have patched it)
+        - ${{ if eq(arch.name, 'arm64') }}:
+          - template: templates/verify-arm64-agent.yml
 
-      # Setup VC++ environment
-      - task: BatchScript@1
-        displayName: 'Setup VC++ Environment (${{ arch.vcvarsArg }})'
-        inputs:
-          filename: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"'
-          arguments: '${{ arch.vcvarsArg }}'
-          modifyEnvironment: true
+        # Setup VC++ environment
+        - task: BatchScript@1
+          displayName: 'Setup VC++ Environment (${{ arch.vcvarsArg }})'
+          inputs:
+            filename: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"'
+            arguments: '${{ arch.vcvarsArg }}'
+            modifyEnvironment: true
 
-      - task: CMake@1
-        displayName: 'CMake .. -DVLD_USE_MFC=OFF -A ${{ arch.cmakeArch }}'
-        inputs:
-          workingDirectory: 'build_${{ arch.name }}'
-          cmakeArgs: '.. -DVLD_USE_MFC=OFF -A ${{ arch.cmakeArch }}'
+        # CMake configure - different arguments for MSBuild vs Ninja
+        - ${{ if eq(gen.useMSBuild, true) }}:
+          - task: CMake@1
+            displayName: 'CMake configure (${{ gen.name }})'
+            inputs:
+              workingDirectory: 'build_${{ gen.name }}_${{ arch.name }}'
+              cmakeArgs: '.. -DVLD_USE_MFC=OFF -G "${{ gen.cmakeGenerator }}" -A ${{ arch.cmakeArch }}'
+        - ${{ else }}:
+          - task: CMake@1
+            displayName: 'CMake configure (${{ gen.name }})'
+            inputs:
+              workingDirectory: 'build_${{ gen.name }}_${{ arch.name }}'
+              cmakeArgs: '.. -DVLD_USE_MFC=OFF -G "${{ gen.cmakeGenerator }}" -DCMAKE_BUILD_TYPE=${{ config }}'
 
-      # Build solution using MSBuild directly (VSBuild/MSBuild tasks use x86 compiler on ARM64)
-      - task: CmdLine@2
-        displayName: 'Build solution ${{ config }}'
-        inputs:
-          script: '"${{ arch.msbuildPath }}" "build_${{ arch.name }}\VLD.sln" /t:restore /t:build /p:Platform=${{ arch.platform }} /p:Configuration=${{ config }} /m'
+        # Build - MSBuild or Ninja
+        - ${{ if eq(gen.useMSBuild, true) }}:
+          - task: CmdLine@2
+            displayName: 'Build ${{ config }}'
+            inputs:
+              script: '"${{ arch.msbuildPath }}" "build_${{ gen.name }}_${{ arch.name }}\VLD.sln" /t:restore /t:build /p:Platform=${{ arch.platform }} /p:Configuration=${{ config }} /m'
+        - ${{ else }}:
+          - task: CmdLine@2
+            displayName: 'Build ${{ config }}'
+            inputs:
+              script: 'cmake --build build_${{ gen.name }}_${{ arch.name }} --config ${{ config }} --parallel'
 
-      - task: CmdLine@2
-        displayName: 'Run ctest ${{ config }}'
-        inputs:
-          script: 'ctest -C "${{ config }}" --output-on-failure'
-          workingDirectory: 'build_${{ arch.name }}'
+        - task: CmdLine@2
+          displayName: 'Run ctest ${{ config }}'
+          inputs:
+            script: 'ctest -C "${{ config }}" --output-on-failure'
+            workingDirectory: 'build_${{ gen.name }}_${{ arch.name }}'
