@@ -79,5 +79,5 @@ jobs:
         displayName: 'Publish ${{ arch.name }} ${{ config }} artifacts'
         condition: succeededOrFailed()
         inputs:
-          pathToPublish: 'build_${{ arch.name }}/${{ config }}'
+          pathToPublish: 'build_${{ arch.name }}'
           artifactName: 'vld-${{ arch.name }}-${{ config }}'
