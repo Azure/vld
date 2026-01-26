@@ -74,3 +74,10 @@ jobs:
         inputs:
           script: 'ctest -C "${{ config }}" --output-on-failure'
           workingDirectory: 'build_${{ arch.name }}'
+
+      - task: PublishBuildArtifacts@1
+        displayName: 'Publish ${{ arch.name }} ${{ config }} artifacts'
+        condition: succeededOrFailed()
+        inputs:
+          pathToPublish: 'build_${{ arch.name }}/${{ config }}'
+          artifactName: 'vld-${{ arch.name }}-${{ config }}'
