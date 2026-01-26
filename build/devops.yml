@@ -49,7 +49,7 @@ jobs:
       - ${{ if eq(arch.name, 'arm64') }}:
         - template: templates/verify-arm64-agent.yml
 
-      # Setup VC++ environment
+      # Setup VC++ environment for both CMake (compiler detection) and MSBuild
       - task: BatchScript@1
         displayName: 'Setup VC++ Environment (${{ arch.vcvarsArg }})'
         inputs:
