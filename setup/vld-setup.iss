@@ -81,7 +81,7 @@ Source: "Microsoft.Cpp.x64.user.props"; DestDir: "{localappdata}\Microsoft\MSBui
 [Tasks]
 Name: "modifypath"; Description: "Add VLD directory to your environmental path"
 Name: "modifyVS2008Props"; Description: "Add VLD directory to VS 2008"
-Name: "modifyVS2010Props"; Description: "Add VLD directory to VS 2010 - VS 2015"
+Name: "modifyVS2010Props"; Description: "Add VLD directory to VS 2010 - VS 2026"
 
 [ThirdParty]
 UseRelativePaths=True
@@ -444,14 +444,27 @@ end;
 
 procedure ModifyAllProps();
 var
-  Path: string;
+  BasePath: string;
+  MSBuildVersions: array[0..5] of string;
+  i: Integer;
 begin
-  Path := GetEnv('LOCALAPPDATA')+'\Microsoft\MSBuild\v4.0\';
-  if DirExists(Path) then
+  BasePath := GetEnv('LOCALAPPDATA')+'\Microsoft\MSBuild\';
+  // MSBuild versions: v4.0 (VS2010-2015), v15.0 (VS2017), v16.0 (VS2019), v17.0 (VS2022), v18.0 (VS2026)
+  MSBuildVersions[0] := 'v4.0';
+  MSBuildVersions[1] := 'v15.0';
+  MSBuildVersions[2] := 'v16.0';
+  MSBuildVersions[3] := 'v17.0';
+  MSBuildVersions[4] := 'v18.0';
+  MSBuildVersions[5] := 'Current';
+  
+  for i := 0 to 5 do
   begin
-    ModifyProps(Path + 'Microsoft.Cpp.Win32.user.props', 'Win32');
-    ModifyProps(Path + 'Microsoft.Cpp.x64.user.props', 'Win64');
-    ModifyProps(Path + 'Microsoft.Cpp.ARM64.user.props', 'ARM64');
+    if DirExists(BasePath + MSBuildVersions[i]) then
+    begin
+      ModifyProps(BasePath + MSBuildVersions[i] + '\Microsoft.Cpp.Win32.user.props', 'Win32');
+      ModifyProps(BasePath + MSBuildVersions[i] + '\Microsoft.Cpp.x64.user.props', 'Win64');
+      ModifyProps(BasePath + MSBuildVersions[i] + '\Microsoft.Cpp.ARM64.user.props', 'ARM64');
+    end;
   end;
 end;
 
