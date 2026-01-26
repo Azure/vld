@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(VLD
-    VERSION 2.5.11
+    VERSION 2.5.12
     DESCRIPTION "Visual Leak Detector for Visual C++"
     LANGUAGES CXX C
 )

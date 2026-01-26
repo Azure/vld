@@ -34,4 +34,4 @@ program the memory was allocated and how it got there.
 Documentation:
 --------------
 
-See the [http://vld.codeplex.com/documentation](http://vld.codeplex.com/documentation) for the complete Visual Leak Detector documentation.
+See the [https://github.com/Azure/vld#readme](https://github.com/Azure/vld#readme) for the complete Visual Leak Detector documentation.

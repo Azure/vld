@@ -3,12 +3,11 @@
 ; Updated for Inno Setup 6.7 with ARM64 support
 
 #define MyAppName "Visual Leak Detector"
-#define MyAppVersion "2.5.11"
+#define MyAppVersion "2.5.12"
 #define MyAppPublisher "VLD Team"
-#define MyAppURL "http://vld.codeplex.com/"
+#define MyAppURL "https://github.com/Azure/vld"
 #define MyAppRegKey "Software\Visual Leak Detector"
-#define ConfigType "Release"
-#define PlatformVersion "v143"
+#define ConfigType "RelWithDebInfo"
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application.
@@ -26,24 +25,28 @@ DefaultDirName={reg:HKLM\{#MyAppRegKey},InstallPath|{autopf}\{#MyAppName}}
 DefaultGroupName={#MyAppName}
 LicenseFile=license-free.txt
 OutputBaseFilename=vld-{#MyAppVersion}-setup
+VersionInfoVersion={#MyAppVersion}
+VersionInfoProductTextVersion={#MyAppVersion} (https://github.com/Azure/vld)
 Compression=lzma
 SolidCompression=True
 MinVersion=6.1sp1
 ; Architecture support: x86, x64, and ARM64
-ArchitecturesAllowed=x86 x64 arm64
-ArchitecturesInstallIn64BitMode=x64 arm64
+ArchitecturesAllowed=x86 x64compatible arm64
+ArchitecturesInstallIn64BitMode=x64compatible arm64
 ; Tell Windows Explorer to reload the environment
 ChangesEnvironment=yes
 AllowNoIcons=yes
 DisableDirPage=auto
 DirExistsWarning=no
 WizardSmallImageFile=WizSmallImage.bmp
+; Per-user MSBuild props are intentional - suppress warning
+UsedUserAreasWarning=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Icons]
-Name: "{group}\View Documentation"; Filename: "http://vld.codeplex.com/documentation"
+Name: "{group}\View Documentation"; Filename: "https://github.com/Azure/vld#readme"
 
 [Files]
 ; dbghelp for all architectures
@@ -52,19 +55,18 @@ Source: "dbghelp\x64\Microsoft.DTfW.DHL.manifest"; DestDir: "{app}\bin\Win64"; F
 Source: "dbghelp\x86\dbghelp.dll"; DestDir: "{app}\bin\Win32"; Flags: ignoreversion
 Source: "dbghelp\x86\Microsoft.DTfW.DHL.manifest"; DestDir: "{app}\bin\Win32"; Flags: ignoreversion
 Source: "dbghelp\arm64\dbghelp.dll"; DestDir: "{app}\bin\ARM64"; Flags: ignoreversion
-Source: "dbghelp\arm64\Microsoft.DTfW.DHL.manifest"; DestDir: "{app}\bin\ARM64"; Flags: ignoreversion; Check: DirExists(ExpandConstant('{src}\dbghelp\arm64'))
-; VLD binaries - Win32
-Source: "..\src\bin\Win32\{#ConfigType}-{#PlatformVersion}\vld.lib"; DestDir: "{app}\lib\Win32"; Flags: ignoreversion
-Source: "..\src\bin\Win32\{#ConfigType}-{#PlatformVersion}\vld_x86.dll"; DestDir: "{app}\bin\Win32"; Flags: ignoreversion
-Source: "..\src\bin\Win32\{#ConfigType}-{#PlatformVersion}\vld_x86.pdb"; DestDir: "{app}\bin\Win32"; Flags: ignoreversion
-; VLD binaries - Win64
-Source: "..\src\bin\x64\{#ConfigType}-{#PlatformVersion}\vld.lib"; DestDir: "{app}\lib\Win64"; Flags: ignoreversion
-Source: "..\src\bin\x64\{#ConfigType}-{#PlatformVersion}\vld_x64.dll"; DestDir: "{app}\bin\Win64"; Flags: ignoreversion
-Source: "..\src\bin\x64\{#ConfigType}-{#PlatformVersion}\vld_x64.pdb"; DestDir: "{app}\bin\Win64"; Flags: ignoreversion
-; VLD binaries - ARM64
-Source: "..\src\bin\ARM64\{#ConfigType}-{#PlatformVersion}\vld.lib"; DestDir: "{app}\lib\ARM64"; Flags: ignoreversion
-Source: "..\src\bin\ARM64\{#ConfigType}-{#PlatformVersion}\vld_arm64.dll"; DestDir: "{app}\bin\ARM64"; Flags: ignoreversion
-Source: "..\src\bin\ARM64\{#ConfigType}-{#PlatformVersion}\vld_arm64.pdb"; DestDir: "{app}\bin\ARM64"; Flags: ignoreversion
+; VLD binaries - Win32 (from CMake build_x86 output)
+Source: "..\build_x86\lib\{#ConfigType}\vld_x86.lib"; DestDir: "{app}\lib\Win32"; DestName: "vld.lib"; Flags: ignoreversion
+Source: "..\build_x86\bin\{#ConfigType}\vld_x86.dll"; DestDir: "{app}\bin\Win32"; Flags: ignoreversion
+Source: "..\build_x86\bin\{#ConfigType}\vld_x86.pdb"; DestDir: "{app}\bin\Win32"; Flags: ignoreversion
+; VLD binaries - Win64 (from CMake build_x64 output)
+Source: "..\build_x64\lib\{#ConfigType}\vld_x64.lib"; DestDir: "{app}\lib\Win64"; DestName: "vld.lib"; Flags: ignoreversion
+Source: "..\build_x64\bin\{#ConfigType}\vld_x64.dll"; DestDir: "{app}\bin\Win64"; Flags: ignoreversion
+Source: "..\build_x64\bin\{#ConfigType}\vld_x64.pdb"; DestDir: "{app}\bin\Win64"; Flags: ignoreversion
+; VLD binaries - ARM64 (from CMake build_arm64 output)
+Source: "..\build_arm64\lib\{#ConfigType}\vld_arm64.lib"; DestDir: "{app}\lib\ARM64"; DestName: "vld.lib"; Flags: ignoreversion
+Source: "..\build_arm64\bin\{#ConfigType}\vld_arm64.dll"; DestDir: "{app}\bin\ARM64"; Flags: ignoreversion
+Source: "..\build_arm64\bin\{#ConfigType}\vld_arm64.pdb"; DestDir: "{app}\bin\ARM64"; Flags: ignoreversion
 ; Headers and config
 Source: "..\src\vld.h"; DestDir: "{app}\include"; Flags: ignoreversion
 Source: "..\src\vld_def.h"; DestDir: "{app}\include"; Flags: ignoreversion
@@ -253,12 +255,11 @@ end;
 procedure ModifySettings(filename: string);
 var
   XMLDocument: Variant;
-  XMLParent, XMLNode, XMLNodes: Variant;
+  XMLParent, XMLNodes: Variant;
   IncludeDirectoriesNode: Variant;
   AdditionalIncludeDirectories: string;
   LibraryDirectoriesNode: Variant;
   AdditionalLibraryDirectories: string;
-  libfolder: string;
 begin
   XMLDocument := CreateOleObject('Msxml2.DOMDocument.3.0');
   try
@@ -463,9 +464,9 @@ begin
   end;
   if CurStep = ssPostInstall then
   begin
-    if IsTaskSelected('modifyVS2008Props') then
+    if WizardIsTaskSelected('modifyVS2008Props') then
       ModifyVS2008Settings();
-    if IsTaskSelected('modifyVS2010Props') then
+    if WizardIsTaskSelected('modifyVS2010Props') then
       ModifyAllProps();
   end;
   CurStepChangedModPath(CurStep);

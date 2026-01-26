@@ -1,6 +1,8 @@
 ------------------------------------------------
 KindDragon              http://www.codeplex.com/site/users/view/KindDragon
 chrisJohnson            http://www.codeplex.com/site/users/view/chrisJohnson
+dcristoloveanu          https://github.com/dcristoloveanu
+anporumb                https://github.com/anporumb
 
 Contributors: (listed alphabetically)
 ------------------------------------------------
