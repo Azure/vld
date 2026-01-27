@@ -45,8 +45,6 @@ var
 	newpath:	String;
 	updatepath:	Boolean;
 	pathArr:	TArrayOfString;
-	aExecFile:	String;
-	aExecArr:	TArrayOfString;
 	i, d:		Integer;
 	pathdir:	TArrayOfString;
 	regroot:	Integer;
@@ -132,7 +130,7 @@ var
 begin
 	taskname := ModPathName;
 	if CurStep = ssPostInstall then
-		if IsTaskSelected(taskname) then
+		if WizardIsTaskSelected(taskname) then
 			ModPath();
 end;
 
