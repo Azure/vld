@@ -1,13 +1,14 @@
 <#
 .SYNOPSIS
-    Provisioning script to patch Azure DevOps agent to ARM64 on ARM64 VMs.
+    Provisioning script to patch Azure DevOps agent to ARM64 on ARM64 VMs
+    and install required build tools.
     
 .DESCRIPTION
-    This script runs at VM spin-up time (before the agent starts) to replace
-    the x86 agent binaries with native ARM64 binaries. This eliminates WoW64
-    emulation overhead and enables native ARM64 compilation.
+    This script runs at VM spin-up time (before the agent starts) to:
+    1. Replace the x86 agent binaries with native ARM64 binaries
+    2. Install Inno Setup 6.7.0 for all users
     
-    WHY THIS IS NEEDED:
+    WHY AGENT PATCHING IS NEEDED:
     Azure DevOps 1ES Hosted Pools ship with an x86 agent on ARM64 machines.
     This x86 agent runs under WoW64 emulation, causing:
     - Incorrect PROCESSOR_ARCHITECTURE environment variable (reports x86)
@@ -20,15 +21,16 @@
     and Agent.Listener.exe are running - Windows prevents overwriting files in use.
     
     STEP-BY-STEP OPERATION:
-    1. Detect if running on ARM64 machine (using OS architecture, not process arch)
-    2. Find agent installation at C:\vss-agent\<version>
-    3. Check if agent is already ARM64 (skip if so - idempotent)
-    4. Stop any agent services (shouldn't be running at provisioning time)
-    5. Backup configuration files (.agent, .credentials, etc.)
-    6. Download matching ARM64 agent from official Azure DevOps URL
-    7. Extract ARM64 agent over existing installation (overwrite)
-    8. Restore configuration files
-    9. Verify agent is now ARM64
+    1. Install Inno Setup 6.7.0 silently (all architectures)
+    2. Detect if running on ARM64 machine (using OS architecture, not process arch)
+    3. Find agent installation at C:\vss-agent\<version>
+    4. Check if agent is already ARM64 (skip if so - idempotent)
+    5. Stop any agent services (shouldn't be running at provisioning time)
+    6. Backup configuration files (.agent, .credentials, etc.)
+    7. Download matching ARM64 agent from official Azure DevOps URL
+    8. Extract ARM64 agent over existing installation (overwrite)
+    9. Restore configuration files
+    10. Verify agent is now ARM64
     
     OBSERVABILITY:
     Logs are written to Azure Blob Storage and can be viewed at:
@@ -36,7 +38,7 @@
     
     Filter by:
     - category: "ProvisioningScriptLogs"
-    - Look for script version in output (e.g., "ARM64 Agent Provisioning Script v1.3.0")
+    - Look for script version in output (e.g., "VLD Provisioning Script v1.4.0")
     
 .NOTES
     - Runs as provisioning script in 1ES image configuration
@@ -49,7 +51,7 @@
 #>
 
 $ErrorActionPreference = "Stop"
-$ScriptVersion = "1.3.0"
+$ScriptVersion = "1.4.0"
 
 # Logging helper
 function Write-Log {
@@ -59,8 +61,56 @@ function Write-Log {
 }
 
 Write-Log "==========================================="
-Write-Log "ARM64 Agent Provisioning Script v$ScriptVersion"
+Write-Log "VLD Provisioning Script v$ScriptVersion"
 Write-Log "==========================================="
+
+#region Inno Setup Installation
+Write-Log ""
+Write-Log "--- Installing Inno Setup 6.7.0 ---"
+
+$innoSetupExe = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+if (Test-Path $innoSetupExe) {
+    Write-Log "Inno Setup already installed at: $innoSetupExe"
+}
+else {
+    # Inno Setup installer should be in the same directory as this script
+    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    $innoInstaller = Join-Path $scriptDir "innosetup-6.7.0.exe"
+    
+    if (-not (Test-Path $innoInstaller)) {
+        Write-Log "ERROR: Inno Setup installer not found at: $innoInstaller"
+        exit 1
+    }
+    
+    Write-Log "Installing Inno Setup from: $innoInstaller"
+    
+    # Silent install for all users (/ALLUSERS), no restart, default components
+    $installArgs = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /ALLUSERS /DIR=`"${env:ProgramFiles(x86)}\Inno Setup 6`""
+    
+    $process = Start-Process -FilePath $innoInstaller -ArgumentList $installArgs -Wait -PassThru
+    
+    if ($process.ExitCode -eq 0) {
+        Write-Log "Inno Setup installed successfully."
+    }
+    else {
+        Write-Log "ERROR: Inno Setup installation failed with exit code: $($process.ExitCode)"
+        exit 1
+    }
+    
+    # Verify installation
+    if (Test-Path $innoSetupExe) {
+        Write-Log "Verified: ISCC.exe exists at $innoSetupExe"
+    }
+    else {
+        Write-Log "ERROR: ISCC.exe not found after installation"
+        exit 1
+    }
+}
+#endregion
+
+#region ARM64 Agent Patching
+Write-Log ""
+Write-Log "--- ARM64 Agent Patching ---"
 
 # Check if this is an ARM64 machine (check actual OS, not process architecture)
 # $env:PROCESSOR_ARCHITECTURE returns x86 when running under WoW64
@@ -351,3 +401,4 @@ else {
     
     exit 1
 }
+#endregion
