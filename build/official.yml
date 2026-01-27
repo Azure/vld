@@ -167,6 +167,29 @@ stages:
         Write-Host "Updated version.txt to $version"
       displayName: 'Update version.txt'
 
+    - powershell: |
+        $innoSetupExe = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+        if (Test-Path $innoSetupExe) {
+          Write-Host "Inno Setup already installed"
+          exit 0
+        }
+        
+        Write-Host "Downloading Inno Setup 6.7.0..."
+        $url = "https://jrsoftware.org/download.php/is.exe"
+        $installer = "$env:TEMP\innosetup.exe"
+        Invoke-WebRequest -Uri $url -OutFile $installer
+        
+        Write-Host "Installing Inno Setup..."
+        Start-Process -FilePath $installer -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /ALLUSERS" -Wait
+        
+        if (Test-Path $innoSetupExe) {
+          Write-Host "Inno Setup installed successfully"
+        } else {
+          Write-Host "##vso[task.logissue type=error]Inno Setup installation failed"
+          exit 1
+        }
+      displayName: 'Install Inno Setup'
+
     - task: CmdLine@2
       displayName: 'Compile Inno Setup installer'
       inputs:
