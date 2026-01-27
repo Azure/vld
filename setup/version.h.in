@@ -1,0 +1,10 @@
+// Generated from version.txt by CMake - do not edit by hand
+
+#define VLDVERSION          L"@PROJECT_VERSION@"
+#define VERSION_NUMBER		@VLD_VERSION_COMMA@
+#define VERSION_STRING		"@PROJECT_VERSION@.0"
+#define VERSION_COPYRIGHT	"Copyright (C) 2005-2026"
+
+#ifndef __FILE__
+!define VLD_VERSION "@PROJECT_VERSION@"	// NSIS Script
+#endif
