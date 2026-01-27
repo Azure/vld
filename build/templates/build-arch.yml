@@ -17,6 +17,12 @@ parameters:
 - name: configuration
   type: string
   default: 'RelWithDebInfo'
+- name: runTests
+  type: boolean
+  default: false
+- name: artifactSuffix
+  type: string
+  default: ''
 
 steps:
 # Verify ARM64 agent architecture (provisioning script should have patched it)
@@ -43,8 +49,16 @@ steps:
   inputs:
     script: '"${{ parameters.msbuildPath }}" "build_${{ parameters.arch }}\VLD.sln" /t:restore /t:build /p:Platform=${{ parameters.platform }} /p:Configuration=${{ parameters.configuration }} /m'
 
+# Optional: Run tests
+- ${{ if parameters.runTests }}:
+  - task: CmdLine@2
+    displayName: 'Run ctest ${{ parameters.configuration }}'
+    inputs:
+      script: 'ctest -C "${{ parameters.configuration }}" --output-on-failure'
+      workingDirectory: 'build_${{ parameters.arch }}'
+
 - task: PublishPipelineArtifact@1
-  displayName: 'Publish ${{ parameters.arch }} build'
+  displayName: 'Publish ${{ parameters.arch }}${{ parameters.artifactSuffix }} build'
   inputs:
     targetPath: 'build_${{ parameters.arch }}'
-    artifact: 'build_${{ parameters.arch }}'
+    artifact: 'build_${{ parameters.arch }}${{ parameters.artifactSuffix }}'

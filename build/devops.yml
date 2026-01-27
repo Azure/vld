@@ -44,40 +44,14 @@ jobs:
         - visualstudio
         - Build
       steps:
-
-      # Verify ARM64 agent architecture (provisioning script should have patched it)
-      - ${{ if eq(arch.name, 'arm64') }}:
-        - template: templates/verify-arm64-agent.yml
-
-      # Setup VC++ environment for both CMake (compiler detection) and MSBuild
-      - task: BatchScript@1
-        displayName: 'Setup VC++ Environment (${{ arch.vcvarsArg }})'
-        inputs:
-          filename: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"'
-          arguments: '${{ arch.vcvarsArg }}'
-          modifyEnvironment: true
-
-      - task: CMake@1
-        displayName: 'CMake .. -DVLD_USE_MFC=OFF -A ${{ arch.cmakeArch }}'
-        inputs:
-          workingDirectory: 'build_${{ arch.name }}'
-          cmakeArgs: '.. -DVLD_USE_MFC=OFF -A ${{ arch.cmakeArch }}'
-
-      # Build solution using MSBuild directly (VSBuild/MSBuild tasks use x86 compiler on ARM64)
-      - task: CmdLine@2
-        displayName: 'Build solution ${{ config }}'
-        inputs:
-          script: '"${{ arch.msbuildPath }}" "build_${{ arch.name }}\VLD.sln" /t:restore /t:build /p:Platform=${{ arch.platform }} /p:Configuration=${{ config }} /m'
-
-      - task: CmdLine@2
-        displayName: 'Run ctest ${{ config }}'
-        inputs:
-          script: 'ctest -C "${{ config }}" --output-on-failure'
-          workingDirectory: 'build_${{ arch.name }}'
-
-      - task: PublishBuildArtifacts@1
-        displayName: 'Publish ${{ arch.name }} ${{ config }} artifacts'
-        condition: succeededOrFailed()
-        inputs:
-          pathToPublish: 'build_${{ arch.name }}'
-          artifactName: 'vld-${{ arch.name }}-${{ config }}'
+      - checkout: self
+      - template: templates/build-arch.yml
+        parameters:
+          arch: ${{ arch.name }}
+          cmakeArch: ${{ arch.cmakeArch }}
+          vcvarsArg: ${{ arch.vcvarsArg }}
+          platform: ${{ arch.platform }}
+          msbuildPath: ${{ arch.msbuildPath }}
+          configuration: ${{ config }}
+          runTests: true
+          artifactSuffix: '-${{ config }}'
