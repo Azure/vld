@@ -22,3 +22,10 @@ src/bin/vld.ini
 *.VC.db
 *.aps
 .vs/
+build_x86/
+build_x64/
+build_arm64/
+# Generated version files (version.txt is tracked)
+version/version.h
+version/version.props
+version/version.iss

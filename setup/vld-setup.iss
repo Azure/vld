@@ -2,8 +2,11 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 ; Updated for Inno Setup 6.7 with ARM64 support
 
+; Include generated version info
+#include "..\version\version.iss"
+
 #define MyAppName "Visual Leak Detector"
-#define MyAppVersion "2.5.12"
+#define MyAppVersion VLD_VERSION_SHORT
 #define MyAppPublisher "VLD Team"
 #define MyAppURL "https://github.com/Azure/vld"
 #define MyAppRegKey "Software\Visual Leak Detector"
@@ -15,7 +18,7 @@
 ; (To generate a new GUID, click Tools | Generate GUID inside the IDE.)
 AppId={{851FBFF7-5148-40A2-A654-942BE80F5B90}
 AppName={#MyAppName}
-AppVersion={#MyAppVersion}
+AppVersion={#VLD_VERSION}
 ;AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
@@ -25,8 +28,8 @@ DefaultDirName={reg:HKLM\{#MyAppRegKey},InstallPath|{autopf}\{#MyAppName}}
 DefaultGroupName={#MyAppName}
 LicenseFile=license-free.txt
 OutputBaseFilename=vld-{#MyAppVersion}-setup
-VersionInfoVersion={#MyAppVersion}
-VersionInfoProductTextVersion={#MyAppVersion} (https://github.com/Azure/vld)
+VersionInfoVersion={#VLD_VERSION}
+VersionInfoProductTextVersion={#VLD_VERSION} ({#VLD_GIT_DESCRIBE})
 Compression=lzma
 SolidCompression=True
 MinVersion=6.1sp1
@@ -74,6 +77,9 @@ Source: "..\vld.ini"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\AUTHORS.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\CHANGES.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\COPYING.txt"; DestDir: "{app}"; Flags: ignoreversion
+; Version info for traceability
+Source: "..\version\version.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\version\version.h"; DestDir: "{app}\include"; Flags: ignoreversion
 ; MSBuild user props
 Source: "Microsoft.Cpp.Win32.user.props"; DestDir: "{localappdata}\Microsoft\MSBuild\v4.0\"; Flags: onlyifdoesntexist uninsneveruninstall
 Source: "Microsoft.Cpp.x64.user.props"; DestDir: "{localappdata}\Microsoft\MSBuild\v4.0\"; Flags: onlyifdoesntexist uninsneveruninstall
