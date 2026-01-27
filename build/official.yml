@@ -212,17 +212,12 @@ stages:
         $version = '$(ReleaseVersion)'
         Write-Host "Building installer for version: $version"
         
-        # Update version.txt
+        # Update version.txt - this is the single source of truth
+        # CMake reads it to generate version.h, Inno Setup reads it directly
         $version | Set-Content version.txt -NoNewline
         
-        # Update vld-setup.iss with version
-        $issPath = 'setup\vld-setup.iss'
-        $content = Get-Content $issPath -Raw
-        $content = $content -replace '#define MyAppVersion ".*"', "#define MyAppVersion `"$version`""
-        $content | Set-Content $issPath -NoNewline
-        
-        Write-Host "Updated vld-setup.iss with version $version"
-      displayName: 'Update version in files'
+        Write-Host "Updated version.txt to $version"
+      displayName: 'Update version.txt'
 
     - task: CmdLine@2
       displayName: 'Compile Inno Setup installer'

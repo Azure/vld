@@ -3,7 +3,7 @@
 ; Updated for Inno Setup 6.7 with ARM64 support
 
 #define MyAppName "Visual Leak Detector"
-#define MyAppVersion "2.5.12"
+#define MyAppVersion Trim(FileRead(FileOpen("..\version.txt")))
 #define MyAppPublisher "VLD Team"
 #define MyAppURL "https://github.com/Azure/vld"
 #define MyAppRegKey "Software\Visual Leak Detector"

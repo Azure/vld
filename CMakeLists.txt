@@ -1,9 +1,21 @@
 cmake_minimum_required(VERSION 3.16)
 
+# Read version from version.txt (single source of truth)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/version.txt" VLD_VERSION_RAW)
+string(STRIP "${VLD_VERSION_RAW}" VLD_VERSION_STRING)
+
 project(VLD
-    VERSION 2.5.12
+    VERSION ${VLD_VERSION_STRING}
     DESCRIPTION "Visual Leak Detector for Visual C++"
     LANGUAGES CXX C
+)
+
+# Generate version.h from version.txt
+set(VLD_VERSION_COMMA "${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},0")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/setup/version.h.in"
+    "${CMAKE_CURRENT_SOURCE_DIR}/setup/version.h"
+    @ONLY
 )
 
 # Set C++ standard

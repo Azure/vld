@@ -11,6 +11,10 @@ x64/
 ipch/
 setup/vld-*-setup.exe
 setup/Output/
+setup/version.h
+build_x86/
+build_x64/
+build_arm64/
 lib/gtest/msvc/bin/
 _ReSharper.Caches/
 lib/cppformat/bin/
