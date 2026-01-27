@@ -77,6 +77,7 @@ Source: "..\COPYING.txt"; DestDir: "{app}"; Flags: ignoreversion
 ; MSBuild user props
 Source: "Microsoft.Cpp.Win32.user.props"; DestDir: "{localappdata}\Microsoft\MSBuild\v4.0\"; Flags: onlyifdoesntexist uninsneveruninstall
 Source: "Microsoft.Cpp.x64.user.props"; DestDir: "{localappdata}\Microsoft\MSBuild\v4.0\"; Flags: onlyifdoesntexist uninsneveruninstall
+Source: "Microsoft.Cpp.ARM64.user.props"; DestDir: "{localappdata}\Microsoft\MSBuild\v4.0\"; Flags: onlyifdoesntexist uninsneveruninstall
 
 [Tasks]
 Name: "modifypath"; Description: "Add VLD directory to your environmental path"
