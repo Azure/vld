@@ -73,34 +73,15 @@ stages:
       ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
     steps:
     - checkout: self
-    
-    - powershell: |
-        '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
+    - powershell: '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
       displayName: 'Set version.txt'
-    
-    - task: BatchScript@1
-      displayName: 'Setup VC++ Environment (amd64)'
-      inputs:
-        filename: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"'
-        arguments: 'amd64'
-        modifyEnvironment: true
-
-    - task: CMake@1
-      displayName: 'CMake configure'
-      inputs:
-        workingDirectory: 'build_x64'
-        cmakeArgs: '.. -DVLD_USE_MFC=OFF -A x64'
-
-    - task: CmdLine@2
-      displayName: 'Build RelWithDebInfo'
-      inputs:
-        script: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\amd64\MSBuild.exe" "build_x64\VLD.sln" /t:restore /t:build /p:Platform=x64 /p:Configuration=RelWithDebInfo /m'
-
-    - task: PublishPipelineArtifact@1
-      displayName: 'Publish x64 build'
-      inputs:
-        targetPath: 'build_x64'
-        artifact: 'build_x64'
+    - template: templates/build-arch.yml
+      parameters:
+        arch: 'x64'
+        cmakeArch: 'x64'
+        vcvarsArg: 'amd64'
+        platform: 'x64'
+        msbuildPath: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\amd64\MSBuild.exe'
 
   - job: Build_x86
     displayName: 'Build x86'
@@ -111,34 +92,15 @@ stages:
       ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
     steps:
     - checkout: self
-    
-    - powershell: |
-        '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
+    - powershell: '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
       displayName: 'Set version.txt'
-    
-    - task: BatchScript@1
-      displayName: 'Setup VC++ Environment (amd64_x86)'
-      inputs:
-        filename: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"'
-        arguments: 'amd64_x86'
-        modifyEnvironment: true
-
-    - task: CMake@1
-      displayName: 'CMake configure'
-      inputs:
-        workingDirectory: 'build_x86'
-        cmakeArgs: '.. -DVLD_USE_MFC=OFF -A Win32'
-
-    - task: CmdLine@2
-      displayName: 'Build RelWithDebInfo'
-      inputs:
-        script: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\amd64\MSBuild.exe" "build_x86\VLD.sln" /t:restore /t:build /p:Platform=Win32 /p:Configuration=RelWithDebInfo /m'
-
-    - task: PublishPipelineArtifact@1
-      displayName: 'Publish x86 build'
-      inputs:
-        targetPath: 'build_x86'
-        artifact: 'build_x86'
+    - template: templates/build-arch.yml
+      parameters:
+        arch: 'x86'
+        cmakeArch: 'Win32'
+        vcvarsArg: 'amd64_x86'
+        platform: 'Win32'
+        msbuildPath: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\amd64\MSBuild.exe'
 
   - job: Build_arm64
     displayName: 'Build ARM64'
@@ -149,36 +111,15 @@ stages:
       ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
     steps:
     - checkout: self
-    
-    - template: templates/verify-arm64-agent.yml
-    
-    - powershell: |
-        '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
+    - powershell: '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
       displayName: 'Set version.txt'
-    
-    - task: BatchScript@1
-      displayName: 'Setup VC++ Environment (arm64)'
-      inputs:
-        filename: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"'
-        arguments: 'arm64'
-        modifyEnvironment: true
-
-    - task: CMake@1
-      displayName: 'CMake configure'
-      inputs:
-        workingDirectory: 'build_arm64'
-        cmakeArgs: '.. -DVLD_USE_MFC=OFF -A ARM64'
-
-    - task: CmdLine@2
-      displayName: 'Build RelWithDebInfo'
-      inputs:
-        script: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\arm64\MSBuild.exe" "build_arm64\VLD.sln" /t:restore /t:build /p:Platform=ARM64 /p:Configuration=RelWithDebInfo /m'
-
-    - task: PublishPipelineArtifact@1
-      displayName: 'Publish ARM64 build'
-      inputs:
-        targetPath: 'build_arm64'
-        artifact: 'build_arm64'
+    - template: templates/build-arch.yml
+      parameters:
+        arch: 'arm64'
+        cmakeArch: 'ARM64'
+        vcvarsArg: 'arm64'
+        platform: 'ARM64'
+        msbuildPath: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\arm64\MSBuild.exe'
 
 - stage: Package
   displayName: 'Create Installer'

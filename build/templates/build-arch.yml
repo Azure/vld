@@ -1,0 +1,50 @@
+# Template for building VLD for a single architecture
+# Used by both devops.yml (CI) and official.yml (release)
+
+parameters:
+- name: arch
+  type: string
+  values: ['x64', 'x86', 'arm64']
+- name: cmakeArch
+  type: string
+  values: ['x64', 'Win32', 'ARM64']
+- name: vcvarsArg
+  type: string
+- name: platform
+  type: string
+- name: msbuildPath
+  type: string
+- name: configuration
+  type: string
+  default: 'RelWithDebInfo'
+
+steps:
+# Verify ARM64 agent architecture (provisioning script should have patched it)
+- ${{ if eq(parameters.arch, 'arm64') }}:
+  - template: verify-arm64-agent.yml
+
+# Setup VC++ environment for both CMake (compiler detection) and MSBuild
+- task: BatchScript@1
+  displayName: 'Setup VC++ Environment (${{ parameters.vcvarsArg }})'
+  inputs:
+    filename: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"'
+    arguments: '${{ parameters.vcvarsArg }}'
+    modifyEnvironment: true
+
+- task: CMake@1
+  displayName: 'CMake configure -A ${{ parameters.cmakeArch }}'
+  inputs:
+    workingDirectory: 'build_${{ parameters.arch }}'
+    cmakeArgs: '.. -DVLD_USE_MFC=OFF -A ${{ parameters.cmakeArch }}'
+
+# Build solution using MSBuild directly
+- task: CmdLine@2
+  displayName: 'Build ${{ parameters.configuration }}'
+  inputs:
+    script: '"${{ parameters.msbuildPath }}" "build_${{ parameters.arch }}\VLD.sln" /t:restore /t:build /p:Platform=${{ parameters.platform }} /p:Configuration=${{ parameters.configuration }} /m'
+
+- task: PublishPipelineArtifact@1
+  displayName: 'Publish ${{ parameters.arch }} build'
+  inputs:
+    targetPath: 'build_${{ parameters.arch }}'
+    artifact: 'build_${{ parameters.arch }}'
