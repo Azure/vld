@@ -45,6 +45,16 @@ stages:
           Write-Host "Using provided version: $newVersion"
         }
         
+        # Check if tag already exists
+        $tagName = "v$newVersion"
+        $existingTags = git tag -l $tagName
+        if ($existingTags) {
+          Write-Host "##vso[task.logissue type=error]Tag '$tagName' already exists. Choose a different version."
+          Write-Host "##vso[task.complete result=Failed;]"
+          exit 1
+        }
+        Write-Host "Tag '$tagName' does not exist - OK to proceed"
+        
         # Update version.txt
         $newVersion | Set-Content version.txt -NoNewline
         Write-Host "Updated version.txt to: $newVersion"
