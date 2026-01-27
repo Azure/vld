@@ -1,0 +1,264 @@
+# Azure-Vld-Official: Release pipeline for VLD installer
+# Manually triggered to create versioned releases with installer artifacts
+
+name: $(BuildID)_Official_$(Date:yyyyMMdd)$(Rev:.r)
+
+trigger: none  # Manual trigger only
+
+parameters:
+- name: newVersion
+  displayName: 'New Version (default: current + 1 patch)'
+  type: string
+  default: ''
+
+variables:
+  - name: isMain
+    value: $[eq(variables['Build.SourceBranch'], 'refs/heads/master')]
+
+stages:
+- stage: Build
+  displayName: 'Build All Architectures'
+  jobs:
+  - job: DetermineVersion
+    displayName: 'Determine Version'
+    pool:
+      name: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
+    steps:
+    - checkout: self
+      persistCredentials: true
+      
+    - powershell: |
+        $currentVersion = (Get-Content version.txt -First 1).Trim()
+        Write-Host "Current version in repo: $currentVersion"
+        
+        $inputVersion = '${{ parameters.newVersion }}'.Trim()
+        if ($inputVersion -eq '') {
+          # Auto-increment patch
+          $parts = $currentVersion.Split('.')
+          $major = [int]$parts[0]
+          $minor = [int]$parts[1]
+          $patch = [int]$parts[2]
+          $newVersion = "{0}.{1}.{2}" -f $major, $minor, ($patch + 1)
+          Write-Host "Auto-incremented to: $newVersion"
+        } else {
+          $newVersion = $inputVersion
+          Write-Host "Using provided version: $newVersion"
+        }
+        
+        # Update version.txt
+        $newVersion | Set-Content version.txt -NoNewline
+        Write-Host "Updated version.txt to: $newVersion"
+        
+        # Set pipeline variable for other jobs
+        Write-Host "##vso[task.setvariable variable=ReleaseVersion;isOutput=true]$newVersion"
+      name: SetVersion
+      displayName: 'Calculate and Set Version'
+
+  - job: Build_x64
+    displayName: 'Build x64'
+    dependsOn: DetermineVersion
+    pool:
+      name: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
+    variables:
+      ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
+    steps:
+    - checkout: self
+    
+    - powershell: |
+        '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
+      displayName: 'Set version.txt'
+    
+    - task: BatchScript@1
+      displayName: 'Setup VC++ Environment (amd64)'
+      inputs:
+        filename: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"'
+        arguments: 'amd64'
+        modifyEnvironment: true
+
+    - task: CMake@1
+      displayName: 'CMake configure'
+      inputs:
+        workingDirectory: 'build_x64'
+        cmakeArgs: '.. -DVLD_USE_MFC=OFF -A x64'
+
+    - task: CmdLine@2
+      displayName: 'Build RelWithDebInfo'
+      inputs:
+        script: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\amd64\MSBuild.exe" "build_x64\VLD.sln" /t:restore /t:build /p:Platform=x64 /p:Configuration=RelWithDebInfo /m'
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish x64 build'
+      inputs:
+        targetPath: 'build_x64'
+        artifact: 'build_x64'
+
+  - job: Build_x86
+    displayName: 'Build x86'
+    dependsOn: DetermineVersion
+    pool:
+      name: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
+    variables:
+      ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
+    steps:
+    - checkout: self
+    
+    - powershell: |
+        '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
+      displayName: 'Set version.txt'
+    
+    - task: BatchScript@1
+      displayName: 'Setup VC++ Environment (amd64_x86)'
+      inputs:
+        filename: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"'
+        arguments: 'amd64_x86'
+        modifyEnvironment: true
+
+    - task: CMake@1
+      displayName: 'CMake configure'
+      inputs:
+        workingDirectory: 'build_x86'
+        cmakeArgs: '.. -DVLD_USE_MFC=OFF -A Win32'
+
+    - task: CmdLine@2
+      displayName: 'Build RelWithDebInfo'
+      inputs:
+        script: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\amd64\MSBuild.exe" "build_x86\VLD.sln" /t:restore /t:build /p:Platform=Win32 /p:Configuration=RelWithDebInfo /m'
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish x86 build'
+      inputs:
+        targetPath: 'build_x86'
+        artifact: 'build_x86'
+
+  - job: Build_arm64
+    displayName: 'Build ARM64'
+    dependsOn: DetermineVersion
+    pool:
+      name: 'Azure-MessagingStore-WinBuildPoolARM'
+    variables:
+      ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
+    steps:
+    - checkout: self
+    
+    - template: templates/verify-arm64-agent.yml
+    
+    - powershell: |
+        '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
+      displayName: 'Set version.txt'
+    
+    - task: BatchScript@1
+      displayName: 'Setup VC++ Environment (arm64)'
+      inputs:
+        filename: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"'
+        arguments: 'arm64'
+        modifyEnvironment: true
+
+    - task: CMake@1
+      displayName: 'CMake configure'
+      inputs:
+        workingDirectory: 'build_arm64'
+        cmakeArgs: '.. -DVLD_USE_MFC=OFF -A ARM64'
+
+    - task: CmdLine@2
+      displayName: 'Build RelWithDebInfo'
+      inputs:
+        script: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\arm64\MSBuild.exe" "build_arm64\VLD.sln" /t:restore /t:build /p:Platform=ARM64 /p:Configuration=RelWithDebInfo /m'
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish ARM64 build'
+      inputs:
+        targetPath: 'build_arm64'
+        artifact: 'build_arm64'
+
+- stage: Package
+  displayName: 'Create Installer'
+  dependsOn: Build
+  jobs:
+  - job: CreateInstaller
+    displayName: 'Build Installer'
+    pool:
+      name: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
+    variables:
+      ReleaseVersion: $[ stageDependencies.Build.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
+    steps:
+    - checkout: self
+      persistCredentials: true
+
+    - download: current
+      artifact: build_x64
+    - download: current
+      artifact: build_x86
+    - download: current
+      artifact: build_arm64
+
+    - powershell: |
+        # Move downloaded artifacts to expected locations
+        Copy-Item -Path "$(Pipeline.Workspace)\build_x64\*" -Destination "build_x64" -Recurse -Force
+        Copy-Item -Path "$(Pipeline.Workspace)\build_x86\*" -Destination "build_x86" -Recurse -Force
+        Copy-Item -Path "$(Pipeline.Workspace)\build_arm64\*" -Destination "build_arm64" -Recurse -Force
+      displayName: 'Stage build artifacts'
+
+    - powershell: |
+        $version = '$(ReleaseVersion)'
+        Write-Host "Building installer for version: $version"
+        
+        # Update version.txt
+        $version | Set-Content version.txt -NoNewline
+        
+        # Update vld-setup.iss with version
+        $issPath = 'setup\vld-setup.iss'
+        $content = Get-Content $issPath -Raw
+        $content = $content -replace '#define MyAppVersion ".*"', "#define MyAppVersion `"$version`""
+        $content | Set-Content $issPath -NoNewline
+        
+        Write-Host "Updated vld-setup.iss with version $version"
+      displayName: 'Update version in files'
+
+    - task: CmdLine@2
+      displayName: 'Compile Inno Setup installer'
+      inputs:
+        script: '"%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" setup\vld-setup.iss'
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish installer'
+      inputs:
+        targetPath: 'setup\Output'
+        artifact: 'vld-installer'
+
+- stage: Release
+  displayName: 'Tag and Push Version'
+  dependsOn: Package
+  condition: and(succeeded(), eq(variables.isMain, true))
+  jobs:
+  - job: TagAndPush
+    displayName: 'Tag and Push to Master'
+    pool:
+      name: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
+    variables:
+      ReleaseVersion: $[ stageDependencies.Build.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
+    steps:
+    - checkout: self
+      persistCredentials: true
+
+    - powershell: |
+        $version = '$(ReleaseVersion)'
+        Write-Host "Releasing version: $version"
+        
+        # Configure git
+        git config user.email "vld-release@microsoft.com"
+        git config user.name "VLD Release Pipeline"
+        
+        # Update version.txt and commit
+        $version | Set-Content version.txt -NoNewline
+        git add version.txt
+        git commit -m "Release v$version"
+        
+        # Tag the release
+        git tag -a "v$version" -m "Release v$version"
+        
+        # Push commit and tag
+        git push origin HEAD:master
+        git push origin "v$version"
+        
+        Write-Host "Successfully released v$version"
+      displayName: 'Commit, Tag, and Push'
