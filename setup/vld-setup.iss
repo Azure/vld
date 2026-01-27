@@ -56,15 +56,15 @@ Source: "dbghelp\x86\dbghelp.dll"; DestDir: "{app}\bin\Win32"; Flags: ignorevers
 Source: "dbghelp\x86\Microsoft.DTfW.DHL.manifest"; DestDir: "{app}\bin\Win32"; Flags: ignoreversion
 Source: "dbghelp\arm64\dbghelp.dll"; DestDir: "{app}\bin\ARM64"; Flags: ignoreversion
 ; VLD binaries - Win32 (from CMake build_x86 output)
-Source: "..\build_x86\lib\{#ConfigType}\vld_x86.lib"; DestDir: "{app}\lib\Win32"; DestName: "vld.lib"; Flags: ignoreversion
+Source: "..\build_x86\lib\{#ConfigType}\vld_x86.lib"; DestDir: "{app}\lib\Win32"; Flags: ignoreversion
 Source: "..\build_x86\bin\{#ConfigType}\vld_x86.dll"; DestDir: "{app}\bin\Win32"; Flags: ignoreversion
 Source: "..\build_x86\bin\{#ConfigType}\vld_x86.pdb"; DestDir: "{app}\bin\Win32"; Flags: ignoreversion
 ; VLD binaries - Win64 (from CMake build_x64 output)
-Source: "..\build_x64\lib\{#ConfigType}\vld_x64.lib"; DestDir: "{app}\lib\Win64"; DestName: "vld.lib"; Flags: ignoreversion
+Source: "..\build_x64\lib\{#ConfigType}\vld_x64.lib"; DestDir: "{app}\lib\Win64"; Flags: ignoreversion
 Source: "..\build_x64\bin\{#ConfigType}\vld_x64.dll"; DestDir: "{app}\bin\Win64"; Flags: ignoreversion
 Source: "..\build_x64\bin\{#ConfigType}\vld_x64.pdb"; DestDir: "{app}\bin\Win64"; Flags: ignoreversion
 ; VLD binaries - ARM64 (from CMake build_arm64 output)
-Source: "..\build_arm64\lib\{#ConfigType}\vld_arm64.lib"; DestDir: "{app}\lib\ARM64"; DestName: "vld.lib"; Flags: ignoreversion
+Source: "..\build_arm64\lib\{#ConfigType}\vld_arm64.lib"; DestDir: "{app}\lib\ARM64"; Flags: ignoreversion
 Source: "..\build_arm64\bin\{#ConfigType}\vld_arm64.dll"; DestDir: "{app}\bin\ARM64"; Flags: ignoreversion
 Source: "..\build_arm64\bin\{#ConfigType}\vld_arm64.pdb"; DestDir: "{app}\bin\ARM64"; Flags: ignoreversion
 ; Headers and config
