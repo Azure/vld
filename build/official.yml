@@ -73,7 +73,8 @@ stages:
       ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
     steps:
     - checkout: self
-    - powershell: '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
+    - powershell: |
+        '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
       displayName: 'Set version.txt'
     - template: templates/build-arch.yml
       parameters:
@@ -92,7 +93,8 @@ stages:
       ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
     steps:
     - checkout: self
-    - powershell: '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
+    - powershell: |
+        '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
       displayName: 'Set version.txt'
     - template: templates/build-arch.yml
       parameters:
@@ -111,7 +113,8 @@ stages:
       ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
     steps:
     - checkout: self
-    - powershell: '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
+    - powershell: |
+        '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
       displayName: 'Set version.txt'
     - template: templates/build-arch.yml
       parameters:
