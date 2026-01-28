@@ -180,7 +180,9 @@ stages:
 
 - stage: Release
   displayName: 'Tag and Push Version'
-  dependsOn: Package
+  dependsOn:
+    - Build
+    - Package
   condition: and(succeeded(), eq(variables.isMain, true))
   jobs:
   - job: TagAndPush
@@ -194,8 +196,23 @@ stages:
       persistCredentials: true
 
     - powershell: |
+        $ErrorActionPreference = 'Stop'
         $version = '$(ReleaseVersion)'
         Write-Host "Releasing version: $version"
+        
+        # Validate version is not empty
+        if ([string]::IsNullOrWhiteSpace($version)) {
+          Write-Host "##vso[task.logissue type=error]ReleaseVersion is empty. Cannot proceed with release."
+          Write-Host "##vso[task.complete result=Failed;]"
+          exit 1
+        }
+        
+        # Validate version format (e.g., 2.5.9)
+        if ($version -notmatch '^\d+\.\d+\.\d+$') {
+          Write-Host "##vso[task.logissue type=error]Invalid version format: '$version'. Expected format: X.Y.Z"
+          Write-Host "##vso[task.complete result=Failed;]"
+          exit 1
+        }
         
         # Configure git
         git config user.email "vld-release@microsoft.com"
@@ -205,13 +222,18 @@ stages:
         $version | Set-Content version.txt -NoNewline
         git add version.txt
         git commit -m "Release v$version"
+        if ($LASTEXITCODE -ne 0) { throw "git commit failed" }
         
         # Tag the release
         git tag -a "v$version" -m "Release v$version"
+        if ($LASTEXITCODE -ne 0) { throw "git tag failed - tag may already exist" }
         
         # Push commit and tag
         git push origin HEAD:master
+        if ($LASTEXITCODE -ne 0) { throw "git push to master failed" }
+        
         git push origin "v$version"
+        if ($LASTEXITCODE -ne 0) { throw "git push tag failed" }
         
         Write-Host "Successfully released v$version"
       displayName: 'Commit, Tag, and Push'
