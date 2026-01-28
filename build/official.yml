@@ -28,8 +28,17 @@ stages:
       persistCredentials: true
       
     - powershell: |
+        $ErrorActionPreference = 'Stop'
+        
         $currentVersion = (Get-Content version.txt -First 1).Trim()
         Write-Host "Current version in repo: $currentVersion"
+        
+        # Validate current version format
+        if ($currentVersion -notmatch '^\d+\.\d+\.\d+$') {
+          Write-Host "##vso[task.logissue type=error]Invalid current version in version.txt: '$currentVersion'. Expected format: X.Y.Z"
+          Write-Host "##vso[task.complete result=Failed;]"
+          exit 1
+        }
         
         $inputVersion = '${{ parameters.newVersion }}'.Trim()
         if ($inputVersion -eq '') {
@@ -44,6 +53,23 @@ stages:
           $newVersion = $inputVersion
           Write-Host "Using provided version: $newVersion"
         }
+        
+        # Validate new version format
+        if ($newVersion -notmatch '^\d+\.\d+\.\d+$') {
+          Write-Host "##vso[task.logissue type=error]Invalid version format: '$newVersion'. Expected format: X.Y.Z"
+          Write-Host "##vso[task.complete result=Failed;]"
+          exit 1
+        }
+        
+        # Validate version is not empty
+        if ([string]::IsNullOrWhiteSpace($newVersion)) {
+          Write-Host "##vso[task.logissue type=error]Version cannot be empty."
+          Write-Host "##vso[task.complete result=Failed;]"
+          exit 1
+        }
+        
+        # Fetch all tags to ensure we have the latest
+        git fetch --tags
         
         # Check if tag already exists
         $tagName = "v$newVersion"
@@ -61,6 +87,7 @@ stages:
         
         # Set pipeline variable for other jobs
         Write-Host "##vso[task.setvariable variable=ReleaseVersion;isOutput=true]$newVersion"
+        Write-Host "##[section]Version validated: $newVersion"
       name: SetVersion
       displayName: 'Calculate and Set Version'
 
@@ -200,16 +227,9 @@ stages:
         $version = '$(ReleaseVersion)'
         Write-Host "Releasing version: $version"
         
-        # Validate version is not empty
-        if ([string]::IsNullOrWhiteSpace($version)) {
-          Write-Host "##vso[task.logissue type=error]ReleaseVersion is empty. Cannot proceed with release."
-          Write-Host "##vso[task.complete result=Failed;]"
-          exit 1
-        }
-        
-        # Validate version format (e.g., 2.5.9)
-        if ($version -notmatch '^\d+\.\d+\.\d+$') {
-          Write-Host "##vso[task.logissue type=error]Invalid version format: '$version'. Expected format: X.Y.Z"
+        # Sanity check - version should already be validated in DetermineVersion
+        if ([string]::IsNullOrWhiteSpace($version) -or $version -notmatch '^\d+\.\d+\.\d+$') {
+          Write-Host "##vso[task.logissue type=error]ReleaseVersion is empty or invalid: '$version'. This indicates a pipeline configuration issue."
           Write-Host "##vso[task.complete result=Failed;]"
           exit 1
         }
