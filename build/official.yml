@@ -15,247 +15,242 @@ variables:
   - name: isMaster
     value: $[eq(variables['Build.SourceBranch'], 'refs/heads/master')]
 
-stages:
-- stage: Build
-  displayName: 'Build All Architectures'
-  jobs:
-  - job: DetermineVersion
-    displayName: 'Determine Version'
-    pool:
-      name: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
-    steps:
-    - checkout: self
-      persistCredentials: true
+jobs:
+- job: DetermineVersion
+  displayName: 'Determine Version'
+  pool:
+    name: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
+  steps:
+  - checkout: self
+    persistCredentials: true
+    
+  - powershell: |
+      $ErrorActionPreference = 'Stop'
       
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        
-        $currentVersion = (Get-Content version.txt -First 1).Trim()
-        Write-Host "Current version in repo: $currentVersion"
-        
-        # Validate current version format
-        if ($currentVersion -notmatch '^\d+\.\d+\.\d+$') {
-          Write-Host "##vso[task.logissue type=error]Invalid current version in version.txt: '$currentVersion'. Expected format: X.Y.Z"
-          Write-Host "##vso[task.complete result=Failed;]"
-          exit 1
-        }
-        
-        $inputVersion = '${{ parameters.newVersion }}'.Trim()
-        if ($inputVersion -eq '') {
-          # Auto-increment patch
-          $parts = $currentVersion.Split('.')
-          $major = [int]$parts[0]
-          $minor = [int]$parts[1]
-          $patch = [int]$parts[2]
-          $newVersion = "{0}.{1}.{2}" -f $major, $minor, ($patch + 1)
-          Write-Host "Auto-incremented to: $newVersion"
-        } else {
-          $newVersion = $inputVersion
-          Write-Host "Using provided version: $newVersion"
-        }
-        
-        # Validate new version format
-        if ($newVersion -notmatch '^\d+\.\d+\.\d+$') {
-          Write-Host "##vso[task.logissue type=error]Invalid version format: '$newVersion'. Expected format: X.Y.Z"
-          Write-Host "##vso[task.complete result=Failed;]"
-          exit 1
-        }
-        
-        # Fetch all tags to ensure we have the latest
-        git fetch --tags
-        
-        # Check if tag already exists
-        $tagName = "v$newVersion"
-        $existingTags = git tag -l $tagName
-        if ($existingTags) {
-          Write-Host "##vso[task.logissue type=error]Tag '$tagName' already exists. Choose a different version."
-          Write-Host "##vso[task.complete result=Failed;]"
-          exit 1
-        }
-        Write-Host "Tag '$tagName' does not exist - OK to proceed"
-        
-        # Update version.txt
-        $newVersion | Set-Content version.txt -NoNewline
-        Write-Host "Updated version.txt to: $newVersion"
-        
-        # Set pipeline variable for other jobs
-        Write-Host "##vso[task.setvariable variable=ReleaseVersion;isOutput=true]$newVersion"
-        Write-Host "##[section]Version validated: $newVersion"
-      name: SetVersion
-      displayName: 'Calculate and Set Version'
+      $currentVersion = (Get-Content version.txt -First 1).Trim()
+      Write-Host "Current version in repo: $currentVersion"
+      
+      # Validate current version format
+      if ($currentVersion -notmatch '^\d+\.\d+\.\d+$') {
+        Write-Host "##vso[task.logissue type=error]Invalid current version in version.txt: '$currentVersion'. Expected format: X.Y.Z"
+        Write-Host "##vso[task.complete result=Failed;]"
+        exit 1
+      }
+      
+      $inputVersion = '${{ parameters.newVersion }}'.Trim()
+      if ($inputVersion -eq '') {
+        # Auto-increment patch
+        $parts = $currentVersion.Split('.')
+        $major = [int]$parts[0]
+        $minor = [int]$parts[1]
+        $patch = [int]$parts[2]
+        $newVersion = "{0}.{1}.{2}" -f $major, $minor, ($patch + 1)
+        Write-Host "Auto-incremented to: $newVersion"
+      } else {
+        $newVersion = $inputVersion
+        Write-Host "Using provided version: $newVersion"
+      }
+      
+      # Validate new version format
+      if ($newVersion -notmatch '^\d+\.\d+\.\d+$') {
+        Write-Host "##vso[task.logissue type=error]Invalid version format: '$newVersion'. Expected format: X.Y.Z"
+        Write-Host "##vso[task.complete result=Failed;]"
+        exit 1
+      }
+      
+      # Fetch all tags to ensure we have the latest
+      git fetch --tags
+      
+      # Check if tag already exists
+      $tagName = "v$newVersion"
+      $existingTags = git tag -l $tagName
+      if ($existingTags) {
+        Write-Host "##vso[task.logissue type=error]Tag '$tagName' already exists. Choose a different version."
+        Write-Host "##vso[task.complete result=Failed;]"
+        exit 1
+      }
+      Write-Host "Tag '$tagName' does not exist - OK to proceed"
+      
+      # Update version.txt
+      $newVersion | Set-Content version.txt -NoNewline
+      Write-Host "Updated version.txt to: $newVersion"
+      
+      # Set pipeline variable for other jobs
+      Write-Host "##vso[task.setvariable variable=ReleaseVersion;isOutput=true]$newVersion"
+      Write-Host "##[section]Version validated: $newVersion"
+    name: SetVersion
+    displayName: 'Calculate and Set Version'
 
-  - job: Build_x64
-    displayName: 'Build x64'
-    dependsOn: DetermineVersion
-    pool:
-      name: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
-    variables:
-      ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
-    steps:
-    - checkout: self
-    - powershell: |
-        '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
-      displayName: 'Set version.txt'
-    - template: templates/build-arch.yml
-      parameters:
-        arch: 'x64'
-        cmakeArch: 'x64'
-        vcvarsArg: 'amd64'
-        platform: 'x64'
-        msbuildPath: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\amd64\MSBuild.exe'
+- job: Build_x64
+  displayName: 'Build x64'
+  dependsOn: DetermineVersion
+  pool:
+    name: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
+  variables:
+    ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
+  steps:
+  - checkout: self
+  - powershell: |
+      '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
+    displayName: 'Set version.txt'
+  - template: templates/build-arch.yml
+    parameters:
+      arch: 'x64'
+      cmakeArch: 'x64'
+      vcvarsArg: 'amd64'
+      platform: 'x64'
+      msbuildPath: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\amd64\MSBuild.exe'
 
-  - job: Build_x86
-    displayName: 'Build x86'
-    dependsOn: DetermineVersion
-    pool:
-      name: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
-    variables:
-      ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
-    steps:
-    - checkout: self
-    - powershell: |
-        '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
-      displayName: 'Set version.txt'
-    - template: templates/build-arch.yml
-      parameters:
-        arch: 'x86'
-        cmakeArch: 'Win32'
-        vcvarsArg: 'amd64_x86'
-        platform: 'Win32'
-        msbuildPath: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\amd64\MSBuild.exe'
+- job: Build_x86
+  displayName: 'Build x86'
+  dependsOn: DetermineVersion
+  pool:
+    name: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
+  variables:
+    ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
+  steps:
+  - checkout: self
+  - powershell: |
+      '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
+    displayName: 'Set version.txt'
+  - template: templates/build-arch.yml
+    parameters:
+      arch: 'x86'
+      cmakeArch: 'Win32'
+      vcvarsArg: 'amd64_x86'
+      platform: 'Win32'
+      msbuildPath: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\amd64\MSBuild.exe'
 
-  - job: Build_arm64
-    displayName: 'Build ARM64'
-    dependsOn: DetermineVersion
-    pool:
-      name: 'Azure-MessagingStore-WinBuildPoolARM'
-    variables:
-      ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
-    steps:
-    - checkout: self
-    - powershell: |
-        '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
-      displayName: 'Set version.txt'
-    - template: templates/build-arch.yml
-      parameters:
-        arch: 'arm64'
-        cmakeArch: 'ARM64'
-        vcvarsArg: 'arm64'
-        platform: 'ARM64'
-        msbuildPath: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\arm64\MSBuild.exe'
+- job: Build_arm64
+  displayName: 'Build ARM64'
+  dependsOn: DetermineVersion
+  pool:
+    name: 'Azure-MessagingStore-WinBuildPoolARM'
+  variables:
+    ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
+  steps:
+  - checkout: self
+  - powershell: |
+      '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
+    displayName: 'Set version.txt'
+  - template: templates/build-arch.yml
+    parameters:
+      arch: 'arm64'
+      cmakeArch: 'ARM64'
+      vcvarsArg: 'arm64'
+      platform: 'ARM64'
+      msbuildPath: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\arm64\MSBuild.exe'
 
-- stage: Package
-  displayName: 'Create Installer'
-  dependsOn: Build
-  jobs:
-  - job: CreateInstaller
-    displayName: 'Build Installer'
-    pool:
-      name: 'Azure-MessagingStore-WinBuildPoolARM'
-    variables:
-      ReleaseVersion: $[ stageDependencies.Build.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
-    steps:
-    - checkout: self
-      persistCredentials: true
-
-    - download: current
-      artifact: build_x64
-    - download: current
-      artifact: build_x86
-    - download: current
-      artifact: build_arm64
-
-    - powershell: |
-        # Create destination directories and copy artifacts
-        New-Item -ItemType Directory -Path "build_x64" -Force | Out-Null
-        New-Item -ItemType Directory -Path "build_x86" -Force | Out-Null
-        New-Item -ItemType Directory -Path "build_arm64" -Force | Out-Null
-        
-        Copy-Item -Path "$(Pipeline.Workspace)\build_x64\*" -Destination "build_x64" -Recurse -Force
-        Copy-Item -Path "$(Pipeline.Workspace)\build_x86\*" -Destination "build_x86" -Recurse -Force
-        Copy-Item -Path "$(Pipeline.Workspace)\build_arm64\*" -Destination "build_arm64" -Recurse -Force
-      displayName: 'Stage build artifacts'
-
-    - powershell: |
-        $version = '$(ReleaseVersion)'
-        Write-Host "Building installer for version: $version"
-        
-        # Update version.txt - this is the single source of truth
-        # CMake reads it to generate version.h, Inno Setup reads it directly
-        $version | Set-Content version.txt -NoNewline
-        
-        Write-Host "Updated version.txt to $version"
-      displayName: 'Update version.txt'
-
-    - task: CmdLine@2
-      displayName: 'Compile Inno Setup installer'
-      inputs:
-        script: '"%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" setup\vld-setup.iss'
-
-    - task: PublishPipelineArtifact@1
-      displayName: 'Publish installer'
-      inputs:
-        targetPath: 'setup\Output'
-        artifact: 'vld-installer'
-
-- stage: Release
-  displayName: 'Tag and Push Version'
+- job: CreateInstaller
+  displayName: 'Build Installer'
   dependsOn:
-    - Build
-    - Package
+    - DetermineVersion
+    - Build_x64
+    - Build_x86
+    - Build_arm64
+  pool:
+    name: 'Azure-MessagingStore-WinBuildPoolARM'
+  variables:
+    ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
+  steps:
+  - checkout: self
+    persistCredentials: true
+
+  - download: current
+    artifact: build_x64
+  - download: current
+    artifact: build_x86
+  - download: current
+    artifact: build_arm64
+
+  - powershell: |
+      # Create destination directories and copy artifacts
+      New-Item -ItemType Directory -Path "build_x64" -Force | Out-Null
+      New-Item -ItemType Directory -Path "build_x86" -Force | Out-Null
+      New-Item -ItemType Directory -Path "build_arm64" -Force | Out-Null
+      
+      Copy-Item -Path "$(Pipeline.Workspace)\build_x64\*" -Destination "build_x64" -Recurse -Force
+      Copy-Item -Path "$(Pipeline.Workspace)\build_x86\*" -Destination "build_x86" -Recurse -Force
+      Copy-Item -Path "$(Pipeline.Workspace)\build_arm64\*" -Destination "build_arm64" -Recurse -Force
+    displayName: 'Stage build artifacts'
+
+  - powershell: |
+      $version = '$(ReleaseVersion)'
+      Write-Host "Building installer for version: $version"
+      
+      # Update version.txt - this is the single source of truth
+      # CMake reads it to generate version.h, Inno Setup reads it directly
+      $version | Set-Content version.txt -NoNewline
+      
+      Write-Host "Updated version.txt to $version"
+    displayName: 'Update version.txt'
+
+  - task: CmdLine@2
+    displayName: 'Compile Inno Setup installer'
+    inputs:
+      script: '"%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" setup\vld-setup.iss'
+
+  - task: PublishPipelineArtifact@1
+    displayName: 'Publish installer'
+    inputs:
+      targetPath: 'setup\Output'
+      artifact: 'vld-installer'
+
+- job: TagAndPush
+  displayName: 'Tag and Push to Master'
+  dependsOn:
+    - DetermineVersion
+    - CreateInstaller
   # MEGAPOWAH: Temporarily disabled for testing - restore before merging!
   # condition: and(succeeded(), eq(variables.isMaster, true))
-  jobs:
-  - job: TagAndPush
-    displayName: 'Tag and Push to Master'
-    pool:
-      name: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
-    variables:
-      ReleaseVersion: $[ stageDependencies.Build.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
-    steps:
-    - checkout: self
-      persistCredentials: true
+  pool:
+    name: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
+  variables:
+    ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
+  steps:
+  - checkout: self
+    persistCredentials: true
 
-    - powershell: |
-        $ErrorActionPreference = 'Stop'
-        $version = '$(ReleaseVersion)'
-        Write-Host "Releasing version: $version"
-        
-        # Configure git
-        Write-Host "Configuring git user..."
-        git config user.email "vld-release@microsoft.com"
-        git config user.name "VLD Release Pipeline"
-        
-        # Update version.txt and commit
-        Write-Host "Updating version.txt to $version..."
-        $version | Set-Content version.txt -NoNewline
-        git add version.txt
-        git status
-        
-        Write-Host "Creating commit..."
-        git commit -v -m "Release v$version"
-        if ($LASTEXITCODE -ne 0) { throw "git commit failed" }
-        
-        # Tag the release
-        Write-Host "Creating tag v$version..."
-        git tag -a "v$version" -m "Release v$version"
-        if ($LASTEXITCODE -ne 0) { throw "git tag failed - tag may already exist" }
-        
-        # Show what we're about to push
-        Write-Host "Commit to push:"
-        git log -1 --oneline
-        Write-Host "Tags:"
-        git tag -l "v$version"
-        
-        # Push commit and tag
-        # TEMP: Using shadow-master for testing branch protection
-        Write-Host "Pushing commit to shadow-master..."
-        git push -v origin HEAD:shadow-master
-        if ($LASTEXITCODE -ne 0) { throw "git push to shadow-master failed" }
-        
-        Write-Host "Pushing tag v$version..."
-        git push -v origin "v$version"
-        if ($LASTEXITCODE -ne 0) { throw "git push tag failed" }
-        
-        Write-Host "Successfully released v$version"
-      displayName: 'Commit, Tag, and Push'
+  - powershell: |
+      $ErrorActionPreference = 'Stop'
+      $version = '$(ReleaseVersion)'
+      Write-Host "Releasing version: $version"
+      
+      # Configure git
+      Write-Host "Configuring git user..."
+      git config user.email "vld-release@microsoft.com"
+      git config user.name "VLD Release Pipeline"
+      
+      # Update version.txt and commit
+      Write-Host "Updating version.txt to $version..."
+      $version | Set-Content version.txt -NoNewline
+      git add version.txt
+      git status
+      
+      Write-Host "Creating commit..."
+      git commit -v -m "Release v$version"
+      if ($LASTEXITCODE -ne 0) { throw "git commit failed" }
+      
+      # Tag the release
+      Write-Host "Creating tag v$version..."
+      git tag -a "v$version" -m "Release v$version"
+      if ($LASTEXITCODE -ne 0) { throw "git tag failed - tag may already exist" }
+      
+      # Show what we're about to push
+      Write-Host "Commit to push:"
+      git log -1 --oneline
+      Write-Host "Tags:"
+      git tag -l "v$version"
+      
+      # Push commit and tag
+      # TEMP: Using shadow-master for testing branch protection
+      Write-Host "Pushing commit to shadow-master..."
+      git push -v origin HEAD:shadow-master
+      if ($LASTEXITCODE -ne 0) { throw "git push to shadow-master failed" }
+      
+      Write-Host "Pushing tag v$version..."
+      git push -v origin "v$version"
+      if ($LASTEXITCODE -ne 0) { throw "git push tag failed" }
+      
+      Write-Host "Successfully released v$version"
+    displayName: 'Commit, Tag, and Push'
