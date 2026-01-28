@@ -19,7 +19,7 @@ jobs:
 - job: DetermineVersion
   displayName: 'Determine Version'
   pool:
-    name: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
+    name: 'Azure-MessagingStore-WinBuildPoolARM'
   steps:
   - checkout: self
     persistCredentials: true
