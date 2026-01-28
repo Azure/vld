@@ -220,13 +220,6 @@ stages:
         $version = '$(ReleaseVersion)'
         Write-Host "Releasing version: $version"
         
-        # Sanity check - version should already be validated in DetermineVersion
-        if ([string]::IsNullOrWhiteSpace($version) -or $version -notmatch '^\d+\.\d+\.\d+$') {
-          Write-Host "##vso[task.logissue type=error]ReleaseVersion is empty or invalid: '$version'. This indicates a pipeline configuration issue."
-          Write-Host "##vso[task.complete result=Failed;]"
-          exit 1
-        }
-        
         # Configure git
         git config user.email "vld-release@microsoft.com"
         git config user.name "VLD Release Pipeline"
