@@ -73,7 +73,8 @@ stages:
       ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
     steps:
     - checkout: self
-    - powershell: '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
+    - powershell: |
+        '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
       displayName: 'Set version.txt'
     - template: templates/build-arch.yml
       parameters:
@@ -92,7 +93,8 @@ stages:
       ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
     steps:
     - checkout: self
-    - powershell: '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
+    - powershell: |
+        '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
       displayName: 'Set version.txt'
     - template: templates/build-arch.yml
       parameters:
@@ -111,7 +113,8 @@ stages:
       ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
     steps:
     - checkout: self
-    - powershell: '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
+    - powershell: |
+        '$(ReleaseVersion)' | Set-Content version.txt -NoNewline
       displayName: 'Set version.txt'
     - template: templates/build-arch.yml
       parameters:
@@ -128,7 +131,7 @@ stages:
   - job: CreateInstaller
     displayName: 'Build Installer'
     pool:
-      name: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
+      name: 'Azure-MessagingStore-WinBuildPoolARM'
     variables:
       ReleaseVersion: $[ stageDependencies.Build.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
     steps:
@@ -143,7 +146,11 @@ stages:
       artifact: build_arm64
 
     - powershell: |
-        # Move downloaded artifacts to expected locations
+        # Create destination directories and copy artifacts
+        New-Item -ItemType Directory -Path "build_x64" -Force | Out-Null
+        New-Item -ItemType Directory -Path "build_x86" -Force | Out-Null
+        New-Item -ItemType Directory -Path "build_arm64" -Force | Out-Null
+        
         Copy-Item -Path "$(Pipeline.Workspace)\build_x64\*" -Destination "build_x64" -Recurse -Force
         Copy-Item -Path "$(Pipeline.Workspace)\build_x86\*" -Destination "build_x86" -Recurse -Force
         Copy-Item -Path "$(Pipeline.Workspace)\build_arm64\*" -Destination "build_arm64" -Recurse -Force
