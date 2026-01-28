@@ -221,24 +221,38 @@ stages:
         Write-Host "Releasing version: $version"
         
         # Configure git
+        Write-Host "Configuring git user..."
         git config user.email "vld-release@microsoft.com"
         git config user.name "VLD Release Pipeline"
         
         # Update version.txt and commit
+        Write-Host "Updating version.txt to $version..."
         $version | Set-Content version.txt -NoNewline
         git add version.txt
-        git commit -m "Release v$version"
+        git status
+        
+        Write-Host "Creating commit..."
+        git commit -v -m "Release v$version"
         if ($LASTEXITCODE -ne 0) { throw "git commit failed" }
         
         # Tag the release
+        Write-Host "Creating tag v$version..."
         git tag -a "v$version" -m "Release v$version"
         if ($LASTEXITCODE -ne 0) { throw "git tag failed - tag may already exist" }
         
+        # Show what we're about to push
+        Write-Host "Commit to push:"
+        git log -1 --oneline
+        Write-Host "Tags:"
+        git tag -l "v$version"
+        
         # Push commit and tag
-        git push origin HEAD:master
+        Write-Host "Pushing commit to master..."
+        git push -v origin HEAD:master
         if ($LASTEXITCODE -ne 0) { throw "git push to master failed" }
         
-        git push origin "v$version"
+        Write-Host "Pushing tag v$version..."
+        git push -v origin "v$version"
         if ($LASTEXITCODE -ne 0) { throw "git push tag failed" }
         
         Write-Host "Successfully released v$version"
