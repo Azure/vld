@@ -7,7 +7,7 @@ trigger: none  # Manual trigger only
 
 parameters:
 - name: newVersion
-  displayName: 'New Version (default: current + 1 patch)'
+  displayName: 'Version (leave empty to auto-increment patch)'
   type: string
   default: ''
 
