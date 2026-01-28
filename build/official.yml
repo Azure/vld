@@ -12,7 +12,7 @@ parameters:
   default: ''
 
 variables:
-  - name: isMain
+  - name: isMaster
     value: $[eq(variables['Build.SourceBranch'], 'refs/heads/master')]
 
 stages:
@@ -210,7 +210,7 @@ stages:
   dependsOn:
     - Build
     - Package
-  condition: and(succeeded(), eq(variables.isMain, true))
+  condition: and(succeeded(), eq(variables.isMaster, true))
   jobs:
   - job: TagAndPush
     displayName: 'Tag and Push to Master'
