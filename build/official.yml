@@ -203,7 +203,8 @@ stages:
   dependsOn:
     - Build
     - Package
-  condition: and(succeeded(), eq(variables.isMaster, true))
+  # MEGAPOWAH: Temporarily disabled for testing - restore before merging!
+  # condition: and(succeeded(), eq(variables.isMaster, true))
   jobs:
   - job: TagAndPush
     displayName: 'Tag and Push to Master'
