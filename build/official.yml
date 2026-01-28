@@ -248,9 +248,10 @@ stages:
         git tag -l "v$version"
         
         # Push commit and tag
-        Write-Host "Pushing commit to master..."
-        git push -v origin HEAD:master
-        if ($LASTEXITCODE -ne 0) { throw "git push to master failed" }
+        # TEMP: Using shadow-master for testing branch protection
+        Write-Host "Pushing commit to shadow-master..."
+        git push -v origin HEAD:shadow-master
+        if ($LASTEXITCODE -ne 0) { throw "git push to shadow-master failed" }
         
         Write-Host "Pushing tag v$version..."
         git push -v origin "v$version"
