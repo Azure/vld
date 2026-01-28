@@ -61,13 +61,6 @@ stages:
           exit 1
         }
         
-        # Validate version is not empty
-        if ([string]::IsNullOrWhiteSpace($newVersion)) {
-          Write-Host "##vso[task.logissue type=error]Version cannot be empty."
-          Write-Host "##vso[task.complete result=Failed;]"
-          exit 1
-        }
-        
         # Fetch all tags to ensure we have the latest
         git fetch --tags
         
