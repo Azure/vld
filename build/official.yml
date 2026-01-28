@@ -204,7 +204,7 @@ jobs:
   # MEGAPOWAH: Temporarily disabled for testing - restore before merging!
   # condition: and(succeeded(), eq(variables.isMaster, true))
   pool:
-    name: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
+    name: 'Azure-MessagingStore-WinBuildPoolARM'
   variables:
     ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
   steps:
