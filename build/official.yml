@@ -252,3 +252,46 @@ jobs:
       
       Write-Host "Successfully released v$version"
     displayName: 'Commit, Tag, and Push'
+
+- job: CreateGitHubRelease
+  displayName: 'Create GitHub Release'
+  dependsOn:
+    - DetermineVersion
+    - CreateInstaller
+    - TagAndPush
+  condition: and(succeeded(), eq(variables.isMaster, true))
+  pool:
+    name: 'Azure-MessagingStore-WinBuildPoolARM'
+  variables:
+    ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
+  steps:
+  - checkout: self
+
+  - download: current
+    artifact: vld-installer
+
+  - task: GitHubRelease@1
+    displayName: 'Create GitHub Release'
+    inputs:
+      gitHubConnection: 'Azure-Pipelines'
+      repositoryName: '$(Build.Repository.Name)'
+      action: 'create'
+      target: '$(Build.SourceVersion)'
+      tagSource: 'userSpecifiedTag'
+      tag: 'v$(ReleaseVersion)'
+      title: 'VLD v$(ReleaseVersion)'
+      releaseNotesSource: 'inline'
+      releaseNotesInline: |
+        ## Visual Leak Detector v$(ReleaseVersion)
+        
+        ### Changes
+        $(Build.SourceVersionMessage)
+        
+        ### Installation
+        Download and run the installer below. See [README](https://github.com/$(Build.Repository.Name)/blob/master/README.md) for usage instructions.
+      assets: '$(Pipeline.Workspace)/vld-installer/*'
+      isDraft: false
+      isPreRelease: false
+      changeLogCompareToRelease: 'lastFullRelease'
+      changeLogType: 'commitBased'
+      addChangeLog: true
