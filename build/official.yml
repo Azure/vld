@@ -273,7 +273,7 @@ jobs:
   - task: GitHubRelease@1
     displayName: 'Create GitHub Release'
     inputs:
-      gitHubConnection: 'Azure Pipelines'
+      gitHubConnection: 'github.com_azure'
       repositoryName: '$(Build.Repository.Name)'
       action: 'create'
       target: '$(Build.SourceVersion)'
