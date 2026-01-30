@@ -51,7 +51,7 @@
 #>
 
 $ErrorActionPreference = "Stop"
-$ScriptVersion = "1.5.1"
+$ScriptVersion = "1.6.0"
 $ScriptSource = "https://github.com/Azure/vld/blob/master/build/scripts/Setup.ps1"
 
 # Logging helper
