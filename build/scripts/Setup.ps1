@@ -136,23 +136,48 @@ function Find-AllAgentInstallations {
         "C:\vss-agent",
         "C:\Agent",
         "D:\vss-agent",
-        "D:\Agent"
+        "D:\Agent",
+        "C:\azagent",
+        "D:\azagent"
     )
     
     $agentPaths = @()
     
+    Write-Log "Searching for agent installations..."
     foreach ($basePath in $searchPaths) {
+        Write-Log "  Checking: $basePath"
         if (Test-Path $basePath) {
+            Write-Log "    Found base path, searching for Agent.Listener.exe..."
             # Look for all Agent.Listener.exe files
             $agentExes = Get-ChildItem -Path $basePath -Recurse -Filter "Agent.Listener.exe" -ErrorAction SilentlyContinue
+            Write-Log "    Found $($agentExes.Count) Agent.Listener.exe file(s)"
             foreach ($agentExe in $agentExes) {
-                $agentRoot = $agentExe.Directory.Parent.FullName
+                # Agent.Listener.exe is in bin folder, so parent of bin is the agent root
+                # Structure: C:\vss-agent\4.266.2\bin\Agent.Listener.exe
+                $binFolder = $agentExe.Directory
+                if ($binFolder.Name -eq "bin") {
+                    $agentRoot = $binFolder.Parent.FullName
+                } else {
+                    # Fallback if not in bin folder
+                    $agentRoot = $binFolder.FullName
+                }
+                
+                Write-Log "      Found: $($agentExe.FullName)"
+                Write-Log "      Agent root: $agentRoot"
+                
                 if ($agentPaths -notcontains $agentRoot) {
                     $agentPaths += $agentRoot
+                    Write-Log "      Added to list"
+                } else {
+                    Write-Log "      Already in list, skipping"
                 }
             }
+        } else {
+            Write-Log "    Path does not exist"
         }
     }
+    
+    Write-Log "Total agent installations found: $($agentPaths.Count)"
     return $agentPaths
 }
 
