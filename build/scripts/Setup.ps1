@@ -51,7 +51,7 @@
 #>
 
 $ErrorActionPreference = "Stop"
-$ScriptVersion = "1.4.0"
+$ScriptVersion = "1.5.0"
 
 # Logging helper
 function Write-Log {
@@ -128,8 +128,8 @@ if (-not $isArm64) {
     exit 0
 }
 
-# Find existing agent installation
-function Find-AgentInstallation {
+# Find ALL agent installations (not just the first one)
+function Find-AllAgentInstallations {
     $searchPaths = @(
         "C:\vss-agent",
         "C:\Agent",
@@ -137,25 +137,33 @@ function Find-AgentInstallation {
         "D:\Agent"
     )
     
+    $agentPaths = @()
+    
     foreach ($basePath in $searchPaths) {
         if (Test-Path $basePath) {
-            # Look for version folders or direct installation
-            $agentExe = Get-ChildItem -Path $basePath -Recurse -Filter "Agent.Listener.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($agentExe) {
-                return $agentExe.Directory.Parent.FullName
+            # Look for all Agent.Listener.exe files
+            $agentExes = Get-ChildItem -Path $basePath -Recurse -Filter "Agent.Listener.exe" -ErrorAction SilentlyContinue
+            foreach ($agentExe in $agentExes) {
+                $agentRoot = $agentExe.Directory.Parent.FullName
+                if ($agentPaths -notcontains $agentRoot) {
+                    $agentPaths += $agentRoot
+                }
             }
         }
     }
-    return $null
+    return $agentPaths
 }
 
-$agentPath = Find-AgentInstallation
-if (-not $agentPath) {
-    Write-Log "No agent installation found. Skipping."
+$agentPaths = Find-AllAgentInstallations
+if ($agentPaths.Count -eq 0) {
+    Write-Log "No agent installations found. Skipping."
     exit 0
 }
 
-Write-Log "Agent found at: $agentPath"
+Write-Log "Found $($agentPaths.Count) agent installation(s):"
+foreach ($path in $agentPaths) {
+    Write-Log "  - $path"
+}
 
 # Get agent architecture from PE header
 function Get-AgentArchitecture {
@@ -187,18 +195,6 @@ function Get-AgentArchitecture {
     catch {
         return "Error: $_"
     }
-}
-
-$currentArch = Get-AgentArchitecture -AgentPath $agentPath
-Write-Log "Current agent architecture: $currentArch"
-
-if ($currentArch -eq "ARM64") {
-    Write-Log "Agent is already ARM64. No patching needed."
-    exit 0
-}
-
-if ($currentArch -ne "x86" -and $currentArch -ne "x64") {
-    Write-Log "WARNING: Unexpected architecture '$currentArch'. Proceeding anyway."
 }
 
 # Get agent version from folder name or .agent file
@@ -239,15 +235,160 @@ function Get-AgentVersion {
     return $null
 }
 
-$agentVersion = Get-AgentVersion -AgentPath $agentPath
-if (-not $agentVersion) {
-    Write-Log "ERROR: Could not determine agent version."
-    exit 1
+# Define config files to preserve
+$configFiles = @(
+    ".agent",
+    ".credentials",
+    ".credentials_rsaparams",
+    ".env",
+    ".path",
+    ".proxy",
+    ".proxybypass",
+    ".proxyCredentials"
+)
+
+# Function to patch a single agent installation
+function Patch-AgentToARM64 {
+    param(
+        [string]$AgentPath,
+        [string[]]$ConfigFiles
+    )
+    
+    Write-Log ""
+    Write-Log "--- Processing agent at: $AgentPath ---"
+    
+    $currentArch = Get-AgentArchitecture -AgentPath $AgentPath
+    Write-Log "Current architecture: $currentArch"
+    
+    if ($currentArch -eq "ARM64") {
+        Write-Log "Agent is already ARM64. Skipping."
+        return $true
+    }
+    
+    if ($currentArch -ne "x86" -and $currentArch -ne "x64") {
+        Write-Log "WARNING: Unexpected architecture '$currentArch'. Proceeding anyway."
+    }
+    
+    $agentVersion = Get-AgentVersion -AgentPath $AgentPath
+    if (-not $agentVersion) {
+        Write-Log "ERROR: Could not determine agent version. Skipping."
+        return $false
+    }
+    
+    Write-Log "Agent version: $agentVersion"
+    
+    # Backup config files
+    $backupPath = Join-Path $env:TEMP "agent-config-backup-$agentVersion-$(Get-Date -Format 'yyyyMMddHHmmss')"
+    New-Item -ItemType Directory -Path $backupPath -Force | Out-Null
+    
+    Write-Log "Backing up configuration files to $backupPath"
+    foreach ($file in $ConfigFiles) {
+        $sourcePath = Join-Path $AgentPath $file
+        if (Test-Path $sourcePath) {
+            Copy-Item -Path $sourcePath -Destination $backupPath -Force
+            Write-Log "  Backed up: $file"
+        }
+    }
+    
+    # Download ARM64 agent
+    $downloadUrl = "https://download.agent.dev.azure.com/agent/$agentVersion/vsts-agent-win-arm64-$agentVersion.zip"
+    $downloadPath = Join-Path $env:TEMP "vsts-agent-arm64-$agentVersion.zip"
+    
+    # Check if we already downloaded this version
+    if (-not (Test-Path $downloadPath) -or (Get-Item $downloadPath).Length -lt 1MB) {
+        Write-Log "Downloading ARM64 agent from: $downloadUrl"
+        
+        try {
+            $webClient = New-Object System.Net.WebClient
+            $webClient.DownloadFile($downloadUrl, $downloadPath)
+            Write-Log "Download complete: $downloadPath"
+        }
+        catch {
+            Write-Log "ERROR: Failed to download ARM64 agent: $_"
+            return $false
+        }
+        
+        # Verify download
+        if (-not (Test-Path $downloadPath) -or (Get-Item $downloadPath).Length -lt 1MB) {
+            Write-Log "ERROR: Download failed or file is too small."
+            return $false
+        }
+        
+        Write-Log "Download size: $((Get-Item $downloadPath).Length / 1MB) MB"
+    }
+    else {
+        Write-Log "Using cached download: $downloadPath"
+    }
+    
+    # Extract with overwrite
+    Write-Log "Extracting ARM64 agent with overwrite..."
+    
+    try {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        
+        $zip = [System.IO.Compression.ZipFile]::OpenRead($downloadPath)
+        $extracted = 0
+        
+        foreach ($entry in $zip.Entries) {
+            # Normalize path separators
+            $relativePath = $entry.FullName -replace '/', '\'
+            $destPath = Join-Path $AgentPath $relativePath
+            
+            if ($entry.FullName.EndsWith('/') -or $entry.FullName.EndsWith('\')) {
+                # Directory entry
+                if (-not (Test-Path $destPath)) {
+                    New-Item -ItemType Directory -Path $destPath -Force | Out-Null
+                }
+            }
+            else {
+                # File entry - ensure parent directory exists
+                $destDir = Split-Path $destPath -Parent
+                if ($destDir -and -not (Test-Path $destDir)) {
+                    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+                }
+                
+                [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $destPath, $true)
+                $extracted++
+            }
+        }
+        
+        $zip.Dispose()
+        Write-Log "Extracted $extracted files."
+    }
+    catch {
+        Write-Log "ERROR: Extraction failed: $_"
+        return $false
+    }
+    
+    # Restore config files
+    Write-Log "Restoring configuration files..."
+    foreach ($file in $ConfigFiles) {
+        $backupFile = Join-Path $backupPath $file
+        if (Test-Path $backupFile) {
+            $destFile = Join-Path $AgentPath $file
+            Copy-Item -Path $backupFile -Destination $destFile -Force
+            Write-Log "  Restored: $file"
+        }
+    }
+    
+    # Cleanup backup
+    Remove-Item -Path $backupPath -Recurse -Force -ErrorAction SilentlyContinue
+    
+    # Verify the patch
+    $newArch = Get-AgentArchitecture -AgentPath $AgentPath
+    Write-Log "New agent architecture: $newArch"
+    
+    if ($newArch -eq "ARM64") {
+        Write-Log "SUCCESS: Agent at $AgentPath patched to ARM64!"
+        return $true
+    }
+    else {
+        Write-Log "ERROR: Patch verification failed. Architecture is $newArch"
+        return $false
+    }
 }
 
-Write-Log "Agent version: $agentVersion"
-
-# Stop agent service if running
+# Stop agent services before patching any agents
 $stoppedServices = @()
 $agentServices = Get-Service -Name "vstsagent*" -ErrorAction SilentlyContinue
 foreach ($svc in $agentServices) {
@@ -266,139 +407,45 @@ foreach ($proc in $agentProcesses) {
     Stop-Process -Id $proc.Id -Force
 }
 
-# Define config files to preserve
-$configFiles = @(
-    ".agent",
-    ".credentials",
-    ".credentials_rsaparams",
-    ".env",
-    ".path",
-    ".proxy",
-    ".proxybypass",
-    ".proxyCredentials"
-)
+# Patch all agents
+$successCount = 0
+$failCount = 0
+$downloadedVersions = @{}
 
-# Backup config files
-$backupPath = Join-Path $env:TEMP "agent-config-backup-$(Get-Date -Format 'yyyyMMddHHmmss')"
-New-Item -ItemType Directory -Path $backupPath -Force | Out-Null
-
-Write-Log "Backing up configuration files to $backupPath"
-foreach ($file in $configFiles) {
-    $sourcePath = Join-Path $agentPath $file
-    if (Test-Path $sourcePath) {
-        Copy-Item -Path $sourcePath -Destination $backupPath -Force
-        Write-Log "  Backed up: $file"
+foreach ($agentPath in $agentPaths) {
+    $result = Patch-AgentToARM64 -AgentPath $agentPath -ConfigFiles $configFiles
+    if ($result) {
+        $successCount++
+    }
+    else {
+        $failCount++
     }
 }
 
-# Download ARM64 agent
-$downloadUrl = "https://download.agent.dev.azure.com/agent/$agentVersion/vsts-agent-win-arm64-$agentVersion.zip"
-$downloadPath = Join-Path $env:TEMP "vsts-agent-arm64-$agentVersion.zip"
-
-Write-Log "Downloading ARM64 agent from: $downloadUrl"
-
-try {
-    $webClient = New-Object System.Net.WebClient
-    $webClient.DownloadFile($downloadUrl, $downloadPath)
-    Write-Log "Download complete: $downloadPath"
+# Cleanup downloaded files
+Write-Log ""
+Write-Log "Cleaning up downloaded agent packages..."
+Get-ChildItem -Path $env:TEMP -Filter "vsts-agent-arm64-*.zip" -ErrorAction SilentlyContinue | ForEach-Object {
+    Remove-Item -Path $_.FullName -Force -ErrorAction SilentlyContinue
+    Write-Log "  Removed: $($_.Name)"
 }
-catch {
-    Write-Log "ERROR: Failed to download ARM64 agent: $_"
+
+# Restart any services we stopped
+foreach ($svcName in $stoppedServices) {
+    Write-Log "Restarting service: $svcName"
+    Start-Service -Name $svcName -ErrorAction SilentlyContinue
+    Write-Log "  Started."
+}
+
+Write-Log ""
+Write-Log "==========================================="
+Write-Log "Agent patching complete!"
+Write-Log "  Successful: $successCount"
+Write-Log "  Failed: $failCount"
+Write-Log "==========================================="
+
+if ($failCount -gt 0) {
     exit 1
 }
-
-# Verify download
-if (-not (Test-Path $downloadPath) -or (Get-Item $downloadPath).Length -lt 1MB) {
-    Write-Log "ERROR: Download failed or file is too small."
-    exit 1
-}
-
-Write-Log "Download size: $((Get-Item $downloadPath).Length / 1MB) MB"
-
-# Extract with overwrite
-Write-Log "Extracting ARM64 agent with overwrite..."
-
-try {
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    
-    $zip = [System.IO.Compression.ZipFile]::OpenRead($downloadPath)
-    $totalFiles = $zip.Entries.Count
-    $extracted = 0
-    
-    foreach ($entry in $zip.Entries) {
-        # Normalize path separators
-        $relativePath = $entry.FullName -replace '/', '\'
-        $destPath = Join-Path $agentPath $relativePath
-        
-        if ($entry.FullName.EndsWith('/') -or $entry.FullName.EndsWith('\')) {
-            # Directory entry
-            if (-not (Test-Path $destPath)) {
-                New-Item -ItemType Directory -Path $destPath -Force | Out-Null
-            }
-        }
-        else {
-            # File entry - ensure parent directory exists
-            $destDir = Split-Path $destPath -Parent
-            if ($destDir -and -not (Test-Path $destDir)) {
-                New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-            }
-            
-            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $destPath, $true)
-            $extracted++
-        }
-    }
-    
-    $zip.Dispose()
-    Write-Log "Extracted $extracted files."
-}
-catch {
-    Write-Log "ERROR: Extraction failed: $_"
-    exit 1
-}
-
-# Restore config files
-Write-Log "Restoring configuration files..."
-foreach ($file in $configFiles) {
-    $backupFile = Join-Path $backupPath $file
-    if (Test-Path $backupFile) {
-        $destFile = Join-Path $agentPath $file
-        Copy-Item -Path $backupFile -Destination $destFile -Force
-        Write-Log "  Restored: $file"
-    }
-}
-
-# Cleanup
-Write-Log "Cleaning up temporary files..."
-Remove-Item -Path $downloadPath -Force -ErrorAction SilentlyContinue
-Remove-Item -Path $backupPath -Recurse -Force -ErrorAction SilentlyContinue
-
-# Verify the patch
-$newArch = Get-AgentArchitecture -AgentPath $agentPath
-Write-Log "New agent architecture: $newArch"
-
-if ($newArch -eq "ARM64") {
-    Write-Log "==========================================="
-    Write-Log "SUCCESS: Agent patched to ARM64!"
-    Write-Log "==========================================="
-    
-    # Restart any services we stopped
-    foreach ($svcName in $stoppedServices) {
-        Write-Log "Restarting service: $svcName"
-        Start-Service -Name $svcName
-        Write-Log "  Started."
-    }
-    
-    exit 0
-}
-else {
-    Write-Log "ERROR: Patch verification failed. Architecture is $newArch"
-    
-    # Still try to restart services even on failure
-    foreach ($svcName in $stoppedServices) {
-        Write-Log "Restarting service: $svcName"
-        Start-Service -Name $svcName -ErrorAction SilentlyContinue
-    }
-    
-    exit 1
-}
+exit 0
 #endregion
