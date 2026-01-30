@@ -147,7 +147,17 @@ function Find-AllAgentInstallations {
     foreach ($basePath in $searchPaths) {
         Write-Log "  Checking: $basePath"
         if (Test-Path $basePath) {
-            Write-Log "    Found base path, searching for Agent.Listener.exe..."
+            Write-Log "    Path exists. Full directory listing:"
+            
+            # List ALL contents recursively
+            Get-ChildItem -Path $basePath -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+                $type = if ($_.PSIsContainer) { "[DIR] " } else { "[FILE]" }
+                $size = if ($_.PSIsContainer) { "" } else { " ($($_.Length) bytes)" }
+                Write-Log "      $type $($_.FullName)$size"
+            }
+            
+            Write-Log "    End of directory listing. Searching for Agent.Listener.exe..."
+            
             # Look for all Agent.Listener.exe files
             $agentExes = Get-ChildItem -Path $basePath -Recurse -Filter "Agent.Listener.exe" -ErrorAction SilentlyContinue
             Write-Log "    Found $($agentExes.Count) Agent.Listener.exe file(s)"
