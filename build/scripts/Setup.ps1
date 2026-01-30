@@ -51,7 +51,8 @@
 #>
 
 $ErrorActionPreference = "Stop"
-$ScriptVersion = "1.5.0"
+$ScriptVersion = "1.5.1"
+$ScriptSource = "https://github.com/Azure/vld/blob/master/build/scripts/Setup.ps1"
 
 # Logging helper
 function Write-Log {
@@ -62,6 +63,7 @@ function Write-Log {
 
 Write-Log "==========================================="
 Write-Log "VLD Provisioning Script v$ScriptVersion"
+Write-Log "Source: $ScriptSource"
 Write-Log "==========================================="
 
 #region Inno Setup Installation
