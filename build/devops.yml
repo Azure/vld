@@ -23,7 +23,7 @@ parameters:
       cmakeArch: 'ARM64'
       vcvarsArg: 'arm64'
       platform: 'ARM64'
-      pool: 'Azure-MessagingStore-WinBuildPoolARM'
+      pool: 'BuildARM64Win7'
       msbuildPath: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\arm64\MSBuild.exe'
 - name: configurations
   type: object
