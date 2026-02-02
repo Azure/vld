@@ -30,12 +30,49 @@ steps:
   - template: verify-arm64-agent.yml
 
 # Setup VC++ environment for both CMake (compiler detection) and MSBuild
-- task: BatchScript@1
+- task: PowerShell@2
   displayName: 'Setup VC++ Environment (${{ parameters.vcvarsArg }})'
   inputs:
-    filename: '"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat"'
-    arguments: '${{ parameters.vcvarsArg }}'
-    modifyEnvironment: true
+    targetType: 'inline'
+    script: |
+      # Find Visual Studio installation using vswhere
+      $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+      if (-not (Test-Path $vswhere)) {
+        Write-Host "##[error]vswhere.exe not found at $vswhere"
+        exit 1
+      }
+      
+      $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+      if (-not $vsPath) {
+        # Try without specific component requirement
+        $vsPath = & $vswhere -latest -products * -property installationPath
+      }
+      
+      if (-not $vsPath) {
+        Write-Host "##[error]Could not find Visual Studio installation"
+        exit 1
+      }
+      
+      $vcvarsall = Join-Path $vsPath "VC\Auxiliary\Build\vcvarsall.bat"
+      Write-Host "Found Visual Studio at: $vsPath"
+      Write-Host "Using vcvarsall.bat: $vcvarsall"
+      
+      if (-not (Test-Path $vcvarsall)) {
+        Write-Host "##[error]vcvarsall.bat not found at $vcvarsall"
+        exit 1
+      }
+      
+      # Run vcvarsall.bat and capture environment variables
+      $vcvarsArg = "${{ parameters.vcvarsArg }}"
+      Write-Host "Calling: `"$vcvarsall`" $vcvarsArg"
+      
+      cmd /c "`"$vcvarsall`" $vcvarsArg && set" | ForEach-Object {
+        if ($_ -match '^([^=]+)=(.*)$') {
+          $name = $matches[1]
+          $value = $matches[2]
+          Write-Host "##vso[task.setvariable variable=$name]$value"
+        }
+      }
 
 - task: CMake@1
   displayName: 'CMake configure -A ${{ parameters.cmakeArch }}'
