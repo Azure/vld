@@ -74,11 +74,13 @@ steps:
         }
       }
 
-- task: CMake@1
+- task: CmdLine@2
   displayName: 'CMake configure -A ${{ parameters.cmakeArch }}'
   inputs:
-    workingDirectory: 'build_${{ parameters.arch }}'
-    cmakeArgs: '.. -DVLD_USE_MFC=OFF -A ${{ parameters.cmakeArch }}'
+    script: |
+      mkdir build_${{ parameters.arch }} 2>nul
+      cd build_${{ parameters.arch }}
+      cmake .. -DVLD_USE_MFC=OFF -A ${{ parameters.cmakeArch }}
 
 # Build solution using MSBuild directly
 - task: CmdLine@2
