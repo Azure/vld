@@ -83,10 +83,36 @@ steps:
       cmake .. -DVLD_USE_MFC=OFF -A ${{ parameters.cmakeArch }}
 
 # Build solution using MSBuild directly
-- task: CmdLine@2
+- task: PowerShell@2
   displayName: 'Build ${{ parameters.configuration }}'
   inputs:
-    script: '"${{ parameters.msbuildPath }}" "build_${{ parameters.arch }}\VLD.sln" /t:restore /t:build /p:Platform=${{ parameters.platform }} /p:Configuration=${{ parameters.configuration }} /m'
+    targetType: 'inline'
+    script: |
+      # Try the provided msbuildPath first, fall back to vswhere discovery
+      $msbuildPath = "${{ parameters.msbuildPath }}"
+      
+      if (-not (Test-Path $msbuildPath)) {
+        Write-Host "MSBuild not found at $msbuildPath, using vswhere to locate..."
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        if (Test-Path $vswhere) {
+          $vsPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
+          if ($vsPath) {
+            $msbuildPath = Join-Path $vsPath "MSBuild\Current\Bin\${{ parameters.arch }}\MSBuild.exe"
+            if (-not (Test-Path $msbuildPath)) {
+              # Try without arch-specific folder
+              $msbuildPath = Join-Path $vsPath "MSBuild\Current\Bin\MSBuild.exe"
+            }
+          }
+        }
+      }
+      
+      if (-not (Test-Path $msbuildPath)) {
+        Write-Host "##[error]MSBuild.exe not found"
+        exit 1
+      }
+      
+      Write-Host "Using MSBuild: $msbuildPath"
+      & $msbuildPath "build_${{ parameters.arch }}\VLD.sln" /t:restore /t:build /p:Platform=${{ parameters.platform }} /p:Configuration=${{ parameters.configuration }} /m
 
 # Optional: Run tests
 - ${{ if parameters.runTests }}:
