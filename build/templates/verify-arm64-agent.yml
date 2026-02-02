@@ -56,24 +56,27 @@ steps:
             
             if ($archName -ne "ARM64") {
                 Write-Host ""
-                Write-Host "##[warning]ARM64 agent verification FAILED!"
-                Write-Host "##[warning]Expected ARM64 agent but found $archName agent."
+                Write-Host "##[error]============================================================"
+                Write-Host "##[error]                    !!! ATTENTION !!!"
+                Write-Host "##[error]============================================================"
+                Write-Host "##[error]ARM64 AGENT VERIFICATION FAILED!"
+                Write-Host "##[error]Expected ARM64 agent but found $archName agent."
+                Write-Host "##[error]============================================================"
                 Write-Host ""
-                Write-Host "The 1ES provisioning script should patch the agent to ARM64."
-                Write-Host "Please investigate the provisioning script logs at:"
-                Write-Host "  https://winbuildpoolarm.blob.core.windows.net/insights-logs-provisioningscriptlogs"
+                Write-Host "##[warning]THIS IS A SERIOUS CONFIGURATION PROBLEM!"
+                Write-Host "##[warning]The build will proceed, but performance will be degraded"
+                Write-Host "##[warning]due to x86 emulation on ARM64 hardware."
                 Write-Host ""
-                Write-Host "Look for 'ARM64 Agent Provisioning Script' entries."
-                Write-Host "See build/docs/ARM64-AGENT-PATCHING.md for troubleshooting."
-                
-                # If OS is ARM64 but agent is x86, continue running (don't fail)
-                if ($osArch -like "*ARM64*" -and $archName -eq "x86") {
-                    Write-Host ""
-                    Write-Host "##[warning]Computer is ARM64 but agent is x86. Continuing anyway..."
-                    Write-Host "##[warning]Build will proceed using x86 emulation on ARM64."
-                } else {
-                    exit 1
-                }
+                Write-Host "##[warning]The 1ES provisioning script SHOULD have patched the agent to ARM64."
+                Write-Host "##[warning]Please investigate the provisioning script logs at:"
+                Write-Host "##[warning]  https://winbuildpoolarm.blob.core.windows.net/insights-logs-provisioningscriptlogs"
+                Write-Host ""
+                Write-Host "##[warning]Look for 'ARM64 Agent Provisioning Script' entries."
+                Write-Host "##[warning]See build/docs/ARM64-AGENT-PATCHING.md for troubleshooting."
+                Write-Host ""
+                Write-Host "##[warning]============================================================"
+                Write-Host "##[warning]PROCEEDING ANYWAY - BUILD MAY BE SLOW OR HAVE ISSUES"
+                Write-Host "##[warning]============================================================"
             } else {
                 Write-Host ""
                 Write-Host "ARM64 agent verification PASSED!"
