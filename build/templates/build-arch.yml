@@ -50,13 +50,17 @@ steps:
       Write-Host "Found Visual Studio at: $vsPath"
       
       # Find CMake bundled with Visual Studio
-      $cmakePath = Join-Path $vsPath "Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
+      $cmakeBinDir = Join-Path $vsPath "Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin"
+      $cmakePath = Join-Path $cmakeBinDir "cmake.exe"
+      $ctestPath = Join-Path $cmakeBinDir "ctest.exe"
       if (-not (Test-Path $cmakePath)) {
         Write-Host "##[error]CMake not found at $cmakePath"
         exit 1
       }
       Write-Host "Using CMake: $cmakePath"
+      Write-Host "Using CTest: $ctestPath"
       Write-Host "##vso[task.setvariable variable=cmakePath]$cmakePath"
+      Write-Host "##vso[task.setvariable variable=ctestPath]$ctestPath"
       
       # Find MSBuild for the correct host architecture
       $msbuildPath = Join-Path $vsPath "MSBuild\Current\Bin\$msbuildHost\MSBuild.exe"
@@ -88,7 +92,7 @@ steps:
   - task: CmdLine@2
     displayName: 'Run ctest ${{ parameters.configuration }}'
     inputs:
-      script: 'ctest -C "${{ parameters.configuration }}" --output-on-failure'
+      script: '"$(ctestPath)" -C "${{ parameters.configuration }}" --output-on-failure'
       workingDirectory: 'build_${{ parameters.arch }}'
 
 - task: PublishPipelineArtifact@1
