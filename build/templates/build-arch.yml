@@ -26,14 +26,13 @@ steps:
   inputs:
     targetType: 'inline'
     script: |
-      # Map arch to vcvarsArg and platform
+      # Map arch to vcvarsArg, platform, and msbuild host folder
       $arch = "${{ parameters.arch }}"
       switch ($arch) {
-        'x64'   { $vcvarsArg = 'amd64';     $cmakeArch = 'x64';   $platform = 'x64' }
-        'x86'   { $vcvarsArg = 'amd64_x86'; $cmakeArch = 'Win32'; $platform = 'Win32' }
-        'arm64' { $vcvarsArg = 'arm64';     $cmakeArch = 'ARM64'; $platform = 'ARM64' }
+        'x64'   { $vcvarsArg = 'amd64';     $cmakeArch = 'x64';   $platform = 'x64';   $msbuildHost = 'amd64' }
+        'x86'   { $vcvarsArg = 'amd64_x86'; $cmakeArch = 'Win32'; $platform = 'Win32'; $msbuildHost = 'amd64' }
+        'arm64' { $vcvarsArg = 'arm64';     $cmakeArch = 'ARM64'; $platform = 'ARM64'; $msbuildHost = 'arm64' }
       }
-      Write-Host "##vso[task.setvariable variable=vcvarsArg]$vcvarsArg"
       Write-Host "##vso[task.setvariable variable=cmakeArch]$cmakeArch"
       Write-Host "##vso[task.setvariable variable=platform]$platform"
       
@@ -49,6 +48,19 @@ steps:
         exit 1
       }
       Write-Host "Found Visual Studio at: $vsPath"
+      
+      # Find MSBuild for the correct host architecture
+      $msbuildPath = Join-Path $vsPath "MSBuild\Current\Bin\$msbuildHost\MSBuild.exe"
+      if (-not (Test-Path $msbuildPath)) {
+        # Fall back to generic MSBuild
+        $msbuildPath = Join-Path $vsPath "MSBuild\Current\Bin\MSBuild.exe"
+      }
+      if (-not (Test-Path $msbuildPath)) {
+        Write-Host "##[error]MSBuild.exe not found"
+        exit 1
+      }
+      Write-Host "Using MSBuild: $msbuildPath"
+      Write-Host "##vso[task.setvariable variable=msbuildPath]$msbuildPath"
       
       $vcvarsall = Join-Path $vsPath "VC\Auxiliary\Build\vcvarsall.bat"
       if (-not (Test-Path $vcvarsall)) {
@@ -74,7 +86,7 @@ steps:
 - task: CmdLine@2
   displayName: 'Build ${{ parameters.configuration }}'
   inputs:
-    script: 'msbuild "build_${{ parameters.arch }}\VLD.sln" /t:restore /t:build /p:Platform=$(platform) /p:Configuration=${{ parameters.configuration }} /m'
+    script: '"$(msbuildPath)" "build_${{ parameters.arch }}\VLD.sln" /t:restore /t:build /p:Platform=$(platform) /p:Configuration=${{ parameters.configuration }} /m'
 
 # Optional: Run tests
 - ${{ if parameters.runTests }}:
