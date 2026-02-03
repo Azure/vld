@@ -13,9 +13,8 @@ steps:
         
         # Check process architecture
         $procArch = [System.Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture
-        $pid = $PID
         Write-Host "Process Architecture: $procArch"
-        Write-Host "Process ID (PID): $pid"
+        Write-Host "Process ID (PID): $PID"
         Write-Host "PROCESSOR_ARCHITECTURE: $env:PROCESSOR_ARCHITECTURE"
         
         # Check Agent.Worker.exe PE header
@@ -44,7 +43,7 @@ steps:
                 Write-Host "##[warning]"
                 Write-Host "##[warning]Detection results:"
                 Write-Host "##[warning]  Process Architecture:      $procArch"
-                Write-Host "##[warning]  Process ID (PID):          $pid"
+                Write-Host "##[warning]  Process ID (PID):          $PID"
                 Write-Host "##[warning]  PROCESSOR_ARCHITECTURE:    $env:PROCESSOR_ARCHITECTURE"
                 Write-Host "##[warning]  Agent.Worker.exe:          $archName"
                 Write-Host "##[warning]"
