@@ -29,12 +29,12 @@ steps:
       # Map arch to platform and msbuild host folder
       $arch = "${{ parameters.arch }}"
       switch ($arch) {
-        'x64'   { $vcvarsArg = 'amd64';     $cmakeArch = 'x64';   $platform = 'x64';   $msbuildHost = 'amd64' }
-        'x86'   { $vcvarsArg = 'amd64_x86'; $cmakeArch = 'Win32'; $platform = 'Win32'; $msbuildHost = 'amd64' }
-        'arm64' { $vcvarsArg = 'arm64';     $cmakeArch = 'ARM64'; $platform = 'ARM64'; $msbuildHost = 'arm64' }
+        'x64'   { $vcvarsArg = 'amd64';     $cmakeArch = 'x64';   $buildPlatform = 'x64';   $msbuildHost = 'amd64' }
+        'x86'   { $vcvarsArg = 'amd64_x86'; $cmakeArch = 'Win32'; $buildPlatform = 'Win32'; $msbuildHost = 'amd64' }
+        'arm64' { $vcvarsArg = 'arm64';     $cmakeArch = 'ARM64'; $buildPlatform = 'ARM64'; $msbuildHost = 'arm64' }
       }
       Write-Host "##vso[task.setvariable variable=cmakeArch]$cmakeArch"
-      Write-Host "##vso[task.setvariable variable=platform]$platform"
+      Write-Host "##vso[task.setvariable variable=buildPlatform]$buildPlatform"
       
       $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
       if (-not (Test-Path $vswhere)) {
@@ -62,6 +62,7 @@ steps:
       Write-Host "##vso[task.setvariable variable=msbuildPath]$msbuildPath"
       
       # Run vcvarsall to add cmake and other tools to PATH
+      # Note: vcvarsall sets a 'platform' env var, so we use 'buildPlatform' to avoid collision
       $vcvarsall = Join-Path $vsPath "VC\Auxiliary\Build\vcvarsall.bat"
       if (-not (Test-Path $vcvarsall)) {
         Write-Host "##[error]vcvarsall.bat not found at $vcvarsall"
@@ -86,7 +87,7 @@ steps:
 - task: CmdLine@2
   displayName: 'Build ${{ parameters.configuration }}'
   inputs:
-    script: '"$(msbuildPath)" "build_${{ parameters.arch }}\VLD.sln" /t:restore /t:build /p:Platform=$(platform) /p:Configuration=${{ parameters.configuration }} /m'
+    script: '"$(msbuildPath)" "build_${{ parameters.arch }}\VLD.sln" /t:restore /t:build /p:Platform=$(buildPlatform) /p:Configuration=${{ parameters.configuration }} /m'
 
 # Optional: Run tests
 - ${{ if parameters.runTests }}:
