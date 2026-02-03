@@ -53,12 +53,21 @@ steps:
 
 # Run vcvarsall to setup PATH (needed for cmake and msbuild)
 # Note: vcvarsall sets a 'platform' env var, so we use 'buildPlatform' to avoid collision
-- task: BatchScript@1
-  displayName: 'Setup VC++ Environment ($(vcvarsArg))'
-  inputs:
-    filename: '$(vsPath)\VC\Auxiliary\Build\vcvarsall.bat'
-    arguments: '$(vcvarsArg)'
-    modifyEnvironment: true
+# For ARM64: use SysNative\cmd.exe to escape x86 emulation and run native ARM64
+- ${{ if eq(parameters.arch, 'arm64') }}:
+  - task: BatchScript@1
+    displayName: 'Setup VC++ Environment ($(vcvarsArg))'
+    inputs:
+      filename: '$(SystemRoot)\SysNative\cmd.exe'
+      arguments: '/c "$(vsPath)\VC\Auxiliary\Build\vcvarsall.bat" $(vcvarsArg)'
+      modifyEnvironment: true
+- ${{ if ne(parameters.arch, 'arm64') }}:
+  - task: BatchScript@1
+    displayName: 'Setup VC++ Environment ($(vcvarsArg))'
+    inputs:
+      filename: '$(vsPath)\VC\Auxiliary\Build\vcvarsall.bat'
+      arguments: '$(vcvarsArg)'
+      modifyEnvironment: true
 
 - task: CmdLine@2
   displayName: 'CMake configure'
