@@ -53,14 +53,25 @@ steps:
 
 # Run vcvarsall to setup PATH (needed for cmake and msbuild)
 # Note: vcvarsall sets a 'platform' env var, so we use 'buildPlatform' to avoid collision
-# For ARM64: use SysNative\cmd.exe to escape x86 emulation and run native ARM64
+# For ARM64: use SysNative\cmd.exe to escape x86 emulation, then capture env vars manually
 - ${{ if eq(parameters.arch, 'arm64') }}:
-  - task: BatchScript@1
-    displayName: 'Setup VC++ Environment ($(vcvarsArg))'
+  - task: PowerShell@2
+    displayName: 'Setup VC++ Environment ($(vcvarsArg)) via SysNative'
     inputs:
-      filename: '$(SystemRoot)\SysNative\cmd.exe'
-      arguments: '/c "$(vsPath)\VC\Auxiliary\Build\vcvarsall.bat" $(vcvarsArg)'
-      modifyEnvironment: true
+      targetType: 'inline'
+      script: |
+        $vcvarsall = "$(vsPath)\VC\Auxiliary\Build\vcvarsall.bat"
+        $vcvarsArg = "$(vcvarsArg)"
+        $nativeCmd = "$env:SystemRoot\SysNative\cmd.exe"
+        
+        Write-Host "Using native cmd: $nativeCmd"
+        Write-Host "Calling: $vcvarsall $vcvarsArg"
+        
+        & $nativeCmd /c "`"$vcvarsall`" $vcvarsArg && set" | ForEach-Object {
+          if ($_ -match '^([^=]+)=(.*)$') {
+            Write-Host "##vso[task.setvariable variable=$($matches[1])]$($matches[2])"
+          }
+        }
 - ${{ if ne(parameters.arch, 'arm64') }}:
   - task: BatchScript@1
     displayName: 'Setup VC++ Environment ($(vcvarsArg))'
