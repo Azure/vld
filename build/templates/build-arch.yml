@@ -20,7 +20,7 @@ steps:
 - ${{ if eq(parameters.arch, 'arm64') }}:
   - template: verify-arm64-agent.yml
 
-# Discover Visual Studio and setup build variables
+# Discover Visual Studio and setup build environment
 - task: PowerShell@2
   displayName: 'Setup Build Environment (${{ parameters.arch }})'
   inputs:
@@ -29,9 +29,9 @@ steps:
       # Map arch to platform and msbuild host folder
       $arch = "${{ parameters.arch }}"
       switch ($arch) {
-        'x64'   { $cmakeArch = 'x64';   $platform = 'x64';   $msbuildHost = 'amd64' }
-        'x86'   { $cmakeArch = 'Win32'; $platform = 'Win32'; $msbuildHost = 'amd64' }
-        'arm64' { $cmakeArch = 'ARM64'; $platform = 'ARM64'; $msbuildHost = 'arm64' }
+        'x64'   { $vcvarsArg = 'amd64';     $cmakeArch = 'x64';   $platform = 'x64';   $msbuildHost = 'amd64' }
+        'x86'   { $vcvarsArg = 'amd64_x86'; $cmakeArch = 'Win32'; $platform = 'Win32'; $msbuildHost = 'amd64' }
+        'arm64' { $vcvarsArg = 'arm64';     $cmakeArch = 'ARM64'; $platform = 'ARM64'; $msbuildHost = 'arm64' }
       }
       Write-Host "##vso[task.setvariable variable=cmakeArch]$cmakeArch"
       Write-Host "##vso[task.setvariable variable=platform]$platform"
@@ -60,6 +60,20 @@ steps:
       }
       Write-Host "Using MSBuild: $msbuildPath"
       Write-Host "##vso[task.setvariable variable=msbuildPath]$msbuildPath"
+      
+      # Run vcvarsall to add cmake and other tools to PATH
+      $vcvarsall = Join-Path $vsPath "VC\Auxiliary\Build\vcvarsall.bat"
+      if (-not (Test-Path $vcvarsall)) {
+        Write-Host "##[error]vcvarsall.bat not found at $vcvarsall"
+        exit 1
+      }
+      
+      Write-Host "Calling vcvarsall to setup PATH (needed for cmake): $vcvarsArg"
+      cmd /c "`"$vcvarsall`" $vcvarsArg && set" | ForEach-Object {
+        if ($_ -match '^([^=]+)=(.*)$') {
+          Write-Host "##vso[task.setvariable variable=$($matches[1])]$($matches[2])"
+        }
+      }
 
 - task: CmdLine@2
   displayName: 'CMake configure'
