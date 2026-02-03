@@ -54,19 +54,6 @@ steps:
       }
       Write-Host "Found Visual Studio at: $vsPath"
       
-      # Find MSBuild (arch-specific first, then generic)
-      $msbuildPath = Join-Path $vsPath "MSBuild\Current\Bin\${{ parameters.arch }}\MSBuild.exe"
-      if (-not (Test-Path $msbuildPath)) {
-        $msbuildPath = Join-Path $vsPath "MSBuild\Current\Bin\MSBuild.exe"
-      }
-      if (-not (Test-Path $msbuildPath)) {
-        Write-Host "##[error]MSBuild.exe not found"
-        exit 1
-      }
-      Write-Host "##vso[task.setvariable variable=MSBUILD_PATH]$msbuildPath"
-      Write-Host "MSBuild: $msbuildPath"
-      
-      # Setup VC++ environment via vcvarsall
       $vcvarsall = Join-Path $vsPath "VC\Auxiliary\Build\vcvarsall.bat"
       if (-not (Test-Path $vcvarsall)) {
         Write-Host "##[error]vcvarsall.bat not found at $vcvarsall"
@@ -92,7 +79,7 @@ steps:
 - task: CmdLine@2
   displayName: 'Build ${{ parameters.configuration }}'
   inputs:
-    script: '"%MSBUILD_PATH%" "build_${{ parameters.arch }}\VLD.sln" /t:restore /t:build /p:Platform=$(platform) /p:Configuration=${{ parameters.configuration }} /m'
+    script: 'msbuild "build_${{ parameters.arch }}\VLD.sln" /t:restore /t:build /p:Platform=$(platform) /p:Configuration=${{ parameters.configuration }} /m'
 
 # Optional: Run tests
 - ${{ if parameters.runTests }}:
