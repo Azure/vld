@@ -26,14 +26,13 @@ steps:
   inputs:
     targetType: 'inline'
     script: |
-      # Map arch to vcvarsArg, cmakeArch, and buildPlatform
+      # Map arch to cmakeArch, buildPlatform, and msbuild host folder
       $arch = "${{ parameters.arch }}"
       switch ($arch) {
-        'x64'   { $vcvarsArg = 'amd64';     $cmakeArch = 'x64';   $buildPlatform = 'x64' }
-        'x86'   { $vcvarsArg = 'amd64_x86'; $cmakeArch = 'Win32'; $buildPlatform = 'Win32' }
-        'arm64' { $vcvarsArg = 'arm64';     $cmakeArch = 'ARM64'; $buildPlatform = 'ARM64' }
+        'x64'   { $cmakeArch = 'x64';   $buildPlatform = 'x64';   $msbuildHost = 'amd64' }
+        'x86'   { $cmakeArch = 'Win32'; $buildPlatform = 'Win32'; $msbuildHost = 'amd64' }
+        'arm64' { $cmakeArch = 'ARM64'; $buildPlatform = 'ARM64'; $msbuildHost = 'arm64' }
       }
-      Write-Host "##vso[task.setvariable variable=vcvarsArg]$vcvarsArg"
       Write-Host "##vso[task.setvariable variable=cmakeArch]$cmakeArch"
       Write-Host "##vso[task.setvariable variable=buildPlatform]$buildPlatform"
       
@@ -49,36 +48,27 @@ steps:
         exit 1
       }
       Write-Host "Found Visual Studio at: $vsPath"
-      Write-Host "##vso[task.setvariable variable=vsPath]$vsPath"
-
-# Run vcvarsall to setup PATH (needed for cmake and msbuild)
-# Note: vcvarsall sets a 'platform' env var, so we use 'buildPlatform' to avoid collision
-# For ARM64: use SysNative\cmd.exe to escape x86 emulation, then capture env vars manually
-- ${{ if eq(parameters.arch, 'arm64') }}:
-  - task: PowerShell@2
-    displayName: 'Setup VC++ Environment ($(vcvarsArg)) via SysNative'
-    inputs:
-      targetType: 'inline'
-      script: |
-        $vcvarsall = "$(vsPath)\VC\Auxiliary\Build\vcvarsall.bat"
-        $vcvarsArg = "$(vcvarsArg)"
-        $nativeCmd = "$env:SystemRoot\SysNative\cmd.exe"
-        
-        Write-Host "Using native cmd: $nativeCmd"
-        Write-Host "Calling: $vcvarsall $vcvarsArg"
-        
-        & $nativeCmd /c "`"$vcvarsall`" $vcvarsArg && set" | ForEach-Object {
-          if ($_ -match '^([^=]+)=(.*)$') {
-            Write-Host "##vso[task.setvariable variable=$($matches[1])]$($matches[2])"
-          }
-        }
-- ${{ if ne(parameters.arch, 'arm64') }}:
-  - task: BatchScript@1
-    displayName: 'Setup VC++ Environment ($(vcvarsArg))'
-    inputs:
-      filename: '$(vsPath)\VC\Auxiliary\Build\vcvarsall.bat'
-      arguments: '$(vcvarsArg)'
-      modifyEnvironment: true
+      
+      # Find CMake bundled with Visual Studio
+      $cmakePath = Join-Path $vsPath "Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
+      if (-not (Test-Path $cmakePath)) {
+        Write-Host "##[error]CMake not found at $cmakePath"
+        exit 1
+      }
+      Write-Host "Using CMake: $cmakePath"
+      Write-Host "##vso[task.setvariable variable=cmakePath]$cmakePath"
+      
+      # Find MSBuild for the correct host architecture
+      $msbuildPath = Join-Path $vsPath "MSBuild\Current\Bin\$msbuildHost\MSBuild.exe"
+      if (-not (Test-Path $msbuildPath)) {
+        $msbuildPath = Join-Path $vsPath "MSBuild\Current\Bin\MSBuild.exe"
+      }
+      if (-not (Test-Path $msbuildPath)) {
+        Write-Host "##[error]MSBuild not found"
+        exit 1
+      }
+      Write-Host "Using MSBuild: $msbuildPath"
+      Write-Host "##vso[task.setvariable variable=msbuildPath]$msbuildPath"
 
 - task: CmdLine@2
   displayName: 'CMake configure'
@@ -86,12 +76,12 @@ steps:
     script: |
       mkdir build_${{ parameters.arch }} 2>nul
       cd build_${{ parameters.arch }}
-      cmake .. -DVLD_USE_MFC=OFF -A $(cmakeArch)
+      "$(cmakePath)" .. -DVLD_USE_MFC=OFF -A $(cmakeArch)
 
 - task: CmdLine@2
   displayName: 'Build ${{ parameters.configuration }}'
   inputs:
-    script: 'msbuild "build_${{ parameters.arch }}\VLD.sln" /t:restore /t:build /p:Platform=$(buildPlatform) /p:Configuration=${{ parameters.configuration }} /m'
+    script: '"$(msbuildPath)" "build_${{ parameters.arch }}\VLD.sln" /t:restore /t:build /p:Platform=$(buildPlatform) /p:Configuration=${{ parameters.configuration }} /m'
 
 # Optional: Run tests
 - ${{ if parameters.runTests }}:
