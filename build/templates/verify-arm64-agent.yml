@@ -1,6 +1,5 @@
 # Template: Verify ARM64 Agent Architecture
-# Ensures the 1ES provisioning script has patched the agent to ARM64.
-# See build/docs/ARM64-AGENT-PATCHING.md for details.
+# Ensures the agent is running as ARM64 native.
 
 steps:
   - task: PowerShell@2
@@ -46,11 +45,6 @@ steps:
                 Write-Host "##[warning]  Agent.Worker.exe:          $archName"
                 Write-Host "##[warning]"
                 Write-Host "##[warning]Expected ARM64 agent but found $archName agent."
-                Write-Host "##[warning]The 1ES provisioning script should have patched the agent to ARM64."
-                Write-Host "##[warning]"
-                Write-Host "##[warning]For troubleshooting, check provisioning script logs at:"
-                Write-Host "##[warning]  https://winbuildpoolarm.blob.core.windows.net/insights-logs-provisioningscriptlogs"
-                Write-Host "##[warning]See also: build/docs/ARM64-AGENT-PATCHING.md"
                 Write-Host "##[warning]"
                 Write-Host "##[warning]Continuing build despite architecture mismatch..."
                 Write-Host "##[warning]============================================================"
