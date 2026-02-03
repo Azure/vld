@@ -32,6 +32,7 @@ steps:
                 default { "Unknown (0x$($machine.ToString('X4')))" }
             }
             Write-Host "Agent.Worker.exe Architecture: $archName"
+            Write-Host "Agent.Worker.exe Path: $workerExe"
             
             if ($archName -ne "ARM64") {
                 Write-Host ""
