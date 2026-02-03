@@ -8,23 +8,11 @@ parameters:
   type: object
   default:
     - name: 'x64'
-      cmakeArch: 'x64'
-      vcvarsArg: 'amd64'
-      platform: 'x64'
       pool: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
-      msbuildPath: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\amd64\MSBuild.exe'
     - name: 'x86'
-      cmakeArch: 'Win32'
-      vcvarsArg: 'amd64_x86'
-      platform: 'Win32'
       pool: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
-      msbuildPath: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\amd64\MSBuild.exe'
     - name: 'arm64'
-      cmakeArch: 'ARM64'
-      vcvarsArg: 'arm64'
-      platform: 'ARM64'
       pool: 'Azure-MessagingStore-WinBuildPoolARM'
-      msbuildPath: 'C:\Program Files\Microsoft Visual Studio\2026\Enterprise\MSBuild\Current\Bin\arm64\MSBuild.exe'
 - name: configurations
   type: object
   default:
@@ -48,10 +36,6 @@ jobs:
       - template: templates/build-arch.yml
         parameters:
           arch: ${{ arch.name }}
-          cmakeArch: ${{ arch.cmakeArch }}
-          vcvarsArg: ${{ arch.vcvarsArg }}
-          platform: ${{ arch.platform }}
-          msbuildPath: ${{ arch.msbuildPath }}
           configuration: ${{ config }}
           runTests: true
           artifactSuffix: '-${{ config }}'

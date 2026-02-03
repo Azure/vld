@@ -5,15 +5,6 @@ parameters:
 - name: arch
   type: string
   values: ['x64', 'x86', 'arm64']
-- name: cmakeArch
-  type: string
-  values: ['x64', 'Win32', 'ARM64']
-- name: vcvarsArg
-  type: string
-- name: platform
-  type: string
-- name: msbuildPath
-  type: string
 - name: configuration
   type: string
   default: 'RelWithDebInfo'
@@ -24,95 +15,84 @@ parameters:
   type: string
   default: ''
 
+# Derive architecture-specific values from arch parameter
+variables:
+  ${{ if eq(parameters.arch, 'x64') }}:
+    cmakeArch: 'x64'
+    vcvarsArg: 'amd64'
+    platform: 'x64'
+  ${{ elseif eq(parameters.arch, 'x86') }}:
+    cmakeArch: 'Win32'
+    vcvarsArg: 'amd64_x86'
+    platform: 'Win32'
+  ${{ elseif eq(parameters.arch, 'arm64') }}:
+    cmakeArch: 'ARM64'
+    vcvarsArg: 'arm64'
+    platform: 'ARM64'
+
 steps:
 # Verify ARM64 agent architecture (provisioning script should have patched it)
 - ${{ if eq(parameters.arch, 'arm64') }}:
   - template: verify-arm64-agent.yml
 
-# Setup VC++ environment for both CMake (compiler detection) and MSBuild
+# Discover Visual Studio and setup VC++ environment
 - task: PowerShell@2
-  displayName: 'Setup VC++ Environment (${{ parameters.vcvarsArg }})'
+  displayName: 'Setup VC++ Environment ($(vcvarsArg))'
   inputs:
     targetType: 'inline'
     script: |
-      # Find Visual Studio installation using vswhere
       $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
       if (-not (Test-Path $vswhere)) {
         Write-Host "##[error]vswhere.exe not found at $vswhere"
         exit 1
       }
       
-      $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-      if (-not $vsPath) {
-        # Try without specific component requirement
-        $vsPath = & $vswhere -latest -products * -property installationPath
-      }
-      
+      $vsPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
       if (-not $vsPath) {
         Write-Host "##[error]Could not find Visual Studio installation"
         exit 1
       }
-      
-      $vcvarsall = Join-Path $vsPath "VC\Auxiliary\Build\vcvarsall.bat"
       Write-Host "Found Visual Studio at: $vsPath"
-      Write-Host "Using vcvarsall.bat: $vcvarsall"
       
+      # Find MSBuild (arch-specific first, then generic)
+      $msbuildPath = Join-Path $vsPath "MSBuild\Current\Bin\${{ parameters.arch }}\MSBuild.exe"
+      if (-not (Test-Path $msbuildPath)) {
+        $msbuildPath = Join-Path $vsPath "MSBuild\Current\Bin\MSBuild.exe"
+      }
+      if (-not (Test-Path $msbuildPath)) {
+        Write-Host "##[error]MSBuild.exe not found"
+        exit 1
+      }
+      Write-Host "##vso[task.setvariable variable=MSBUILD_PATH]$msbuildPath"
+      Write-Host "MSBuild: $msbuildPath"
+      
+      # Setup VC++ environment via vcvarsall
+      $vcvarsall = Join-Path $vsPath "VC\Auxiliary\Build\vcvarsall.bat"
       if (-not (Test-Path $vcvarsall)) {
         Write-Host "##[error]vcvarsall.bat not found at $vcvarsall"
         exit 1
       }
       
-      # Run vcvarsall.bat and capture environment variables
-      $vcvarsArg = "${{ parameters.vcvarsArg }}"
+      $vcvarsArg = "$(vcvarsArg)"
       Write-Host "Calling: `"$vcvarsall`" $vcvarsArg"
-      
       cmd /c "`"$vcvarsall`" $vcvarsArg && set" | ForEach-Object {
         if ($_ -match '^([^=]+)=(.*)$') {
-          $name = $matches[1]
-          $value = $matches[2]
-          Write-Host "##vso[task.setvariable variable=$name]$value"
+          Write-Host "##vso[task.setvariable variable=$($matches[1])]$($matches[2])"
         }
       }
 
 - task: CmdLine@2
-  displayName: 'CMake configure -A ${{ parameters.cmakeArch }}'
+  displayName: 'CMake configure -A $(cmakeArch)'
   inputs:
     script: |
       mkdir build_${{ parameters.arch }} 2>nul
       cd build_${{ parameters.arch }}
-      cmake .. -DVLD_USE_MFC=OFF -A ${{ parameters.cmakeArch }}
+      cmake .. -DVLD_USE_MFC=OFF -A $(cmakeArch)
 
-# Build solution using MSBuild directly
-- task: PowerShell@2
+- task: CmdLine@2
   displayName: 'Build ${{ parameters.configuration }}'
   inputs:
-    targetType: 'inline'
-    script: |
-      # Try the provided msbuildPath first, fall back to vswhere discovery
-      $msbuildPath = "${{ parameters.msbuildPath }}"
-      
-      if (-not (Test-Path $msbuildPath)) {
-        Write-Host "MSBuild not found at $msbuildPath, using vswhere to locate..."
-        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-        if (Test-Path $vswhere) {
-          $vsPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
-          if ($vsPath) {
-            $msbuildPath = Join-Path $vsPath "MSBuild\Current\Bin\${{ parameters.arch }}\MSBuild.exe"
-            if (-not (Test-Path $msbuildPath)) {
-              # Try without arch-specific folder
-              $msbuildPath = Join-Path $vsPath "MSBuild\Current\Bin\MSBuild.exe"
-            }
-          }
-        }
-      }
-      
-      if (-not (Test-Path $msbuildPath)) {
-        Write-Host "##[error]MSBuild.exe not found"
-        exit 1
-      }
-      
-      Write-Host "Using MSBuild: $msbuildPath"
-      & $msbuildPath "build_${{ parameters.arch }}\VLD.sln" /t:restore /t:build /p:Platform=${{ parameters.platform }} /p:Configuration=${{ parameters.configuration }} /m
+    script: '"%MSBUILD_PATH%" "build_${{ parameters.arch }}\VLD.sln" /t:restore /t:build /p:Platform=$(platform) /p:Configuration=${{ parameters.configuration }} /m'
 
 # Optional: Run tests
 - ${{ if parameters.runTests }}:
