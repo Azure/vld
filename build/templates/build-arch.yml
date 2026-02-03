@@ -16,23 +16,20 @@ parameters:
   default: ''
 
 steps:
-# Verify ARM64 agent architecture (provisioning script should have patched it)
-- ${{ if eq(parameters.arch, 'arm64') }}:
-  - template: verify-arm64-agent.yml
-
 # Discover Visual Studio and setup build variables
 - task: PowerShell@2
-  displayName: 'Discover Visual Studio (${{ parameters.arch }})'
+  displayName: 'Setup variables (${{ parameters.arch }})'
   inputs:
     targetType: 'inline'
     script: |
-      # Map arch to cmakeArch, targetPlatform, and msbuild host folder
+      # Map arch to vcvarsArg, cmakeArch, and targetPlatform
       $arch = "${{ parameters.arch }}"
       switch ($arch) {
-        'x64'   { $cmakeArch = 'x64';   $targetPlatform = 'x64';   $msbuildHost = 'amd64' }
-        'x86'   { $cmakeArch = 'Win32'; $targetPlatform = 'Win32'; $msbuildHost = 'amd64' }
-        'arm64' { $cmakeArch = 'ARM64'; $targetPlatform = 'ARM64'; $msbuildHost = 'arm64' }
+        'x64'   { $vcvarsArg = 'amd64';     $cmakeArch = 'x64';   $targetPlatform = 'x64' }
+        'x86'   { $vcvarsArg = 'amd64_x86'; $cmakeArch = 'Win32'; $targetPlatform = 'Win32' }
+        'arm64' { $vcvarsArg = 'arm64';     $cmakeArch = 'ARM64'; $targetPlatform = 'ARM64' }
       }
+      Write-Host "##vso[task.setvariable variable=vcvarsArg]$vcvarsArg"
       Write-Host "##vso[task.setvariable variable=cmakeArch]$cmakeArch"
       Write-Host "##vso[task.setvariable variable=targetPlatform]$targetPlatform"
       
@@ -48,31 +45,15 @@ steps:
         exit 1
       }
       Write-Host "Found Visual Studio at: $vsPath"
-      
-      # Find CMake bundled with Visual Studio
-      $cmakeBinDir = Join-Path $vsPath "Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin"
-      $cmakePath = Join-Path $cmakeBinDir "cmake.exe"
-      $ctestPath = Join-Path $cmakeBinDir "ctest.exe"
-      if (-not (Test-Path $cmakePath)) {
-        Write-Host "##[error]CMake not found at $cmakePath"
-        exit 1
-      }
-      Write-Host "Using CMake: $cmakePath"
-      Write-Host "Using CTest: $ctestPath"
-      Write-Host "##vso[task.setvariable variable=cmakePath]$cmakePath"
-      Write-Host "##vso[task.setvariable variable=ctestPath]$ctestPath"
-      
-      # Find MSBuild for the correct host architecture
-      $msbuildPath = Join-Path $vsPath "MSBuild\Current\Bin\$msbuildHost\MSBuild.exe"
-      if (-not (Test-Path $msbuildPath)) {
-        $msbuildPath = Join-Path $vsPath "MSBuild\Current\Bin\MSBuild.exe"
-      }
-      if (-not (Test-Path $msbuildPath)) {
-        Write-Host "##[error]MSBuild not found"
-        exit 1
-      }
-      Write-Host "Using MSBuild: $msbuildPath"
-      Write-Host "##vso[task.setvariable variable=msbuildPath]$msbuildPath"
+      Write-Host "##vso[task.setvariable variable=vsPath]$vsPath"
+
+# Run vcvarsall to setup PATH for cmake, msbuild, ctest
+- task: BatchScript@1
+  displayName: 'Setup VC++ Environment ($(vcvarsArg))'
+  inputs:
+    filename: '$(vsPath)\VC\Auxiliary\Build\vcvarsall.bat'
+    arguments: '$(vcvarsArg)'
+    modifyEnvironment: true
 
 - task: CmdLine@2
   displayName: 'CMake configure'
@@ -80,19 +61,19 @@ steps:
     script: |
       mkdir build_${{ parameters.arch }} 2>nul
       cd build_${{ parameters.arch }}
-      "$(cmakePath)" .. -DVLD_USE_MFC=OFF -A $(cmakeArch)
+      cmake .. -DVLD_USE_MFC=OFF -A $(cmakeArch)
 
 - task: CmdLine@2
   displayName: 'Build ${{ parameters.configuration }}'
   inputs:
-    script: '"$(msbuildPath)" "build_${{ parameters.arch }}\VLD.sln" /t:restore /t:build /p:Platform=$(targetPlatform) /p:Configuration=${{ parameters.configuration }} /m'
+    script: 'msbuild "build_${{ parameters.arch }}\VLD.sln" /t:restore /t:build /p:Platform=$(targetPlatform) /p:Configuration=${{ parameters.configuration }} /m'
 
 # Optional: Run tests
 - ${{ if parameters.runTests }}:
   - task: CmdLine@2
     displayName: 'Run ctest ${{ parameters.configuration }}'
     inputs:
-      script: '"$(ctestPath)" -C "${{ parameters.configuration }}" --output-on-failure'
+      script: 'ctest -C "${{ parameters.configuration }}" --output-on-failure'
       workingDirectory: 'build_${{ parameters.arch }}'
 
 - task: PublishPipelineArtifact@1
