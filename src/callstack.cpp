@@ -715,14 +715,14 @@ VOID FastCallStack::getStackTrace (UINT32 maxdepth, const context_t& context)
         framePointer = (UINT_PTR*)*framePointer;
     }
 #elif defined(_M_X64)*/
-    UINT32 maxframes = min(62, maxdepth + 10);
+    UINT32 maxframes = (62 < maxdepth + 10) ? 62 : maxdepth + 10;
     UINT_PTR* myFrames = new UINT_PTR[maxframes];
     ZeroMemory(myFrames, sizeof(UINT_PTR) * maxframes);
     ULONG BackTraceHash;
     maxframes = RtlCaptureStackBackTrace(0, maxframes, reinterpret_cast<PVOID*>(myFrames), &BackTraceHash);
     m_hashValue = BackTraceHash;
     UINT32  startIndex = 0;
-    
+
     // Find the frame matching context.fp to skip VLD internal frames
     while (count < maxframes) {
         if (myFrames[count] == 0)
@@ -731,7 +731,7 @@ VOID FastCallStack::getStackTrace (UINT32 maxdepth, const context_t& context)
             startIndex = count;
         count++;
     }
-    
+
     count = startIndex;
     while (count < maxframes) {
         if (myFrames[count] == 0)
