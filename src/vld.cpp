@@ -3088,10 +3088,10 @@ BOOL CaptureContext::IsExcludedModule() {
         PVOID frames[32];
         ULONG hash;
         USHORT frameCount = RtlCaptureStackBackTrace(0, maxframes, frames, &hash);
-        
+
         for (USHORT i = 0; i < frameCount; i++) {
             HMODULE frameModule = GetCallingModule((UINT_PTR)frames[i]);
-            if (frameModule != NULL && 
+            if (frameModule != NULL &&
                 frameModule != hModule &&  // Skip the CRT module we already checked
                 frameModule != g_vld.m_dbghlpBase &&
                 frameModule != g_vld.m_vldBase) {

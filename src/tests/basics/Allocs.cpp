@@ -103,11 +103,11 @@ static const int recursion = 3;
         // Convert wide string to UTF-8 using Windows API
         std::string actualLine;
         if (!wactualLine.empty()) {
-            int size_needed = WideCharToMultiByte(CP_UTF8, 0, wactualLine.c_str(), 
+            int size_needed = WideCharToMultiByte(CP_UTF8, 0, wactualLine.c_str(),
                 static_cast<int>(wactualLine.size()), nullptr, 0, nullptr, nullptr);
             if (size_needed > 0) {
                 actualLine.resize(size_needed);
-                WideCharToMultiByte(CP_UTF8, 0, wactualLine.c_str(), 
+                WideCharToMultiByte(CP_UTF8, 0, wactualLine.c_str(),
                     static_cast<int>(wactualLine.size()), &actualLine[0], size_needed, nullptr, nullptr);
             }
         }

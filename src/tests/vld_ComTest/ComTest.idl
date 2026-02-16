@@ -17,7 +17,7 @@ library ComTestLib
 {
 	importlib("stdole2.tlb");
 	[
-		uuid(B379BB26-80E6-4DCB-AD82-8F46BA81BBCF)		
+		uuid(B379BB26-80E6-4DCB-AD82-8F46BA81BBCF)
 	]
 	coclass MyMath
 	{

@@ -111,11 +111,11 @@ BOOL CMFCExampleDlg::OnInitDialog()
     //  when the application's main window is not a dialog
     SetIcon(m_hIcon, TRUE);         // Set big icon
     SetIcon(m_hIcon, FALSE);        // Set small icon
-    
+
     // TODO: Add extra initialization here
     m_bLeak = TRUE;
     UpdateData(FALSE);
-    
+
     return TRUE;  // return TRUE  unless you set the focus to a control
 }
 
@@ -136,7 +136,7 @@ void CMFCExampleDlg::OnSysCommand(UINT nID, LPARAM lParam)
 //  to draw the icon.  For MFC applications using the document/view model,
 //  this is automatically done for you by the framework.
 
-void CMFCExampleDlg::OnPaint() 
+void CMFCExampleDlg::OnPaint()
 {
     if (IsIconic())
     {

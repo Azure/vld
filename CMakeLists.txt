@@ -42,7 +42,7 @@ endforeach()
 # Use CMAKE_VS_PLATFORM_NAME for reliable ARM64 detection in Visual Studio generator
 # NOTE: This requires Visual Studio generators. For other generators (Ninja, NMake, etc.),
 #       you would need to detect platform using CMAKE_SYSTEM_PROCESSOR and CMAKE_SIZEOF_VOID_P:
-#       - Check CMAKE_SYSTEM_PROCESSOR for "ARM64" or "aarch64" 
+#       - Check CMAKE_SYSTEM_PROCESSOR for "ARM64" or "aarch64"
 #       - Fall back to CMAKE_SIZEOF_VOID_P to distinguish x64 (8 bytes) from Win32 (4 bytes)
 if(DEFINED CMAKE_VS_PLATFORM_NAME)
     if(CMAKE_VS_PLATFORM_NAME STREQUAL "ARM64")
@@ -64,11 +64,11 @@ if(MSVC)
     # Default to DLL runtime for tests (they need it for GetProcAddress tests)
     # VLD core library overrides this to use static runtime
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
-    
+
     # Common compile options - use highest warning level and treat warnings as errors
     add_compile_options(/W4 /WX)
     add_link_options(/WX)
-    
+
     add_compile_definitions(
         _CRT_SECURE_NO_WARNINGS
         _VARIADIC_MAX=10

@@ -34,32 +34,32 @@ class TestIgnoreFunctions : public ::testing::Test
 // these function names in the call stack, so they won't match the IgnoreFunctionsList.
 // Disabling optimization ensures proper stack frames are created.
 #pragma optimize("", off)
-void* GetOSVersion() 
+void* GetOSVersion()
 {
     void* ptr = new char[32];  // 1 allocation
     return ptr;
 }
 
-void* SomeOtherString() 
+void* SomeOtherString()
 {
     void* ptr = new char[32];  // 1 allocation
     return ptr;
 }
 
-void* abcdefg() 
+void* abcdefg()
 {
     void* ptr = new char[32];  // 1 allocation
     return ptr;
 }
 
-void* testOtherString() 
+void* testOtherString()
 {
     void* ptr = new char[32];  // 1 allocation
     return ptr;
 }
 
 // This function is NOT in IgnoreFunctionsList
-void* NotInTheList() 
+void* NotInTheList()
 {
     void* ptr = new char[32];  // 1 allocation - should be detected as leak
     return ptr;

@@ -65,7 +65,7 @@ STDAPI DllInstall(BOOL bInstall, LPCWSTR pszCmdLine)
 	}
 
 	if (bInstall)
-	{	
+	{
 		hr = DllRegisterServer();
 		if (FAILED(hr))
 		{

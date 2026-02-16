@@ -156,7 +156,7 @@ public:
         //  Return Value:
         //
         //    Returns the Iterator after it has been incremented.
-        // 
+        //
         Iterator& operator ++ (int)
         {
             m_node = m_tree->next(m_node);
@@ -177,7 +177,7 @@ public:
         //  Return Value:
         //
         //    Returns the Iterator before it has been incremented.
-        // 
+        //
         Iterator operator ++ ()
         {
             typename Tree<Pair<Tk, Tv> >::node_t *cur = m_node;
