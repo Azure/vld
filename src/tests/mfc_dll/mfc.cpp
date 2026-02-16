@@ -24,7 +24,7 @@
 //
 //		It is very important that this macro appear in each
 //		function, prior to any calls into MFC.  This means that
-//		it must appear as the first statement within the 
+//		it must appear as the first statement within the
 //		function, even before any object variable declarations
 //		as their constructors may generate calls into the MFC
 //		DLL.
@@ -58,7 +58,7 @@ CmfcApp theApp;
 BOOL CmfcApp::InitInstance()
 {
 	CWinApp::InitInstance();
-	
+
 	return TRUE;
 }
 
@@ -75,7 +75,7 @@ int CmfcApp::ExitInstance()
 extern "C" void __declspec(dllexport) MFC_LeakSimple()
 {
 	AFX_MANAGE_STATE(AfxGetStaticModuleState());
-	
+
 	// Attempt to allocate and leak some form of memory
 	CString* str_a = new CString(_T("I am a string in MFC"));
 	CString* str_b = new CString(_T("Another string in MFC"));
@@ -87,7 +87,7 @@ extern "C" void __declspec(dllexport) MFC_LeakSimple()
 extern "C" void __declspec(dllexport) MFC_LeakArray()
 {
 	AFX_MANAGE_STATE(AfxGetStaticModuleState());
-	
+
 	// Attempt to allocate and leak an array of CStrings
 	CString* mystr = new CString[3];
 

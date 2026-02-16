@@ -10,25 +10,25 @@ set(VLD_TEST_INCLUDE_DIRS
 # Common function to set up VLD test targets
 function(add_vld_test TARGET_NAME)
     cmake_parse_arguments(ARG "IS_DLL;USE_MFC;HAS_PCH;NO_UNICODE;NO_TEST;USE_STATIC_CRT;NO_VLD_LINK" "PCH_HEADER" "SOURCES;HEADERS;DEPENDS;DEFINITIONS" ${ARGN})
-    
+
     if(ARG_IS_DLL)
         add_library(${TARGET_NAME} SHARED ${ARG_SOURCES} ${ARG_HEADERS})
     else()
         add_executable(${TARGET_NAME} ${ARG_SOURCES} ${ARG_HEADERS})
     endif()
-    
+
     target_include_directories(${TARGET_NAME} PRIVATE ${VLD_TEST_INCLUDE_DIRS})
-    
+
     # Link to vld (unless NO_VLD_LINK is specified)
     if(NOT ARG_NO_VLD_LINK)
         target_link_libraries(${TARGET_NAME} PRIVATE vld)
     endif()
-    
+
     # Additional dependencies
     if(ARG_DEPENDS)
         target_link_libraries(${TARGET_NAME} PRIVATE ${ARG_DEPENDS})
     endif()
-    
+
     # Definitions
     target_compile_definitions(${TARGET_NAME} PRIVATE
         _VARIADIC_MAX=10
@@ -36,18 +36,18 @@ function(add_vld_test TARGET_NAME)
         $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
         $<$<NOT:$<CONFIG:Debug>>:VLD_FORCE_ENABLE>
     )
-    
+
     # Unicode support (most tests need it)
     if(NOT ARG_NO_UNICODE)
         target_compile_definitions(${TARGET_NAME} PRIVATE UNICODE _UNICODE)
     endif()
-    
+
     if(ARG_DEFINITIONS)
         target_compile_definitions(${TARGET_NAME} PRIVATE ${ARG_DEFINITIONS})
     endif()
-    
+
     target_compile_definitions(${TARGET_NAME} PRIVATE ${VLD_PLATFORM_DEFINE})
-    
+
     # MFC support
     if(ARG_USE_MFC AND VLD_USE_MFC)
         set_target_properties(${TARGET_NAME} PROPERTIES
@@ -55,31 +55,31 @@ function(add_vld_test TARGET_NAME)
         )
         target_compile_definitions(${TARGET_NAME} PRIVATE _AFXDLL)
     endif()
-    
+
     # MSVC settings - DLL runtime is set as default in root CMakeLists.txt
     if(MSVC)
         target_compile_options(${TARGET_NAME} PRIVATE /W3)
-        
+
         # Override to static CRT if requested (needed for some DLLs like vld_dll1/vld_dll2)
         if(ARG_USE_STATIC_CRT)
             set_property(TARGET ${TARGET_NAME} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
         endif()
-        
+
         if(ARG_IS_DLL)
             target_link_options(${TARGET_NAME} PRIVATE /SUBSYSTEM:WINDOWS)
         else()
             target_link_options(${TARGET_NAME} PRIVATE /SUBSYSTEM:CONSOLE)
         endif()
     endif()
-    
+
     # Precompiled headers
     if(ARG_HAS_PCH AND ARG_PCH_HEADER)
         target_precompile_headers(${TARGET_NAME} PRIVATE ${ARG_PCH_HEADER})
     endif()
-    
+
     # Add to tests folder in IDE
     set_target_properties(${TARGET_NAME} PROPERTIES FOLDER "Tests")
-    
+
     # Register with CTest if it's an executable (not a DLL) and not a helper program
     if(NOT ARG_IS_DLL AND NOT ARG_NO_TEST)
         add_test(
@@ -237,16 +237,16 @@ if(VLD_USE_MFC)
         HAS_PCH
         PCH_HEADER mfc_dll/stdafx.h
     )
-    
+
     set_target_properties(test_mfc PROPERTIES
         VS_MFC_FLAG 2
     )
-    
+
     # Module definition file for MFC DLL
     if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/mfc_dll/mfc.def)
         target_sources(test_mfc PRIVATE mfc_dll/mfc.def)
     endif()
-    
+
     # vldmfc - MFC Application test
     add_executable(vldmfc WIN32
         mfc/vldmfc.cpp
@@ -258,10 +258,10 @@ if(VLD_USE_MFC)
         mfc/resource.h
         mfc/StdAfx.h
     )
-    
+
     target_include_directories(vldmfc PRIVATE ${VLD_TEST_INCLUDE_DIRS})
     target_link_libraries(vldmfc PRIVATE vld)
-    
+
     target_compile_definitions(vldmfc PRIVATE
         VLD_FORCE_ENABLE
         _WINDOWS
@@ -271,9 +271,9 @@ if(VLD_USE_MFC)
         $<$<CONFIG:Debug>:_DEBUG>
         $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
     )
-    
+
     target_compile_definitions(vldmfc PRIVATE ${VLD_PLATFORM_DEFINE})
-    
+
     # MFC settings - UseOfMfc=Dynamic corresponds to CMAKE_MFC_FLAG=2
     set_target_properties(vldmfc PROPERTIES
         FOLDER "Tests"
@@ -282,15 +282,15 @@ if(VLD_USE_MFC)
     # CMake's MFC support requires setting this variable before add_executable
     # But since we already added it, we need a workaround using VS generator expression
     set_property(TARGET vldmfc PROPERTY VS_GLOBAL_UseOfMfc "Dynamic")
-    
+
     # MFC requires DLL runtime
     set_property(TARGET vldmfc PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
-    
+
     target_compile_options(vldmfc PRIVATE /W3)
-    
+
     # MFC uses its own entry point - just set subsystem
     target_link_options(vldmfc PRIVATE /SUBSYSTEM:WINDOWS)
-    
+
     target_precompile_headers(vldmfc PRIVATE mfc/StdAfx.h)
 endif()
 
@@ -328,7 +328,7 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_functions_test/ignore_functions_tes
         HEADERS ${IGNORE_FUNCTIONS_TEST_HEADERS}
         DEPENDS gtest
     )
-    
+
     # This test needs its own output subdirectory to avoid vld.ini conflicts with other tests
     set_target_properties(ignore_functions_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/ignore_functions_test"
@@ -337,7 +337,7 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_functions_test/ignore_functions_tes
         RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/bin/RelWithDebInfo/ignore_functions_test"
         RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/bin/MinSizeRel/ignore_functions_test"
     )
-    
+
     # This test requires its own vld.ini with IgnoreFunctionsList
     # Determine dbghelp architecture for copying
     if(VLD_PLATFORM STREQUAL "ARM64")
@@ -347,7 +347,7 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_functions_test/ignore_functions_tes
     else()
         set(DBGHELP_ARCH "x86")
     endif()
-    
+
     add_custom_command(TARGET ignore_functions_test POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/ignore_functions_test/vld.ini"
@@ -427,20 +427,20 @@ endif()
 if(VLD_USE_MFC AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest/ComTest.idl)
     # Find MIDL compiler
     find_program(MIDL_EXECUTABLE midl)
-    
+
     if(MIDL_EXECUTABLE)
         set(COMTEST_IDL ${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest/ComTest.idl)
         set(COMTEST_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/vld_ComTest)
-        
+
         # Generated files from MIDL
         set(COMTEST_GENERATED_H ${COMTEST_GENERATED_DIR}/ComTest_i.h)
         set(COMTEST_GENERATED_C ${COMTEST_GENERATED_DIR}/ComTest_i.c)
         set(COMTEST_GENERATED_P ${COMTEST_GENERATED_DIR}/ComTest_p.c)
         set(COMTEST_GENERATED_TLB ${COMTEST_GENERATED_DIR}/ComTest.tlb)
-        
+
         # Create output directory
         file(MAKE_DIRECTORY ${COMTEST_GENERATED_DIR})
-        
+
         # Determine target environment for MIDL
         if(VLD_PLATFORM STREQUAL "ARM64")
             set(MIDL_ENV "arm64")
@@ -449,7 +449,7 @@ if(VLD_USE_MFC AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest/ComTest.idl)
         else()
             set(MIDL_ENV "win32")
         endif()
-        
+
         # Custom command to run MIDL compiler
         add_custom_command(
             OUTPUT ${COMTEST_GENERATED_H} ${COMTEST_GENERATED_C} ${COMTEST_GENERATED_P} ${COMTEST_GENERATED_TLB}
@@ -468,13 +468,13 @@ if(VLD_USE_MFC AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest/ComTest.idl)
             COMMENT "Compiling IDL file: ComTest.idl"
             VERBATIM
         )
-        
+
         # Custom target for IDL compilation
-        add_custom_target(ComTest_idl DEPENDS 
-            ${COMTEST_GENERATED_H} 
+        add_custom_target(ComTest_idl DEPENDS
+            ${COMTEST_GENERATED_H}
             ${COMTEST_GENERATED_C}
         )
-        
+
         # C++ source files (use PCH)
         set(COMTEST_CPP_SOURCES
             vld_ComTest/ComTest.cpp
@@ -482,7 +482,7 @@ if(VLD_USE_MFC AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest/ComTest.idl)
             vld_ComTest/MyMath.cpp
             vld_ComTest/stdafx.cpp
         )
-        
+
         # C source files (no PCH - they're RPC/proxy stubs)
         # Note: xdlldata.c includes dlldata.c conditionally via _MERGE_PROXYSTUB
         # We only need xdlldata.c and the generated ComTest_i.c
@@ -490,7 +490,7 @@ if(VLD_USE_MFC AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest/ComTest.idl)
             vld_ComTest/xdlldata.c
             ${COMTEST_GENERATED_C}
         )
-        
+
         # COM Test DLL
         add_library(ComTest SHARED
             ${COMTEST_CPP_SOURCES}
@@ -498,23 +498,23 @@ if(VLD_USE_MFC AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest/ComTest.idl)
             vld_ComTest/ComTest.rc
             vld_ComTest/ComTest.def
         )
-        
+
         # Exclude C files from precompiled header
         set_source_files_properties(${COMTEST_C_SOURCES} PROPERTIES
             SKIP_PRECOMPILE_HEADERS ON
         )
-        
+
         # Ensure IDL is compiled before ComTest
         add_dependencies(ComTest ComTest_idl)
-        
-        target_include_directories(ComTest PRIVATE 
+
+        target_include_directories(ComTest PRIVATE
             ${VLD_TEST_INCLUDE_DIRS}
             ${COMTEST_GENERATED_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest
         )
-        
+
         target_link_libraries(ComTest PRIVATE vld)
-        
+
         # Basic definitions - ATL macros are already in stdafx.h
         target_compile_definitions(ComTest PRIVATE
             _WINDOWS
@@ -525,27 +525,27 @@ if(VLD_USE_MFC AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest/ComTest.idl)
             $<$<CONFIG:Debug>:_DEBUG>
             $<$<NOT:$<CONFIG:Debug>>:NDEBUG>
         )
-        
+
         target_compile_definitions(ComTest PRIVATE ${VLD_PLATFORM_DEFINE})
-        
+
         # MFC settings
         set_target_properties(ComTest PROPERTIES
             FOLDER "Tests"
             VS_GLOBAL_KEYWORD "MFCProj"
         )
         set_property(TARGET ComTest PROPERTY VS_GLOBAL_UseOfMfc "Dynamic")
-        
+
         # MFC requires DLL runtime
         set_property(TARGET ComTest PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
-        
+
         target_compile_options(ComTest PRIVATE /W3)
         target_link_options(ComTest PRIVATE /SUBSYSTEM:WINDOWS)
-        
+
         # Precompiled header for C++ files only
-        target_precompile_headers(ComTest PRIVATE 
+        target_precompile_headers(ComTest PRIVATE
             "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest/stdafx.h>"
         )
-        
+
         message(STATUS "COM Test enabled - MIDL found at: ${MIDL_EXECUTABLE}")
     else()
         message(WARNING "COM Test skipped - MIDL compiler not found")

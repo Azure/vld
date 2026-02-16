@@ -1,5 +1,5 @@
 // Multi-threaded TLS initialization stress test
-// 
+//
 // This test spawns multiple threads that simultaneously perform their first
 // allocations, stressing VLD's per-thread TLS (Thread Local Storage) initialization.
 //
@@ -36,27 +36,27 @@ volatile LONG g_goFlag = 0;
 DWORD WINAPI ThreadFunc(LPVOID param)
 {
     int threadId = (int)(INT_PTR)param;
-    
+
     // Signal we're ready
     InterlockedIncrement(&g_readyCount);
-    
+
     // Wait for all threads to be ready
     while (g_goFlag == 0) {
         Sleep(0);
     }
-    
+
     // This is the first allocation in this thread
     // Tests VLD's handling of concurrent TLS initialization
     void* ptr = malloc(100);
-    
+
     // Do more allocations to stress test
     for (int i = 0; i < 10; i++) {
         void* temp = malloc(i * 10 + 1);
         free(temp);
     }
-    
+
     free(ptr);
-    
+
     return 0;
 }
 
@@ -66,9 +66,9 @@ int main()
     printf("===============================\n");
     printf("Testing VLD's handling of concurrent TLS initialization.\n");
     printf("Creating %d threads that will all allocate simultaneously...\n\n", NUM_THREADS);
-    
+
     HANDLE threads[NUM_THREADS];
-    
+
     // Create all threads (they'll wait at barrier)
     for (int i = 0; i < NUM_THREADS; i++) {
         threads[i] = CreateThread(NULL, 0, ThreadFunc, (LPVOID)(INT_PTR)i, 0, NULL);
@@ -77,20 +77,20 @@ int main()
             return 1;
         }
     }
-    
+
     // Wait for all threads to be ready
     while (g_readyCount < NUM_THREADS) {
         Sleep(1);
     }
-    
+
     printf("All threads ready, releasing them simultaneously...\n");
-    
+
     // Release all threads at once to maximize race condition
     g_goFlag = 1;
-    
+
     // Wait for all threads to complete
     DWORD result = WaitForMultipleObjects(NUM_THREADS, threads, TRUE, 30000); // 30 second timeout
-    
+
     if (result == WAIT_TIMEOUT) {
         printf("\nFAILED: Threads deadlocked or hung (likely infinite recursion)\n");
         printf("This indicates the TLS initialization bug is present.\n");
@@ -102,12 +102,12 @@ int main()
         printf("FAILED: WaitForMultipleObjects returned unexpected result: 0x%X\n", result);
         return 1;
     }
-    
+
     // Clean up
     for (int i = 0; i < NUM_THREADS; i++) {
         CloseHandle(threads[i]);
     }
-    
+
     printf("\nTest PASSED: TLS initialization is properly protected from reentrancy\n");
     return 0;
 }

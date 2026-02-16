@@ -28,7 +28,7 @@
 #include <afxmdiframewndex.h>
 
 #ifndef _AFX_NO_OLE_SUPPORT
-#include <afxdisp.h> 
+#include <afxdisp.h>
 #endif // _AFX_NO_OLE_SUPPORT
 
 #define ATL_NO_ASSERT_ON_DESTROY_NONEXISTENT_WINDOW

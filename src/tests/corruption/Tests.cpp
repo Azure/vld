@@ -34,7 +34,7 @@ void TestAllocationMismatch_newVec_free()
 
 void TestHeapMismatch()
 {
-	HANDLE test_heap = HeapCreate(HEAP_GENERATE_EXCEPTIONS | HEAP_CREATE_ENABLE_EXECUTE, 
+	HANDLE test_heap = HeapCreate(HEAP_GENERATE_EXCEPTIONS | HEAP_CREATE_ENABLE_EXECUTE,
 									0, // initialize reserved size;
 									0); // maximum size can grow
 	HeapSetInformation(test_heap, HeapEnableTerminationOnCorruption, NULL, 0);
@@ -47,6 +47,6 @@ void TestHeapMismatch()
 	void* vptr = HeapAlloc(test_heap, 0, 56);
 	// Free this using the WRONG heap!
 	HeapFree( default_heap, 0, vptr);
-	
+
 	HeapDestroy(test_heap);
 }

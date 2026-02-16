@@ -1,6 +1,6 @@
 // deep_callstack_test.cpp
 // Test to expose crash caused by excessively long stack traces (PR #37)
-// 
+//
 // PROBLEM:
 // VLD's Print() function in utility.cpp uses wcstombs_s() with _TRUNCATE to
 // convert Unicode messages to ANSI. The output buffer is MAXMESSAGELENGTH=5119
@@ -11,7 +11,7 @@
 // TEST STRATEGY:
 // This test creates deeply nested function calls to generate long call stacks,
 // then triggers a memory leak to force VLD to print the full stack trace.
-// 
+//
 // BUFFER SIZE CALCULATION:
 // - MAXMESSAGELENGTH = 5119 bytes (defined in utility.cpp line ~896)
 // - Each stack frame prints approximately:
@@ -120,7 +120,7 @@ __declspec(noinline) void recursive_func_19(int depth) {
 // Test with configurable recursion depth
 // Each "cycle" through the 20 functions adds 20 stack frames
 // depth=300 means 300 total frames (15 cycles through the 20 functions)
-// 
+//
 // Why 300? See calculation in file header:
 // - 300 frames × ~70 chars/frame = ~21KB output
 // - MAXMESSAGELENGTH = 5119 bytes
@@ -128,23 +128,23 @@ __declspec(noinline) void recursive_func_19(int depth) {
 void test_deep_callstack(int total_depth) {
     printf("Testing with call stack depth: %d\n", total_depth);
     printf("This will generate a stack trace with ~%d frames\n", total_depth);
-    
+
     // Configure VLD to capture all frames
     // MaxTraceFrames is the key - set it high to capture deep stacks
     VLDSetOptions(VLD_OPT_TRACE_INTERNAL_FRAMES, (UINT)total_depth + 50, 64);
-    
+
     // Start the recursive chain
     recursive_func_0(total_depth);
-    
+
     // Force VLD to report the leak now
     printf("\n=== Forcing VLD leak report (this may crash if bug exists) ===\n");
     fflush(stdout);
-    
+
     int leaks = (int)VLDGetLeaksCount();
     printf("VLD reports %d leak(s)\n", leaks);
-    
+
     VLDReportLeaks();
-    
+
     printf("=== VLD report complete (no crash!) ===\n");
 }
 
@@ -153,21 +153,21 @@ int main(int argc, char* argv[]) {
     // This generates ~21KB of output, well exceeding MAXMESSAGELENGTH (5119 bytes)
     // See file header for detailed calculation
     int depth = 300;
-    
+
     if (argc > 1) {
         depth = atoi(argv[1]);
         if (depth < 10) depth = 10;
         if (depth > 1000) depth = 1000; // Cap to avoid actual stack overflow
     }
-    
+
     printf("Deep Call Stack Test for VLD\n");
     printf("=============================\n");
     printf("This test creates deeply nested function calls to stress-test\n");
     printf("VLD's Print() function with excessively long stack trace messages.\n");
     printf("If PR #37's bug exists, this test will crash.\n\n");
-    
+
     test_deep_callstack(depth);
-    
+
     printf("\nTest completed successfully!\n");
     return 0; // Return 0 = success (VLD handled long stack trace without crash)
 }
