@@ -1,0 +1,20 @@
+# By default, enforce CRLF line-endings on all text files
+* text=auto eol=crlf
+*.c text eol=crlf
+*.cc text eol=crlf
+*.cpp text eol=crlf
+*.cxx text eol=crlf
+*.h text eol=crlf
+*.hpp text eol=crlf
+*.hxx text eol=crlf
+*.txt text eol=crlf
+
+# Visual Studio
+*.sln eol=crlf
+*.slnx eol=crlf
+*.vcxproj eol=crlf
+*.vcxproj.filters eol=crlf
+*.rc eol=crlf
+*.rc2 eol=crlf
+*.props eol=crlf
+*.natvis eol=crlf
