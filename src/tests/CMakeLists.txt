@@ -637,4 +637,40 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_modules_getaddrinfo_test/ignore_mod
             "$<TARGET_FILE_DIR:ignore_modules_getaddrinfo_test>/dbghelp.dll"
         COMMENT "Copying ignore_modules_getaddrinfo_test vld.ini, VLD DLL, and dbghelp.dll"
     )
+
+    # getaddrinfo_leaks_test - Counterpart to ignore_modules_getaddrinfo_test.
+    # Proves that getaddrinfo+freeaddrinfo produces system DLL false-positive
+    # leaks WITHOUT IgnoreModulesList. This validates that the suppression in
+    # ignore_modules_getaddrinfo_test is actually doing real work.
+    add_executable(getaddrinfo_leaks_test
+        getaddrinfo_leaks_test/getaddrinfo_leaks_test.cpp
+    )
+    target_link_libraries(getaddrinfo_leaks_test PRIVATE
+        gtest
+        vld
+    )
+    target_include_directories(getaddrinfo_leaks_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/src"
+    )
+
+    set_target_properties(getaddrinfo_leaks_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/getaddrinfo_leaks_test"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin/Debug/getaddrinfo_leaks_test"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin/Release/getaddrinfo_leaks_test"
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/bin/RelWithDebInfo/getaddrinfo_leaks_test"
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/bin/MinSizeRel/getaddrinfo_leaks_test"
+    )
+
+    add_custom_command(TARGET getaddrinfo_leaks_test POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/getaddrinfo_leaks_test/vld.ini"
+            "$<TARGET_FILE_DIR:getaddrinfo_leaks_test>/vld.ini"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:vld>"
+            "$<TARGET_FILE_DIR:getaddrinfo_leaks_test>/$<TARGET_FILE_NAME:vld>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/setup/dbghelp/${DBGHELP_ARCH}/dbghelp.dll"
+            "$<TARGET_FILE_DIR:getaddrinfo_leaks_test>/dbghelp.dll"
+        COMMENT "Copying getaddrinfo_leaks_test vld.ini, VLD DLL, and dbghelp.dll"
+    )
 endif()
