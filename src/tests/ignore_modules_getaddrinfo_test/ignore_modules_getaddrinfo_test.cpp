@@ -14,7 +14,8 @@
 //
 // This test verifies that adding the common leaking system DLLs to
 // IgnoreModulesList suppresses these false positives while
-// getaddrinfo+freeaddrinfo usage remains correct.
+// getaddrinfo+freeaddrinfo usage remains correct, and that REAL leaks
+// (forgetting to call freeaddrinfo) are still reported.
 
 #include <gtest/gtest.h>
 #include <WinSock2.h>
@@ -76,6 +77,54 @@ TEST_F(TestIgnoreModulesGetAddrInfo, GetAddrInfoWithFreeHasNoLeaks)
         << "in IgnoreModulesList, but VLD reported "
         << leaks << " leak(s). If a new system DLL is leaking, add it to "
         << "IgnoreModulesList in vld.ini for this test.";
+}
+
+// Test: A real CRT leak (malloc without free) from user code must still be
+// reported even when IgnoreModulesList is configured and getaddrinfo has
+// been called. This is the critical safety check: IgnoreModulesList must
+// NOT suppress real application leaks.
+//
+// Note: VLD cannot detect a missing freeaddrinfo call because WS2_32.dll
+// allocates the addrinfo result via native HeapAlloc (not CRT malloc),
+// which VLD does not track. However, CRT allocations from user code (the
+// vast majority of application memory) ARE tracked, and IgnoreModulesList
+// must not interfere with those.
+TEST_F(TestIgnoreModulesGetAddrInfo, UserCodeLeaksAreStillReportedWithIgnoreModules)
+{
+    // Trigger system DLL loading via getaddrinfo first (warm up).
+    {
+        struct addrinfo hints;
+        struct addrinfo* warmup = NULL;
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        hints.ai_protocol = IPPROTO_TCP;
+        int rc = getaddrinfo("localhost", "80", &hints, &warmup);
+        if (rc == 0 && warmup != NULL)
+            freeaddrinfo(warmup);
+    }
+
+    // Clear any leaks from warmup.
+    VLDMarkAllLeaksAsReported();
+
+    int leaks_before = static_cast<int>(VLDGetLeaksCount());
+    ASSERT_EQ(0, leaks_before);
+
+    // Simulate a real application bug: allocate memory and forget to free it.
+    // This allocation comes from the test exe (not from any ignored module),
+    // so VLD must report it.
+    volatile void* leaked = malloc(128);
+    ASSERT_NE(static_cast<volatile void*>(NULL), leaked);
+
+    int leaks = static_cast<int>(VLDGetLeaksCount());
+    EXPECT_EQ(1, leaks)
+        << "Expected exactly 1 leak from malloc without free, but VLD "
+        << "reported " << leaks << ". IgnoreModulesList must NOT suppress "
+        << "real application leaks from user code.";
+
+    // Clean up so VLD exits cleanly.
+    VLDMarkAllLeaksAsReported();
+    free((void*)leaked);
 }
 
 int main(int argc, char** argv)
