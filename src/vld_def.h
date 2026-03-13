@@ -43,6 +43,7 @@
 #define VLD_OPT_VALIDATE_HEAPFREE       0x2000 //   If set, VLD verifies and reports heap consistency for HeapFree calls.
 #define VLD_OPT_SKIP_CRTSTARTUP_LEAKS   0x4000 //   If set, VLD skip crt srtartup memory leaks.
 #define VLD_OPT_IGNORE_FUNCTIONS        0x8000 //   If set, VLD skips the defined functions in IgnoreFunctionsList. 
+#define VLD_OPT_IGNORE_MODULES         0x10000 //   If set, VLD excludes the modules listed in IgnoreModulesList.
 
 #define VLD_RPTHOOK_INSTALL  0
 #define VLD_RPTHOOK_REMOVE   1

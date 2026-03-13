@@ -552,4 +552,89 @@ if(VLD_USE_MFC AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/vld_ComTest/ComTest.idl)
     endif()
 endif()
 
+# ============================================================================
+# Ignore modules DLL - Test DLL that intentionally leaks (does NOT link VLD)
+# ============================================================================
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_modules_dll/ignore_modules_dll.cpp)
+    add_vld_test(ignore_modules_dll
+        IS_DLL
+        NO_VLD_LINK
+        NO_UNICODE
+        SOURCES
+            ignore_modules_dll/ignore_modules_dll.cpp
+        HEADERS
+            ignore_modules_dll/ignore_modules_dll.h
+        DEFINITIONS IGNORE_MODULES_DLL_EXPORTS
+    )
+endif()
 
+# ============================================================================
+# Ignore modules test - Verifies IgnoreModulesList suppresses module leaks
+# ============================================================================
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_modules_test/ignore_modules_test.cpp)
+    add_vld_test(ignore_modules_test
+        SOURCES
+            ignore_modules_test/ignore_modules_test.cpp
+        DEPENDS gtest
+    )
+
+    # This test needs its own output subdirectory for its custom vld.ini
+    set_target_properties(ignore_modules_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/ignore_modules_test"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin/Debug/ignore_modules_test"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin/Release/ignore_modules_test"
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/bin/RelWithDebInfo/ignore_modules_test"
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/bin/MinSizeRel/ignore_modules_test"
+    )
+
+    add_custom_command(TARGET ignore_modules_test POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/ignore_modules_test/vld.ini"
+            "$<TARGET_FILE_DIR:ignore_modules_test>/vld.ini"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:vld>"
+            "$<TARGET_FILE_DIR:ignore_modules_test>/$<TARGET_FILE_NAME:vld>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/setup/dbghelp/${DBGHELP_ARCH}/dbghelp.dll"
+            "$<TARGET_FILE_DIR:ignore_modules_test>/dbghelp.dll"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:ignore_modules_dll>"
+            "$<TARGET_FILE_DIR:ignore_modules_test>/$<TARGET_FILE_NAME:ignore_modules_dll>"
+        COMMENT "Copying ignore_modules_test vld.ini, VLD DLL, dbghelp.dll, and test DLL"
+    )
+
+    add_dependencies(ignore_modules_test ignore_modules_dll)
+endif()
+
+# ============================================================================
+# Ignore modules getaddrinfo test - Verifies rasadhlp.dll suppression
+# ============================================================================
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_modules_getaddrinfo_test/ignore_modules_getaddrinfo_test.cpp)
+    add_vld_test(ignore_modules_getaddrinfo_test
+        SOURCES
+            ignore_modules_getaddrinfo_test/ignore_modules_getaddrinfo_test.cpp
+        DEPENDS gtest
+    )
+
+    # This test needs its own output subdirectory for its custom vld.ini
+    set_target_properties(ignore_modules_getaddrinfo_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/ignore_modules_getaddrinfo_test"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin/Debug/ignore_modules_getaddrinfo_test"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin/Release/ignore_modules_getaddrinfo_test"
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/bin/RelWithDebInfo/ignore_modules_getaddrinfo_test"
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/bin/MinSizeRel/ignore_modules_getaddrinfo_test"
+    )
+
+    add_custom_command(TARGET ignore_modules_getaddrinfo_test POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/ignore_modules_getaddrinfo_test/vld.ini"
+            "$<TARGET_FILE_DIR:ignore_modules_getaddrinfo_test>/vld.ini"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:vld>"
+            "$<TARGET_FILE_DIR:ignore_modules_getaddrinfo_test>/$<TARGET_FILE_NAME:vld>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/setup/dbghelp/${DBGHELP_ARCH}/dbghelp.dll"
+            "$<TARGET_FILE_DIR:ignore_modules_getaddrinfo_test>/dbghelp.dll"
+        COMMENT "Copying ignore_modules_getaddrinfo_test vld.ini, VLD DLL, and dbghelp.dll"
+    )
+endif()

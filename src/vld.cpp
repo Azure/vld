@@ -346,6 +346,7 @@ VisualLeakDetector::VisualLeakDetector ()
 
     // Initialize configuration options and related private data.
     _wcsnset_s(m_forcedModuleList, MAXMODULELISTLENGTH, '\0', _TRUNCATE);
+    _wcsnset_s(m_ignoreModuleList, MAXIGNOREMODULELISTLENGTH, '\0', _TRUNCATE);
 
     m_maxDataDump    = 0xffffffff;
     m_maxTraceFrames = 0xffffffff;
@@ -897,6 +898,16 @@ VOID VisualLeakDetector::attachToLoadedModules (ModuleSet *newmodules)
                     }
                 }
             }
+
+            // IgnoreModulesList overrides all other inclusion logic. If a module
+            // name appears in the ignore list, it is always excluded regardless
+            // of ForceIncludeModules or whether it imports VLD.
+            if ((m_options & VLD_OPT_IGNORE_MODULES) != 0)
+            {
+                if (wcsstr(m_ignoreModuleList, modulename) != NULL) {
+                    moduleFlags |= VLD_MODULE_EXCLUDED | VLD_MODULE_IGNORED;
+                }
+            }
         }
         if ((moduleFlags & VLD_MODULE_EXCLUDED) == 0 &&
             !(moduleFlags & VLD_MODULE_SYMBOLSLOADED) || (moduleimageinfo.SymType == SymExport)) {
@@ -1176,6 +1187,14 @@ VOID VisualLeakDetector::configure ()
         m_forcedModuleList[0] = '\0';
     else
         m_options |= VLD_OPT_MODULE_LIST_INCLUDE;
+
+    // Read the ignore module list.
+    LoadStringOption(L"IgnoreModulesList", m_ignoreModuleList, MAXIGNOREMODULELISTLENGTH, inipath);
+    _wcslwr_s(m_ignoreModuleList, MAXIGNOREMODULELISTLENGTH);
+    if (wcscmp(m_ignoreModuleList, L"") == 0)
+        m_ignoreModuleList[0] = '\0';
+    else
+        m_options |= VLD_OPT_IGNORE_MODULES;
 
     // Read the ignore function list.
     LoadStringOption(L"IgnoreFunctionsList", m_ignoreFunctionsList, MAXIGNOREFUNCTIONLISTLENGTH, inipath);
@@ -1699,6 +1718,9 @@ VOID VisualLeakDetector::reportConfig ()
     }
     if (m_options & VLD_OPT_IGNORE_FUNCTIONS) {
         Report(L"    Ignorning these functions from leak detection: %s\n", m_ignoreFunctionsList);
+    }
+    if (m_options & VLD_OPT_IGNORE_MODULES) {
+        Report(L"    Ignoring these modules from leak detection: %s\n", m_ignoreModuleList);
     }
 }
 
@@ -2392,6 +2414,65 @@ bool VisualLeakDetector::isModuleExcluded(UINT_PTR address)
     if (moduleit != g_vld.m_loadedModules->end())
         return (*moduleit).flags & VLD_MODULE_EXCLUDED ? true : false;
     return false;
+}
+
+// isModuleIgnored - Checks if an address falls within a module that was
+//   explicitly listed in IgnoreModulesList. This is distinct from
+//   isModuleExcluded which also covers ForceIncludeModules exclusions.
+//
+//   When a DLL is loaded dynamically (via LoadLibrary), there is a race
+//   condition where EnumerateLoadedModulesW64 may not see the DLL yet
+//   during RefreshModules. PatchCurrentModule patches the DLL's IAT so
+//   allocations are tracked, but the module may not be in m_loadedModules.
+//   To handle this, if the address is not found in m_loadedModules, we
+//   fall back to resolving the module name from the address and checking
+//   it against m_ignoreModuleList directly.
+bool VisualLeakDetector::isModuleIgnored(UINT_PTR address)
+{
+    if ((g_vld.m_options & VLD_OPT_IGNORE_MODULES) == 0)
+        return false;
+
+    // First try the fast path: look up the address in the loaded modules set.
+    {
+        moduleinfo_t         moduleinfo;
+        ModuleSet::Iterator  moduleit;
+        moduleinfo.addrLow  = address;
+        moduleinfo.addrHigh = address + 1024;
+        moduleinfo.flags = 0;
+
+        CriticalSectionLocker<> cs(g_vld.m_modulesLock);
+        moduleit = g_vld.m_loadedModules->find(moduleinfo);
+        if (moduleit != g_vld.m_loadedModules->end()) {
+            return ((*moduleit).flags & VLD_MODULE_IGNORED) != 0;
+        }
+    }
+
+    // Slow path: the module was not found in m_loadedModules (likely because
+    // it was loaded dynamically and EnumerateLoadedModulesW64 has not seen
+    // it yet). Resolve the module name from the address and check against
+    // the ignore list directly.
+    HMODULE hModule = NULL;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            (LPCWSTR)address, &hModule) || hModule == NULL) {
+        return false;
+    }
+
+    WCHAR modulePath[MAX_PATH];
+    if (GetModuleFileNameW(hModule, modulePath, MAX_PATH) == 0) {
+        return false;
+    }
+
+    // Extract filename + extension and lowercase it to match m_ignoreModuleList.
+    WCHAR filename[_MAX_FNAME];
+    WCHAR extension[_MAX_EXT];
+    _wsplitpath_s(modulePath, NULL, 0, NULL, 0, filename, _MAX_FNAME, extension, _MAX_EXT);
+
+    WCHAR moduleName[_MAX_FNAME + _MAX_EXT];
+    wcscpy_s(moduleName, filename);
+    wcscat_s(moduleName, extension);
+    _wcslwr_s(moduleName);
+
+    return wcsstr(g_vld.m_ignoreModuleList, moduleName) != NULL;
 }
 
 
@@ -3095,6 +3176,15 @@ BOOL CaptureContext::IsExcludedModule() {
                 frameModule != hModule &&  // Skip the CRT module we already checked
                 frameModule != g_vld.m_dbghlpBase &&
                 frameModule != g_vld.m_vldBase) {
+                // If this frame is in a module explicitly listed in
+                // IgnoreModulesList, exclude the entire allocation. This
+                // check must come before ShouldReportLeaksForModule because
+                // a calling module higher in the stack might have leak
+                // reporting enabled, but the allocation originated from
+                // the ignored module.
+                if (g_vld.isModuleIgnored((UINT_PTR)frameModule)) {
+                    return TRUE;
+                }
                 // Check if this module should have leaks reported
                 if (ShouldReportLeaksForModule(frameModule)) {
                     // Found a user module in the call chain - don't exclude this allocation

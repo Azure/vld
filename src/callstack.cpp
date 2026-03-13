@@ -308,6 +308,14 @@ bool CallStack::isCrtStartupAlloc()
         // Try to get the source file and line number associated with
         // this program counter address.
         SIZE_T programCounter = (*this)[frame];
+
+        // Check if this frame is in a module listed in IgnoreModulesList.
+        // This does not require symbol resolution and catches leaks from
+        // modules whose internal functions have no exported names.
+        if (VisualLeakDetector::isModuleIgnored(programCounter)) {
+            return true;
+        }
+
         DWORD64 displacement64;
         LPCWSTR functionName = getFunctionName(programCounter, displacement64, (SYMBOL_INFO*)&symbolBuffer, locker);
 
