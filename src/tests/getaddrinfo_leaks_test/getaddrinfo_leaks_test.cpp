@@ -75,6 +75,72 @@ TEST_F(TestGetAddrInfoLeaks, GetAddrInfoWithFreeStillProducesSystemDllLeaks)
     VLDMarkAllLeaksAsReported();
 }
 
+// Test: Calling getaddrinfo WITHOUT freeaddrinfo produces MORE leaks than
+// calling with freeaddrinfo. This proves VLD detects the real leak from
+// the missing freeaddrinfo call, not just system DLL false positives.
+//
+// After the first test, system DLL one-time initialization is complete.
+// So any additional leaks in a second getaddrinfo call come from per-call
+// allocations that freeaddrinfo would normally clean up.
+TEST_F(TestGetAddrInfoLeaks, MissingFreeAddrInfoProducesMoreLeaks)
+{
+    // Warm up: trigger system DLL loading and mark those leaks.
+    {
+        struct addrinfo hints;
+        struct addrinfo* warmup = NULL;
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        hints.ai_protocol = IPPROTO_TCP;
+        int rc = getaddrinfo("localhost", "80", &hints, &warmup);
+        if (rc == 0 && warmup != NULL)
+            freeaddrinfo(warmup);
+    }
+    VLDMarkAllLeaksAsReported();
+
+    // Baseline: call getaddrinfo WITH freeaddrinfo.
+    int leaks_with_free;
+    {
+        struct addrinfo hints;
+        struct addrinfo* result = NULL;
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        hints.ai_protocol = IPPROTO_TCP;
+        int rc = getaddrinfo("localhost", "80", &hints, &result);
+        ASSERT_EQ(0, rc);
+        ASSERT_NE(static_cast<struct addrinfo*>(NULL), result);
+        freeaddrinfo(result);
+        leaks_with_free = static_cast<int>(VLDGetLeaksCount());
+    }
+    VLDMarkAllLeaksAsReported();
+
+    // Test: call getaddrinfo WITHOUT freeaddrinfo.
+    int leaks_without_free;
+    {
+        struct addrinfo hints;
+        struct addrinfo* leaked_result = NULL;
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        hints.ai_protocol = IPPROTO_TCP;
+        int rc = getaddrinfo("localhost", "80", &hints, &leaked_result);
+        ASSERT_EQ(0, rc);
+        ASSERT_NE(static_cast<struct addrinfo*>(NULL), leaked_result);
+        // Intentionally NOT calling freeaddrinfo(leaked_result).
+        leaks_without_free = static_cast<int>(VLDGetLeaksCount());
+    }
+
+    EXPECT_GT(leaks_without_free, leaks_with_free)
+        << "Expected more leaks when freeaddrinfo is NOT called. "
+        << "Leaks with freeaddrinfo: " << leaks_with_free
+        << ", leaks without freeaddrinfo: " << leaks_without_free
+        << ". VLD should detect the missing freeaddrinfo as an "
+        << "additional tracked allocation.";
+
+    VLDMarkAllLeaksAsReported();
+}
+
 int main(int argc, char** argv)
 {
     ::testing::InitGoogleTest(&argc, argv);

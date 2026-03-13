@@ -673,4 +673,5 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_modules_getaddrinfo_test/ignore_mod
             "$<TARGET_FILE_DIR:getaddrinfo_leaks_test>/dbghelp.dll"
         COMMENT "Copying getaddrinfo_leaks_test vld.ini, VLD DLL, and dbghelp.dll"
     )
+    add_test(NAME getaddrinfo_leaks_test COMMAND getaddrinfo_leaks_test WORKING_DIRECTORY $<TARGET_FILE_DIR:getaddrinfo_leaks_test>)
 endif()

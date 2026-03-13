@@ -26,3 +26,4 @@ src/bin/vld.ini
 *.VC.db
 *.aps
 .vs/
+cmake/
