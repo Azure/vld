@@ -8,9 +8,9 @@ parameters:
   type: object
   default:
     - name: 'x64'
-      pool: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
+      pool: 'Azure-MessagingStore-WinBuildPoolVS2022_1'
     - name: 'x86'
-      pool: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
+      pool: 'Azure-MessagingStore-WinBuildPoolVS2022_1'
     - name: 'arm64'
       pool: 'Azure-MessagingStore-WinBuildPoolARM'
 - name: configurations
