@@ -1183,10 +1183,7 @@ VOID VisualLeakDetector::configure ()
     // Read the force-include module list.
     LoadStringOption(L"ForceIncludeModules", m_forcedModuleList, MAXMODULELISTLENGTH, inipath);
     _wcslwr_s(m_forcedModuleList, MAXMODULELISTLENGTH);
-    // Empty or "*" means no forced inclusion/exclusion: track all modules
-    // that import VLD, and let the normal stack-walk logic decide for others.
-    // Only enable include-list mode when specific modules are listed.
-    if (wcscmp(m_forcedModuleList, L"*") == 0 || wcscmp(m_forcedModuleList, L"") == 0)
+    if (wcscmp(m_forcedModuleList, L"*") == 0)
         m_forcedModuleList[0] = '\0';
     else
         m_options |= VLD_OPT_MODULE_LIST_INCLUDE;
