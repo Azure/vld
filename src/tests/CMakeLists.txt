@@ -674,10 +674,8 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_modules_getaddrinfo_test/ignore_mod
         COMMENT "Copying getaddrinfo_leaks_test vld.ini, VLD DLL, and dbghelp.dll"
     )
     add_test(NAME getaddrinfo_leaks_test COMMAND getaddrinfo_leaks_test WORKING_DIRECTORY $<TARGET_FILE_DIR:getaddrinfo_leaks_test>)
-    # VLD allocation tracking in these tests depends on Debug-mode stack frames.
-    # In RelWithDebInfo/Release, compiler optimizations change calling patterns
-    # and VLD cannot reliably track system DLL allocations from getaddrinfo.
-    set_tests_properties(getaddrinfo_leaks_test PROPERTIES CONFIGURATIONS "Debug")
+    # In optimized builds (RelWithDebInfo/Release), VLD cannot reliably track
+    # system DLL allocations. The test uses GTEST_SKIP to handle this gracefully.
 
     # getaddrinfo_missing_free_test - Proves VLD detects when application code
     # calls getaddrinfo without a matching freeaddrinfo. Runs in its own
@@ -714,5 +712,6 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_modules_getaddrinfo_test/ignore_mod
         COMMENT "Copying getaddrinfo_missing_free_test vld.ini, VLD DLL, and dbghelp.dll"
     )
     add_test(NAME getaddrinfo_missing_free_test COMMAND getaddrinfo_missing_free_test WORKING_DIRECTORY $<TARGET_FILE_DIR:getaddrinfo_missing_free_test>)
-    set_tests_properties(getaddrinfo_missing_free_test PROPERTIES CONFIGURATIONS "Debug")
+    # In optimized builds (RelWithDebInfo/Release), VLD cannot reliably track
+    # system DLL allocations. The test uses GTEST_SKIP to handle this gracefully.
 endif()
