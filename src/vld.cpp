@@ -1797,8 +1797,7 @@ SIZE_T VisualLeakDetector::getLeaksCount (heapinfo_t* heapinfo, DWORD threadId)
         }
 
         if (m_options & VLD_OPT_SKIP_CRTSTARTUP_LEAKS) {
-            // Check for crt startup allocations
-            if (info->callStack && info->callStack->isCrtStartupAlloc()) {
+            if (info->callStack && info->callStack->isLeakSuppressed()) {
                 info->reported = true;
                 continue;
             }
@@ -1920,8 +1919,7 @@ SIZE_T VisualLeakDetector::reportLeaks (heapinfo_t* heapinfo, bool &firstLeak, S
         }
 
         if (m_options & VLD_OPT_SKIP_CRTSTARTUP_LEAKS) {
-            // Check for crt startup allocations
-            if (info->callStack && info->callStack->isCrtStartupAlloc()) {
+            if (info->callStack && info->callStack->isLeakSuppressed()) {
                 info->reported = true;
                 continue;
             }
@@ -3000,7 +2998,7 @@ int VisualLeakDetector::resolveStacks(heapinfo_t* heapinfo)
         if (info->callStack)
         {
             unresolvedFunctionsCount += info->callStack->resolve(m_options & VLD_OPT_TRACE_INTERNAL_FRAMES);
-            if ((m_options & VLD_OPT_SKIP_CRTSTARTUP_LEAKS) && info->callStack->isCrtStartupAlloc()) {
+            if ((m_options & VLD_OPT_SKIP_CRTSTARTUP_LEAKS) && info->callStack->isLeakSuppressed()) {
                 info->reported = true;
                 continue;
             }

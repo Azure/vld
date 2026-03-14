@@ -282,14 +282,19 @@ DWORD CallStack::resolveFunction(SIZE_T programCounter, IMAGEHLP_LINEW64* source
 }
 
 
-// isCrtStartupAlloc - Determines whether the memory leak was generated from crt startup code.
-// This is not an actual memory leaks as it is freed by crt after the VLD object has been destroyed.
+// isLeakSuppressed - Determines whether this allocation should be suppressed
+// from leak reports. Returns true when any of the following applies:
+//   1. CRT startup allocation - freed after VLD shuts down, not a real leak.
+//   2. IgnoreModulesList - allocation originates from a module the user chose
+//      to exclude (e.g., system DLLs loaded by getaddrinfo).
+//   3. IgnoreFunctionsList - allocation call stack contains a function the
+//      user chose to exclude.
 //
 //  Return Value:
 //
-//    true if isCrtStartupModule for any callstack frame returns true.
+//    true if the leak should be suppressed from reports.
 //
-bool CallStack::isCrtStartupAlloc()
+bool CallStack::isLeakSuppressed()
 {
     if (m_status & CALLSTACK_STATUS_STARTUPCRT) {
         return true;
