@@ -92,7 +92,7 @@ public:
     CONST WCHAR* getResolvedCallstack(BOOL showinternalframes);
     virtual DWORD getHashValue() const = 0;
     virtual VOID getStackTrace (UINT32 maxdepth, const context_t& context) = 0;
-    bool isCrtStartupAlloc();
+    bool isLeakSuppressed();
 
     BOOL operator == (const CallStack &other) const;
     UINT_PTR operator [] (UINT32 index) const;

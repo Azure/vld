@@ -85,7 +85,15 @@ steps:
 - task: CmdLine@2
   displayName: 'Build ${{ parameters.configuration }}'
   inputs:
-    script: '"$(msbuildPath)" "build_${{ parameters.arch }}\VLD.sln" /t:restore /t:build /p:Platform=$(targetPlatform) /p:Configuration=${{ parameters.configuration }} /m'
+    script: |
+      for %%f in ("build_${{ parameters.arch }}\VLD.sln" "build_${{ parameters.arch }}\VLD.slnx") do (
+        if exist "%%f" (
+          "$(msbuildPath)" "%%f" /t:restore /t:build /p:Platform=$(targetPlatform) /p:Configuration=${{ parameters.configuration }} /m
+          goto :eof
+        )
+      )
+      echo ##[error]No VLD.sln or VLD.slnx found
+      exit /b 1
 
 # Optional: Run tests
 - ${{ if parameters.runTests }}:

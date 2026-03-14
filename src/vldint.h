@@ -47,6 +47,7 @@
 #include "vldallocator.h"   // Provides internal allocator.
 
 #define MAXMODULELISTLENGTH 512     // Maximum module list length, in characters.
+#define MAXIGNOREMODULELISTLENGTH 512 // Maximum ignore module list length, in characters.
 #define MAXIGNOREFUNCTIONLISTLENGTH 2048     // Maximum module list length, in characters.
 #define SELFTESTTEXTA       "Memory Leak Self-Test"
 #define SELFTESTTEXTW       L"Memory Leak Self-Test"
@@ -151,6 +152,7 @@ struct moduleinfo_t {
     UINT32 flags;                    // Module flags:
 #define VLD_MODULE_EXCLUDED      0x1 //   If set, this module is excluded from leak detection.
 #define VLD_MODULE_SYMBOLSLOADED 0x2 //   If set, this module's debug symbols have been loaded.
+#define VLD_MODULE_IGNORED       0x4 //   If set, this module is excluded via IgnoreModulesList.
     vldstring name;                  // The module's name (e.g. "kernel32.dll").
     vldstring path;                  // The fully qualified path from where the module was loaded.
 };
@@ -346,6 +348,7 @@ private:
 
     // Utils
     static bool isModuleExcluded (UINT_PTR returnaddress);
+    static bool isModuleIgnored (UINT_PTR returnaddress);
     static bool isFunctionIgnored(LPCWSTR functionName);
     blockinfo_t* findAllocedBlock(LPCVOID, __out HANDLE& heap);
     blockinfo_t* getAllocationBlockInfo(void* alloc);
@@ -385,6 +388,7 @@ private:
     // Private data
     ////////////////////////////////////////////////////////////////////////////////
     WCHAR                m_forcedModuleList [MAXMODULELISTLENGTH]; // List of modules to be forcefully included in leak detection.
+    WCHAR                m_ignoreModuleList [MAXIGNOREMODULELISTLENGTH]; // List of modules to be excluded from leak detection.
     WCHAR                m_ignoreFunctionsList [MAXIGNOREFUNCTIONLISTLENGTH]; // List of functions to be ignored in leak detection.
     HeapMap             *m_heapMap;           // Map of all active heaps in the process.
     IMalloc             *m_iMalloc;           // Pointer to the system implementation of IMalloc.

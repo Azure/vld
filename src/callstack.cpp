@@ -282,14 +282,19 @@ DWORD CallStack::resolveFunction(SIZE_T programCounter, IMAGEHLP_LINEW64* source
 }
 
 
-// isCrtStartupAlloc - Determines whether the memory leak was generated from crt startup code.
-// This is not an actual memory leaks as it is freed by crt after the VLD object has been destroyed.
+// isLeakSuppressed - Determines whether this allocation should be suppressed
+// from leak reports. Returns true when any of the following applies:
+//   1. CRT startup allocation - freed after VLD shuts down, not a real leak.
+//   2. IgnoreModulesList - allocation originates from a module the user chose
+//      to exclude (e.g., system DLLs loaded by getaddrinfo).
+//   3. IgnoreFunctionsList - allocation call stack contains a function the
+//      user chose to exclude.
 //
 //  Return Value:
 //
-//    true if isCrtStartupModule for any callstack frame returns true.
+//    true if the leak should be suppressed from reports.
 //
-bool CallStack::isCrtStartupAlloc()
+bool CallStack::isLeakSuppressed()
 {
     if (m_status & CALLSTACK_STATUS_STARTUPCRT) {
         return true;
@@ -308,6 +313,14 @@ bool CallStack::isCrtStartupAlloc()
         // Try to get the source file and line number associated with
         // this program counter address.
         SIZE_T programCounter = (*this)[frame];
+
+        // Check if this frame is in a module listed in IgnoreModulesList.
+        // This does not require symbol resolution and catches leaks from
+        // modules whose internal functions have no exported names.
+        if (VisualLeakDetector::isModuleIgnored(programCounter)) {
+            return true;
+        }
+
         DWORD64 displacement64;
         LPCWSTR functionName = getFunctionName(programCounter, displacement64, (SYMBOL_INFO*)&symbolBuffer, locker);
 

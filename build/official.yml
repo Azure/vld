@@ -85,7 +85,7 @@ jobs:
   displayName: 'Build x64'
   dependsOn: DetermineVersion
   pool:
-    name: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
+    name: 'Azure-MessagingStore-WinBuildPoolVS2022_1'
   variables:
     ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
   steps:
@@ -101,7 +101,7 @@ jobs:
   displayName: 'Build x86'
   dependsOn: DetermineVersion
   pool:
-    name: 'Azure-MessagingStore-WinBuildPoolVS2022_0'
+    name: 'Azure-MessagingStore-WinBuildPoolVS2022_1'
   variables:
     ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
   steps:
