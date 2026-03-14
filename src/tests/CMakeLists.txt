@@ -600,7 +600,10 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_modules_test/ignore_modules_test.cp
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:ignore_modules_dll>"
             "$<TARGET_FILE_DIR:ignore_modules_test>/$<TARGET_FILE_NAME:ignore_modules_dll>"
-        COMMENT "Copying ignore_modules_test vld.ini, VLD DLL, dbghelp.dll, and test DLL"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_PDB_FILE:ignore_modules_dll>"
+            "$<TARGET_FILE_DIR:ignore_modules_test>/$<TARGET_PDB_FILE_NAME:ignore_modules_dll>"
+        COMMENT "Copying ignore_modules_test vld.ini, VLD DLL, dbghelp.dll, test DLL and PDB"
     )
 
     add_dependencies(ignore_modules_test ignore_modules_dll)
