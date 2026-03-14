@@ -9,6 +9,8 @@
 // The vld.ini for this test intentionally has an empty IgnoreModulesList.
 
 #include <gtest/gtest.h>
+#include <cstdio>
+#include <cstdlib>
 #include <WinSock2.h>
 #include <WS2tcpip.h>
 #include "vld.h"
@@ -64,15 +66,45 @@ TEST_F(TestGetAddrInfoLeaks, GetAddrInfoWithFreeStillProducesSystemDllLeaks)
     freeaddrinfo(result);
 
     int leaks = static_cast<int>(VLDGetLeaksCount());
-    if (leaks == 0)
+
+    printf("[DIAG] Build config: "
+#ifdef _DEBUG
+        "Debug"
+#elif defined(NDEBUG)
+        "NDEBUG (optimized)"
+#else
+        "Unknown"
+#endif
+        "\n");
+    printf("[DIAG] VLDGetLeaksCount after getaddrinfo+freeaddrinfo: %d\n", leaks);
+    printf("[DIAG] VLDGetOptions: 0x%08X\n", VLDGetOptions());
+
+    // Dump any leaks VLD sees so we can inspect them in CI logs
+    if (leaks > 0)
     {
-        // In optimized builds (RelWithDebInfo, Release), VLD cannot reliably
-        // track system DLL allocations because compiler optimizations change
-        // calling patterns and stack frames. Skip gracefully.
-        VLDMarkAllLeaksAsReported();
-        GTEST_SKIP() << "VLD reported 0 system DLL leaks - likely an optimized "
-                      << "build where VLD cannot track these allocations.";
+        printf("[DIAG] VLD reports %d leak(s). Reporting them:\n", leaks);
+        VLDReportLeaks();
     }
+    else
+    {
+        printf("[DIAG] VLD reports 0 leaks. Trying a known malloc leak to verify VLD is active...\n");
+        volatile void* test_leak = malloc(42);
+        (void)test_leak;
+        int after_malloc = static_cast<int>(VLDGetLeaksCount());
+        printf("[DIAG] After deliberate malloc(42) without free: VLDGetLeaksCount = %d\n", after_malloc);
+        if (after_malloc > 0)
+        {
+            printf("[DIAG] VLD IS active (tracks CRT malloc), but did NOT see getaddrinfo allocs.\n");
+            VLDReportLeaks();
+            free((void*)test_leak);
+        }
+        else
+        {
+            printf("[DIAG] VLD did NOT track even malloc - VLD may be inactive in this config.\n");
+        }
+        VLDMarkAllLeaksAsReported();
+    }
+
     EXPECT_GT(leaks, 0)
         << "Expected system DLL leaks from getaddrinfo (false positives from "
         << "namespace provider DLL initialization), but VLD reported 0 leaks. "

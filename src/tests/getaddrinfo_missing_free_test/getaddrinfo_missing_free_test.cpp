@@ -10,6 +10,8 @@
 // leak counts rather than checking for zero.
 
 #include <gtest/gtest.h>
+#include <cstdio>
+#include <cstdlib>
 #include <WinSock2.h>
 #include <WS2tcpip.h>
 #include "vld.h"
@@ -91,14 +93,42 @@ TEST_F(TestGetAddrInfoMissingFree, MissingFreeAddrInfoProducesMoreLeaks)
         leaks_without_free = static_cast<int>(VLDGetLeaksCount());
     }
 
+    printf("[DIAG] Build config: "
+#ifdef _DEBUG
+        "Debug"
+#elif defined(NDEBUG)
+        "NDEBUG (optimized)"
+#else
+        "Unknown"
+#endif
+        "\n");
+    printf("[DIAG] VLDGetOptions: 0x%08X\n", VLDGetOptions());
+    printf("[DIAG] leaks_with_free = %d, leaks_without_free = %d\n",
+           leaks_with_free, leaks_without_free);
+
+    if (leaks_with_free > 0)
+    {
+        printf("[DIAG] Leaks from baseline (with freeaddrinfo):\n");
+    }
+
     if (leaks_without_free == 0 && leaks_with_free == 0)
     {
-        // In optimized builds (RelWithDebInfo, Release), VLD cannot reliably
-        // track system DLL allocations because compiler optimizations change
-        // calling patterns and stack frames. Skip gracefully.
+        printf("[DIAG] Both 0 - checking if VLD is even active...\n");
+        volatile void* test_leak = malloc(42);
+        (void)test_leak;
+        int after_malloc = static_cast<int>(VLDGetLeaksCount());
+        printf("[DIAG] After deliberate malloc(42) without free: VLDGetLeaksCount = %d\n", after_malloc);
+        if (after_malloc > 0)
+        {
+            printf("[DIAG] VLD IS active but saw 0 getaddrinfo allocs in both cases.\n");
+            VLDReportLeaks();
+            free((void*)test_leak);
+        }
+        else
+        {
+            printf("[DIAG] VLD is NOT tracking even malloc - may be inactive.\n");
+        }
         VLDMarkAllLeaksAsReported();
-        GTEST_SKIP() << "VLD reported 0 leaks for both cases - likely an optimized "
-                      << "build where VLD cannot track these allocations.";
     }
 
     EXPECT_GT(leaks_without_free, leaks_with_free)
