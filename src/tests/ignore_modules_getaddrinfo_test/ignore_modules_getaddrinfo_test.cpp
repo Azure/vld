@@ -91,12 +91,6 @@ TEST_F(TestIgnoreModulesGetAddrInfo, GetAddrInfoWithFreeHasNoLeaks)
 // reported even when IgnoreModulesList is configured and getaddrinfo has
 // been called. This is the critical safety check: IgnoreModulesList must
 // NOT suppress real application leaks.
-//
-// Note: VLD cannot detect a missing freeaddrinfo call because WS2_32.dll
-// allocates the addrinfo result via native HeapAlloc (not CRT malloc),
-// which VLD does not track. However, CRT allocations from user code (the
-// vast majority of application memory) ARE tracked, and IgnoreModulesList
-// must not interfere with those.
 TEST_F(TestIgnoreModulesGetAddrInfo, UserCodeLeaksAreStillReportedWithIgnoreModules)
 {
     // Trigger system DLL loading via getaddrinfo first (warm up).
