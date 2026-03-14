@@ -674,4 +674,40 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_modules_getaddrinfo_test/ignore_mod
         COMMENT "Copying getaddrinfo_leaks_test vld.ini, VLD DLL, and dbghelp.dll"
     )
     add_test(NAME getaddrinfo_leaks_test COMMAND getaddrinfo_leaks_test WORKING_DIRECTORY $<TARGET_FILE_DIR:getaddrinfo_leaks_test>)
+
+    # getaddrinfo_missing_free_test - Proves VLD detects when application code
+    # calls getaddrinfo without a matching freeaddrinfo. Runs in its own
+    # process so DLL loading state is clean (no interference from other tests).
+    add_executable(getaddrinfo_missing_free_test
+        getaddrinfo_missing_free_test/getaddrinfo_missing_free_test.cpp
+    )
+    target_link_libraries(getaddrinfo_missing_free_test PRIVATE
+        gtest
+        vld
+    )
+    target_include_directories(getaddrinfo_missing_free_test PRIVATE
+        "${CMAKE_SOURCE_DIR}/src"
+    )
+
+    set_target_properties(getaddrinfo_missing_free_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/getaddrinfo_missing_free_test"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin/Debug/getaddrinfo_missing_free_test"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin/Release/getaddrinfo_missing_free_test"
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/bin/RelWithDebInfo/getaddrinfo_missing_free_test"
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/bin/MinSizeRel/getaddrinfo_missing_free_test"
+    )
+
+    add_custom_command(TARGET getaddrinfo_missing_free_test POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/getaddrinfo_missing_free_test/vld.ini"
+            "$<TARGET_FILE_DIR:getaddrinfo_missing_free_test>/vld.ini"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:vld>"
+            "$<TARGET_FILE_DIR:getaddrinfo_missing_free_test>/$<TARGET_FILE_NAME:vld>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/setup/dbghelp/${DBGHELP_ARCH}/dbghelp.dll"
+            "$<TARGET_FILE_DIR:getaddrinfo_missing_free_test>/dbghelp.dll"
+        COMMENT "Copying getaddrinfo_missing_free_test vld.ini, VLD DLL, and dbghelp.dll"
+    )
+    add_test(NAME getaddrinfo_missing_free_test COMMAND getaddrinfo_missing_free_test WORKING_DIRECTORY $<TARGET_FILE_DIR:getaddrinfo_missing_free_test>)
 endif()
