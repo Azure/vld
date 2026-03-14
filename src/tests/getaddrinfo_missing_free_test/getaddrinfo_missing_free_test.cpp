@@ -91,14 +91,6 @@ TEST_F(TestGetAddrInfoMissingFree, MissingFreeAddrInfoProducesMoreLeaks)
         leaks_without_free = static_cast<int>(VLDGetLeaksCount());
     }
 
-    if (leaks_without_free == 0 && leaks_with_free == 0)
-    {
-        // VLD is compiled out in non-Debug builds (vld.h gates on _DEBUG).
-        // All VLD API calls become no-op macros, so no leaks are tracked.
-        VLDMarkAllLeaksAsReported();
-        GTEST_SKIP() << "VLD is inactive (compiled out in non-Debug builds).";
-    }
-
     EXPECT_GT(leaks_without_free, leaks_with_free)
         << "Expected more leaks when freeaddrinfo is NOT called. "
         << "Leaks with freeaddrinfo: " << leaks_with_free

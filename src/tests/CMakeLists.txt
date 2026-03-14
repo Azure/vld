@@ -645,17 +645,13 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_modules_getaddrinfo_test/ignore_mod
     # Proves that getaddrinfo+freeaddrinfo produces system DLL false-positive
     # leaks WITHOUT IgnoreModulesList. This validates that the suppression in
     # ignore_modules_getaddrinfo_test is actually doing real work.
-    add_executable(getaddrinfo_leaks_test
-        getaddrinfo_leaks_test/getaddrinfo_leaks_test.cpp
-    )
-    target_link_libraries(getaddrinfo_leaks_test PRIVATE
-        gtest
-        vld
-    )
-    target_include_directories(getaddrinfo_leaks_test PRIVATE
-        "${CMAKE_SOURCE_DIR}/src"
+    add_vld_test(getaddrinfo_leaks_test
+        SOURCES
+            getaddrinfo_leaks_test/getaddrinfo_leaks_test.cpp
+        DEPENDS gtest
     )
 
+    # This test needs its own output subdirectory for its custom vld.ini
     set_target_properties(getaddrinfo_leaks_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/getaddrinfo_leaks_test"
         RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin/Debug/getaddrinfo_leaks_test"
@@ -676,22 +672,14 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_modules_getaddrinfo_test/ignore_mod
             "$<TARGET_FILE_DIR:getaddrinfo_leaks_test>/dbghelp.dll"
         COMMENT "Copying getaddrinfo_leaks_test vld.ini, VLD DLL, and dbghelp.dll"
     )
-    add_test(NAME getaddrinfo_leaks_test COMMAND getaddrinfo_leaks_test WORKING_DIRECTORY $<TARGET_FILE_DIR:getaddrinfo_leaks_test>)
-    # VLD is compiled out in non-Debug builds (vld.h gates on _DEBUG).
-    # The test uses GTEST_SKIP when VLD is inactive.
 
     # getaddrinfo_missing_free_test - Proves VLD detects when application code
     # calls getaddrinfo without a matching freeaddrinfo. Runs in its own
     # process so DLL loading state is clean (no interference from other tests).
-    add_executable(getaddrinfo_missing_free_test
-        getaddrinfo_missing_free_test/getaddrinfo_missing_free_test.cpp
-    )
-    target_link_libraries(getaddrinfo_missing_free_test PRIVATE
-        gtest
-        vld
-    )
-    target_include_directories(getaddrinfo_missing_free_test PRIVATE
-        "${CMAKE_SOURCE_DIR}/src"
+    add_vld_test(getaddrinfo_missing_free_test
+        SOURCES
+            getaddrinfo_missing_free_test/getaddrinfo_missing_free_test.cpp
+        DEPENDS gtest
     )
 
     set_target_properties(getaddrinfo_missing_free_test PROPERTIES
@@ -714,7 +702,4 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_modules_getaddrinfo_test/ignore_mod
             "$<TARGET_FILE_DIR:getaddrinfo_missing_free_test>/dbghelp.dll"
         COMMENT "Copying getaddrinfo_missing_free_test vld.ini, VLD DLL, and dbghelp.dll"
     )
-    add_test(NAME getaddrinfo_missing_free_test COMMAND getaddrinfo_missing_free_test WORKING_DIRECTORY $<TARGET_FILE_DIR:getaddrinfo_missing_free_test>)
-    # VLD is compiled out in non-Debug builds (vld.h gates on _DEBUG).
-    # The test uses GTEST_SKIP when VLD is inactive.
 endif()
