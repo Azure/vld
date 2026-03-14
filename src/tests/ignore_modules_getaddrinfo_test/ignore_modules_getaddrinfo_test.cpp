@@ -44,10 +44,18 @@ class TestIgnoreModulesGetAddrInfo : public ::testing::Test
 // Test: Calling getaddrinfo + freeaddrinfo for localhost should not report
 // any leaks when the common leaking system DLLs are in IgnoreModulesList.
 //
-// Without IgnoreModulesList, this test would report leaks from system DLL
-// initialization (e.g., 256-byte blocks from rasadhlp.dll, 400-byte blocks
-// from DNSAPI.dll locale comparison, socket handles from mswsock.dll, and
-// network policy allocations from fwpuclnt.dll).
+// Without IgnoreModulesList, getaddrinfo triggers one-time initialization
+// of namespace providers inside WS2_32.dll (via WSAEnumNameSpaceProvidersW
+// and freeaddrinfo internal paths). This causes 40+ leak blocks from:
+//   - RPCRT4.dll (majority): RPC binding setup, buffer allocation, context
+//     handles for namespace provider communication
+//   - KERNELBASE.dll: LoadLibraryExW loading namespace provider DLLs
+//   - mswsock.dll: Winsock namespace provider internal state
+//   - DNSAPI.dll: DNS resolver initialization
+//   - Unresolved namespace provider DLLs (e.g., NLAapi.dll)
+// These are OS-internal one-time allocations freed at process exit, not
+// application leaks. Sizes vary (8 to 4172 bytes). The exact count and
+// DLLs involved depend on the OS version and installed providers.
 TEST_F(TestIgnoreModulesGetAddrInfo, GetAddrInfoWithFreeHasNoLeaks)
 {
     int leaks_before = static_cast<int>(VLDGetLeaksCount());
