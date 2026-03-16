@@ -18,7 +18,7 @@ set(VLD_HEADERS
     callstack.h
     criticalsection.h
     crtmfcpatch.h
-    dbghelp.h
+    dbghelp.hpp
     loaderlock.h
     map.h
     ntapi.h
@@ -96,21 +96,21 @@ target_compile_definitions(vld PRIVATE
 if(MSVC)
     # VLD core uses static runtime (different from tests which use DLL runtime)
     set_property(TARGET vld PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    
+
     # Precompiled header
     target_precompile_headers(vld PRIVATE stdafx.h)
-    
+
     # Compiler options - disable inlining in Release/RelWithDebInfo to avoid issues with
     # __forceinline functions that have their body in .cpp files (bug in source)
     target_compile_options(vld PRIVATE
         $<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/Ob0>  # Disable inlining
     )
-    
+
     # Disable C4244 warning for x86 builds (fmt library triggers this with 64-bit to 32-bit conversions)
     if(VLD_PLATFORM STREQUAL "Win32")
         target_compile_options(vld PRIVATE /wd4244)
     endif()
-    
+
     # Linker settings
     if(VLD_PLATFORM STREQUAL "ARM64" OR VLD_PLATFORM STREQUAL "x64")
         # ARM64 and x64 require base address >= 4GB for ASLR optimization
@@ -125,7 +125,7 @@ if(MSVC)
             /BASE:0x03200000
         )
     endif()
-    
+
     # Additional Windows libraries
     target_link_libraries(vld PRIVATE
         kernel32
