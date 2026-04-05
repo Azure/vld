@@ -8,11 +8,24 @@ parameters:
   type: object
   default:
     - name: 'x64'
+      jobName: 'x64_v5'
+      pool: 'Azure-MessagingStore-WinBuildPoolVS2022_1'
+    - name: 'x64'
+      jobName: 'x64_v6'
+      pool: 'Azure-MessagingStore-Win-x64-Dadsv6-v01'
+    - name: 'x86'
+      jobName: 'x86_v5'
       pool: 'Azure-MessagingStore-WinBuildPoolVS2022_1'
     - name: 'x86'
-      pool: 'Azure-MessagingStore-WinBuildPoolVS2022_1'
+      jobName: 'x86_v6'
+      pool: 'Azure-MessagingStore-Win-x64-Dadsv6-v01'
     - name: 'arm64'
+      jobName: 'arm64_ampere'
       pool: 'Azure-MessagingStore-WinBuildPoolARM'
+    - name: 'arm64'
+      jobName: 'arm64_cobalt'
+      pool: 'Azure-MessagingStore-Win-ARM64-Dpldsv6-v01'
+
 - name: configurations
   type: object
   default:
@@ -22,8 +35,8 @@ parameters:
 jobs:
 - ${{ each arch in parameters.architectures }}:
   - ${{ each config in parameters.configurations }}:
-    - job: Build_Windows_${{ arch.name }}_${{ config }}
-      displayName: 'Build Windows ${{ arch.name }} ${{ config }}'
+    - job: Build_${{ arch.jobName }}_${{ config }}
+      displayName: 'Build ${{ arch.jobName }} ${{ config }}'
       pool:
         name: ${{ arch.pool }}
         demands:
@@ -38,4 +51,4 @@ jobs:
           arch: ${{ arch.name }}
           configuration: ${{ config }}
           runTests: true
-          artifactSuffix: '-${{ config }}'
+          artifactSuffix: '_${{ arch.jobName }}-${{ config }}'

@@ -19,7 +19,7 @@ jobs:
 - job: DetermineVersion
   displayName: 'Determine Version'
   pool:
-    name: 'Azure-MessagingStore-WinBuildPoolARM'
+    name: 'vld-official'
   steps:
   - checkout: self
     persistCredentials: true
@@ -137,7 +137,7 @@ jobs:
     - Build_x86
     - Build_arm64
   pool:
-    name: 'Azure-MessagingStore-WinBuildPoolARM'
+    name: 'vld-official'
   variables:
     ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
   steps:
@@ -191,7 +191,7 @@ jobs:
     - CreateInstaller
   condition: and(succeeded(), eq(variables.isMaster, true))
   pool:
-    name: 'Azure-MessagingStore-WinBuildPoolARM'
+    name: 'vld-official'
   variables:
     ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
   steps:
@@ -249,7 +249,7 @@ jobs:
     - TagAndPush
   condition: and(succeeded(), eq(variables.isMaster, true))
   pool:
-    name: 'Azure-MessagingStore-WinBuildPoolARM'
+    name: 'vld-official'
   variables:
     ReleaseVersion: $[ dependencies.DetermineVersion.outputs['SetVersion.ReleaseVersion'] ]
   steps:
