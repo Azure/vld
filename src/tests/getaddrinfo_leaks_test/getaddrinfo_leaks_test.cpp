@@ -1,10 +1,15 @@
-// getaddrinfo_leaks_test.cpp - Proves that getaddrinfo+freeaddrinfo produces
-// system DLL false-positive leaks that are only suppressible via
-// IgnoreModulesList.
+// getaddrinfo_leaks_test.cpp - Verifies that getaddrinfo+freeaddrinfo does NOT
+// produce false-positive leaks from system DLLs.
 //
-// This is the counterpart to ignore_modules_getaddrinfo_test. That test
-// shows the leaks disappear WITH IgnoreModulesList. This test shows the
-// leaks EXIST WITHOUT IgnoreModulesList - proving the suppression is real.
+// System DLLs loaded during getaddrinfo (rasadhlp.dll, dnsapi.dll, mswsock.dll,
+// etc.) perform one-time initialization allocations that persist for the process
+// lifetime. With the improved module detection in ShouldReportLeaksForModule(),
+// these allocations are automatically excluded because the system DLLs do not
+// import VLD and are not user code.
+//
+// For modules not yet processed by VLD (e.g., during DllMain of a newly loaded
+// DLL), ShouldReportLeaksForModule uses FindImport to directly check whether
+// the module imports VLD, correctly distinguishing system DLLs from user code.
 //
 // The vld.ini for this test intentionally has an empty IgnoreModulesList.
 
@@ -32,16 +37,16 @@ class TestGetAddrInfoLeaks : public ::testing::Test
     }
 };
 
-// Test: Calling getaddrinfo + freeaddrinfo DOES produce leaks when
-// IgnoreModulesList is empty. This proves the leaks are real and that
-// IgnoreModulesList (tested in ignore_modules_getaddrinfo_test) is
-// actively suppressing them.
+// Test: Calling getaddrinfo + freeaddrinfo should NOT produce false-positive
+// leaks from system DLL initialization, even without IgnoreModulesList.
 //
-// The leaks come from system DLL one-time initialization during the
-// first getaddrinfo call (namespace provider enumeration, locale caches,
-// socket handle tables, etc.). These are false positives - the memory
-// is cleaned up by the OS at process exit.
-TEST_F(TestGetAddrInfoLeaks, GetAddrInfoWithFreeStillProducesSystemDllLeaks)
+// During the first getaddrinfo call, namespace provider DLLs (rasadhlp.dll,
+// dnsapi.dll, mswsock.dll, fwpuclnt.dll, etc.) are dynamically loaded.
+// Their DLL initialization allocates memory that persists for the process
+// lifetime. With improved module detection, VLD recognizes that these
+// allocations originate from modules that do not import VLD (system DLLs)
+// and automatically excludes them from leak reporting.
+TEST_F(TestGetAddrInfoLeaks, GetAddrInfoWithFreeHasNoSystemDllFalsePositives)
 {
     int leaks_before = static_cast<int>(VLDGetLeaksCount());
     ASSERT_EQ(0, leaks_before);
@@ -55,7 +60,8 @@ TEST_F(TestGetAddrInfoLeaks, GetAddrInfoWithFreeStillProducesSystemDllLeaks)
     hints.ai_protocol = IPPROTO_TCP;
 
     // Resolve localhost. This triggers system DLL loading and internal
-    // allocations that VLD considers leaks.
+    // allocations. With improved module detection, these should NOT be
+    // reported as leaks.
     int rc = getaddrinfo("localhost", "80", &hints, &result);
     ASSERT_EQ(0, rc) << "getaddrinfo failed with error: " << rc;
     ASSERT_NE(static_cast<struct addrinfo*>(NULL), result);
@@ -64,12 +70,13 @@ TEST_F(TestGetAddrInfoLeaks, GetAddrInfoWithFreeStillProducesSystemDllLeaks)
     freeaddrinfo(result);
 
     int leaks = static_cast<int>(VLDGetLeaksCount());
-    EXPECT_GT(leaks, 0)
-        << "Expected system DLL leaks from getaddrinfo (false positives from "
-        << "namespace provider DLL initialization), but VLD reported 0 leaks. "
-        << "This test validates that leaks exist so that "
-        << "ignore_modules_getaddrinfo_test can prove IgnoreModulesList "
-        << "suppresses them.";
+    if (0 != leaks)
+        VLDReportLeaks();
+    EXPECT_EQ(0, leaks)
+        << "Expected 0 leaks after getaddrinfo+freeaddrinfo. System DLL "
+        << "internal allocations should be automatically excluded because "
+        << "they originate from modules that do not import VLD. "
+        << "VLD reported " << leaks << " leak(s).";
 
     // Mark all leaks as reported so VLD exits cleanly.
     VLDMarkAllLeaksAsReported();

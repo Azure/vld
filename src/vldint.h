@@ -153,6 +153,7 @@ struct moduleinfo_t {
 #define VLD_MODULE_EXCLUDED      0x1 //   If set, this module is excluded from leak detection.
 #define VLD_MODULE_SYMBOLSLOADED 0x2 //   If set, this module's debug symbols have been loaded.
 #define VLD_MODULE_IGNORED       0x4 //   If set, this module is excluded via IgnoreModulesList.
+#define VLD_MODULE_IMPORTS_VLD   0x8 //   If set, this module imports the VLD global object (user code).
     vldstring name;                  // The module's name (e.g. "kernel32.dll").
     vldstring path;                  // The fully qualified path from where the module was loaded.
 };
@@ -216,6 +217,7 @@ private:
 private:
     BOOL IsExcludedModule();
     BOOL IsCrtModuleWithNoReporting(HMODULE hModule);
+    BOOL IsCrtRuntimeModule(HMODULE hModule);
     BOOL ShouldReportLeaksForModule(HMODULE hModule);
     void Reset();
 private:
@@ -279,7 +281,7 @@ public:
     void GlobalDisableLeakDetection ();
     void GlobalEnableLeakDetection ();
 
-    VOID RefreshModules();
+    VOID RefreshModules(HMODULE explicitModule = NULL);
     SIZE_T GetLeaksCount();
     SIZE_T GetThreadLeaksCount(DWORD threadId);
     SIZE_T ReportLeaks();

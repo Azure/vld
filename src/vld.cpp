@@ -92,9 +92,11 @@ BOOLEAN WINAPI LdrpCallInitRoutine(IN PVOID BaseAddress, IN ULONG Reason, IN PVO
     LoaderLock ll;
 
     if (Reason == DLL_PROCESS_ATTACH) {
-        g_vld.RefreshModules();
-        // Explicitly patch the module being loaded, in case EnumerateLoadedModulesW64
-        // doesn't see it yet (race condition during DLL loading)
+        // Pass the module being loaded to RefreshModules so it can ensure
+        // the module is in m_loadedModules even if EnumerateLoadedModulesW64
+        // doesn't see it yet (race condition during DLL loading).
+        g_vld.RefreshModules((HMODULE)BaseAddress);
+        // Explicitly patch the module being loaded.
         g_vld.PatchCurrentModule((HMODULE)BaseAddress);
     }
 
@@ -908,6 +910,13 @@ VOID VisualLeakDetector::attachToLoadedModules (ModuleSet *newmodules)
                     moduleFlags |= VLD_MODULE_EXCLUDED | VLD_MODULE_IGNORED;
                 }
             }
+        }
+        else
+        {
+            // This module imports VLD - it's user code that #included vld.h.
+            // Mark it so ShouldReportLeaksForModule() can identify user modules
+            // during stack walks without calling FindImport each time.
+            moduleFlags |= VLD_MODULE_IMPORTS_VLD;
         }
         if ((moduleFlags & VLD_MODULE_EXCLUDED) == 0 &&
             !(moduleFlags & VLD_MODULE_SYMBOLSLOADED) || (moduleimageinfo.SymType == SymExport)) {
@@ -2358,7 +2367,7 @@ NTSTATUS VisualLeakDetector::_LdrUnloadDll(IN PVOID BaseAddress)
     return LdrUnloadDll(BaseAddress);
 }
 
-VOID VisualLeakDetector::RefreshModules()
+VOID VisualLeakDetector::RefreshModules(HMODULE explicitModule)
 {
     LoaderLock ll;
 
@@ -2373,6 +2382,31 @@ VOID VisualLeakDetector::RefreshModules()
         // modules.
         DbgTrace(L"dbghelp32.dll %i: EnumerateLoadedModulesW64\n", GetCurrentThreadId());
         g_LoadedModules.EnumerateLoadedModulesW64(g_currentProcess, addLoadedModule, newmodules);
+
+        // EnumerateLoadedModulesW64 may not see a module that is currently
+        // being loaded (race condition during DLL loading). If the caller
+        // specified an explicit module, ensure it is in the set so that
+        // attachToLoadedModules can process it and set proper flags.
+        if (explicitModule != NULL) {
+            moduleinfo_t lookup;
+            lookup.addrLow  = (UINT_PTR)explicitModule;
+            lookup.addrHigh = (UINT_PTR)explicitModule + 1024;
+            lookup.flags    = 0;
+            if (newmodules->find(lookup) == newmodules->end()) {
+                // Module not found in enumeration. Add it manually using
+                // the PE header to get the image size.
+                PIMAGE_DOS_HEADER dosHeader = (PIMAGE_DOS_HEADER)explicitModule;
+                if (dosHeader->e_magic == IMAGE_DOS_SIGNATURE) {
+                    PIMAGE_NT_HEADERS ntHeaders = (PIMAGE_NT_HEADERS)((BYTE*)explicitModule + dosHeader->e_lfanew);
+                    if (ntHeaders->Signature == IMAGE_NT_SIGNATURE) {
+                        WCHAR modulepath[MAX_PATH];
+                        GetModuleFileNameW(explicitModule, modulepath, MAX_PATH);
+                        addLoadedModule(modulepath, (DWORD64)(UINT_PTR)explicitModule,
+                                        ntHeaders->OptionalHeader.SizeOfImage, newmodules);
+                    }
+                }
+            }
+        }
 
         // Attach to all modules included in the set.
         attachToLoadedModules(newmodules);
@@ -2606,9 +2640,13 @@ void VisualLeakDetector::ChangeModuleState(HMODULE module, bool on)
         {
             moduleinfo_t *mod = (moduleinfo_t *)&(*moduleit);
             if ( on )
+            {
                 mod->flags &= ~VLD_MODULE_EXCLUDED;
+            }
             else
+            {
                 mod->flags |= VLD_MODULE_EXCLUDED;
+            }
 
             break;
         }
@@ -3123,7 +3161,38 @@ BOOL CaptureContext::IsCrtModuleWithNoReporting(HMODULE hModule) {
     return FALSE;
 }
 
-// Helper function to check if a module should have leaks reported
+// Helper function to check if a module is a CRT runtime module that is not
+// in the patch table. Modern MSVC splits CRT functionality across multiple
+// DLLs (msvcp140.dll, vcruntime140.dll, etc.) that provide functions like
+// operator new. These modules call into ucrtbase.dll's malloc/HeapAlloc,
+// so they appear as intermediate frames in allocation call stacks but
+// should not be treated as the allocation's originating module.
+BOOL CaptureContext::IsCrtRuntimeModule(HMODULE hModule) {
+    moduleinfo_t moduleinfo;
+    moduleinfo.addrLow  = (UINT_PTR)hModule;
+    moduleinfo.addrHigh = (UINT_PTR)hModule + 1024;
+    moduleinfo.flags    = 0;
+
+    CriticalSectionLocker<> cs(g_vld.m_modulesLock);
+    ModuleSet::Iterator moduleit = g_vld.m_loadedModules->find(moduleinfo);
+    if (moduleit != g_vld.m_loadedModules->end()) {
+        LPCWSTR name = (*moduleit).name.c_str();
+        if (_wcsnicmp(name, L"msvcp", 5) == 0 ||
+            _wcsnicmp(name, L"vcruntime", 9) == 0 ||
+            _wcsnicmp(name, L"concrt", 6) == 0) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+// Helper function to check if a module should have leaks reported.
+// For modules not in the patch table, only report leaks if the module
+// imports VLD (user code that #included vld.h) or was explicitly included
+// via ForceIncludeModules in include mode. This prevents false positives
+// from system DLLs (rasadhlp.dll, dnsapi.dll, mswsock.dll, etc.) whose
+// internal allocations during DLL initialization persist for the process
+// lifetime and are cleaned up by the OS at process exit.
 BOOL CaptureContext::ShouldReportLeaksForModule(HMODULE hModule) {
     if (hModule == NULL || hModule == g_vld.m_dbghlpBase || hModule == g_vld.m_vldBase)
         return FALSE;
@@ -3135,8 +3204,43 @@ BOOL CaptureContext::ShouldReportLeaksForModule(HMODULE hModule) {
         }
     }
 
-    // Unknown module - report leaks unless explicitly excluded
-    return !g_vld.isModuleExcluded((UINT_PTR)hModule);
+    // For modules not in the patch table, look up the module's flags to
+    // determine if it's a user module (imports VLD) or explicitly included.
+    moduleinfo_t         moduleinfo;
+    moduleinfo.addrLow  = (UINT_PTR)hModule;
+    moduleinfo.addrHigh = (UINT_PTR)hModule + 1024;
+    moduleinfo.flags    = 0;
+
+    CriticalSectionLocker<> cs(g_vld.m_modulesLock);
+    ModuleSet::Iterator moduleit = g_vld.m_loadedModules->find(moduleinfo);
+    if (moduleit != g_vld.m_loadedModules->end()) {
+        UINT32 flags = (*moduleit).flags;
+        if (flags & VLD_MODULE_EXCLUDED)
+            return FALSE;
+        if (flags & VLD_MODULE_IMPORTS_VLD)
+            return TRUE;
+        // Module is included but doesn't import VLD.
+        // In ForceIncludeModules include mode, non-excluded modules were
+        // explicitly listed by the user, so report their leaks.
+        if (g_vld.m_options & VLD_OPT_MODULE_LIST_INCLUDE)
+            return TRUE;
+        // Module is known, not excluded, doesn't import VLD, and not in
+        // include mode. This is a system or third-party DLL whose
+        // allocations should not be reported as user leaks.
+        return FALSE;
+    }
+
+    // Module not yet in m_loadedModules (e.g. during DllMain before VLD
+    // has processed the module via attachToLoadedModules). Check directly
+    // if the module imports VLD to distinguish user code from system DLLs.
+    // This is more expensive than a flag check but only runs for modules
+    // not yet processed, which is rare (DllMain allocations during LoadLibrary).
+    if (FindImport((HMODULE)hModule, (HMODULE)g_vld.m_vldBase, VLDDLL,
+                   "?g_vld@@3VVisualLeakDetector@@A"))
+        return TRUE;  // Module imports VLD - it's user code
+
+    // Unknown module that doesn't import VLD. Don't report leaks.
+    return FALSE;
 }
 
 BOOL CaptureContext::IsExcludedModule() {
@@ -3159,9 +3263,13 @@ BOOL CaptureContext::IsExcludedModule() {
         }
     }
 
-    // If we got here because the immediate caller is a CRT with reportLeaks=FALSE,
-    // walk the stack to look for a user module
-    if (IsCrtModuleWithNoReporting(hModule)) {
+    // If we got here because the immediate caller is a CRT with reportLeaks=FALSE
+    // or a CRT runtime module (msvcp*.dll, vcruntime*.dll providing operator new),
+    // walk the stack to find the first known non-CRT frame and decide based on it.
+    // This excludes system DLL allocations (e.g., rasadhlp.dll DllMain init)
+    // while still tracking user code allocations through CRT intermediaries
+    // (e.g., dynamic.dll → msvcp140d.dll → ucrtbase.dll → HeapAlloc).
+    if (IsCrtModuleWithNoReporting(hModule) || IsCrtRuntimeModule(hModule)) {
         // Capture a few frames from the stack
         const UINT32 maxframes = 32;
         PVOID frames[32];
@@ -3174,25 +3282,55 @@ BOOL CaptureContext::IsExcludedModule() {
                 frameModule != hModule &&  // Skip the CRT module we already checked
                 frameModule != g_vld.m_dbghlpBase &&
                 frameModule != g_vld.m_vldBase) {
+                // Skip other CRT modules in the patch table (e.g., ucrtbase
+                // calling into another CRT module).
+                if (IsCrtModuleWithNoReporting(frameModule))
+                    continue;
+                // Skip CRT runtime modules not in the patch table (msvcp*.dll,
+                // vcruntime*.dll) that provide functions like operator new.
+                // These are intermediate frames, not the allocation's origin.
+                if (IsCrtRuntimeModule(frameModule))
+                    continue;
                 // If this frame is in a module explicitly listed in
-                // IgnoreModulesList, exclude the entire allocation. This
-                // check must come before ShouldReportLeaksForModule because
-                // a calling module higher in the stack might have leak
-                // reporting enabled, but the allocation originated from
-                // the ignored module.
+                // IgnoreModulesList, exclude the entire allocation.
                 if (g_vld.isModuleIgnored((UINT_PTR)frameModule)) {
                     return TRUE;
                 }
-                // Check if this module should have leaks reported
-                if (ShouldReportLeaksForModule(frameModule)) {
-                    // Found a user module in the call chain - don't exclude this allocation
-                    return FALSE;
+                // Check if this module is known (in m_loadedModules).
+                // On ARM64, the LdrpCallInitRoutine hook may not be active,
+                // so dynamically loaded modules may not be in m_loadedModules.
+                {
+                    moduleinfo_t fmi2;
+                    fmi2.addrLow  = (UINT_PTR)frameModule;
+                    fmi2.addrHigh = (UINT_PTR)frameModule + 1024;
+                    fmi2.flags    = 0;
+                    bool isKnown = false;
+                    {
+                        CriticalSectionLocker<> cs3(g_vld.m_modulesLock);
+                        ModuleSet::Iterator fi2 = g_vld.m_loadedModules->find(fmi2);
+                        isKnown = (fi2 != g_vld.m_loadedModules->end());
+                    }
+                    if (isKnown) {
+                        // Known module: use ShouldReportLeaksForModule to decide.
+                        return !ShouldReportLeaksForModule(frameModule);
+                    }
+                    // Unknown module (not in m_loadedModules, e.g. dynamically
+                    // loaded DLL on ARM64). Check if it imports VLD — if so,
+                    // it's user code and we should track its allocations.
+                    BOOL sr = ShouldReportLeaksForModule(frameModule);
+                    if (sr) {
+                        return FALSE; // Not excluded - track this allocation
+                    }
+                    // Module doesn't import VLD. Continue walking to find a
+                    // known module higher in the chain that can decide.
+                    continue;
                 }
             }
         }
-        // Only CRT/VLD/excluded modules in the stack - exclude
+        // Only CRT/VLD modules in the stack - exclude
         return TRUE;
     }
 
+    // For non-CRT, non-patch-table modules: use the exclusion check.
     return g_vld.isModuleExcluded((UINT_PTR)hModule);
 }
