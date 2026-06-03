@@ -1173,6 +1173,14 @@ VOID VisualLeakDetector::configure ()
         m_options |= VLD_OPT_SKIP_CRTSTARTUP_LEAKS;
     }
 
+    // When the immediate caller of an allocation is a non-reporting CRT/system
+    // module, this option controls whether VLD walks the call stack to find a
+    // user module (VLD 2.5.15 behavior) or excludes based solely on the
+    // immediate caller (VLD 2.5.10 behavior). Defaults to the 2.5.10 behavior.
+    if (LoadBoolOption(L"StackWalkCrtAllocations", L"no", inipath)) {
+        m_options |= VLD_OPT_STACKWALK_CRT_ALLOCS;
+    }
+
     // Read the integer configuration options.
     m_maxDataDump = LoadIntOption(L"MaxDataDump", VLD_DEFAULT_MAX_DATA_DUMP, inipath);
     m_maxTraceFrames = LoadIntOption(L"MaxTraceFrames", VLD_DEFAULT_MAX_TRACE_FRAMES, inipath);
@@ -2731,7 +2739,7 @@ void VisualLeakDetector::GlobalEnableLeakDetection ()
 CONST UINT32 OptionsMask = VLD_OPT_AGGREGATE_DUPLICATES | VLD_OPT_MODULE_LIST_INCLUDE |
     VLD_OPT_SAFE_STACK_WALK | VLD_OPT_SLOW_DEBUGGER_DUMP | VLD_OPT_START_DISABLED |
     VLD_OPT_TRACE_INTERNAL_FRAMES | VLD_OPT_SKIP_HEAPFREE_LEAKS | VLD_OPT_VALIDATE_HEAPFREE |
-    VLD_OPT_SKIP_CRTSTARTUP_LEAKS | VLD_OPT_IGNORE_FUNCTIONS;
+    VLD_OPT_SKIP_CRTSTARTUP_LEAKS | VLD_OPT_IGNORE_FUNCTIONS | VLD_OPT_STACKWALK_CRT_ALLOCS;
 
 UINT32 VisualLeakDetector::GetOptions()
 {
@@ -3154,7 +3162,12 @@ BOOL CaptureContext::IsExcludedModule() {
             // This could be because:
             // 1. CRT is doing internal allocation (should exclude)
             // 2. User module's IAT wasn't patched, so call went through unhooked CRT (should NOT exclude)
-            // Walk the stack to check if there's a user module in the chain.
+            // By default (VLD 2.5.10 behavior) exclude based solely on the
+            // immediate caller. Only when StackWalkCrtAllocations is enabled do
+            // we walk the stack to look for a user module in the chain.
+            if (!(g_vld.GetOptions() & VLD_OPT_STACKWALK_CRT_ALLOCS)) {
+                return TRUE;
+            }
             break;
         }
     }
