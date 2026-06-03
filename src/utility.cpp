@@ -445,8 +445,7 @@ typedef struct PROTECT_INSTANCE_TAG* PROTECT_HANDLE;
 
 #define PAGE_SIZE 0x1000
 
-#if !defined(_M_ARM64)
-// These functions are only used for x86/x64 trampoline detection
+// These functions are used for trampoline/thunk detection on all architectures.
 static BOOL VLDVirtualProtect(PROTECT_HANDLE protect_handle, LPVOID address, SIZE_T size, DWORD protect)
 {
     BOOL result = TRUE;
@@ -511,7 +510,6 @@ static void VLDVirtualRestore(PROTECT_HANDLE protect_handle)
     }
 
 }
-#endif // !defined(_M_ARM64)
 
 LPVOID FindRealCode(LPVOID pCode)
 {
@@ -519,12 +517,121 @@ LPVOID FindRealCode(LPVOID pCode)
     if (pCode != NULL)
     {
 #if defined(_M_ARM64)
-        // ARM64: Different instruction encoding from x86/x64
-        // The x86/x64 JMP opcodes (0x25ff, 0xE9) don't exist in ARM64 instruction set
-        // ARM64 uses B/BR/BL instructions with different encoding
-        // Windows ARM64 typically doesn't use the same trampoline patterns
-        // If ARM64-specific trampolines are found to exist, implement ARM64 instruction decoding here
-        result = pCode;
+        // ARM64: follow linker thunks/stubs to the real function body so that the
+        // IAT comparison in PatchImport (func == import) succeeds even when one
+        // side points at a thunk. This mirrors the x86/x64 logic below (which
+        // follows the E9 jmp rel32 incremental-linking thunk and the FF25 import
+        // jump stub). Without this, imports such as operator new fail to get
+        // patched on ARM64, causing CRT allocations to be attributed to ucrtbase
+        // instead of the user module.
+        //
+        // ARM64 has no single fixed jump opcode, so we recognize the common
+        // veneer shapes the MSVC linker emits. The scratch register is x16 or
+        // x17 (both are used in practice), so the register field is decoded
+        // rather than hard-coded. Resolution is iterative with a depth bound and
+        // a self-loop guard to avoid runaway recursion on malformed chains. On
+        // any failure to read or decode we return the current address (safe for
+        // normalization) rather than NULL.
+        LPVOID cur = pCode;
+        for (int depth = 0; depth < 16; depth++)
+        {
+            PROTECT_INSTANCE protect_1;
+            // Protect up to 4 instructions (16 bytes); the longest sequence we
+            // decode is ADRP+ADD+LDR+BR.
+            if (!VLDVirtualProtect(&protect_1, cur, sizeof(ULONG) * 4, PAGE_EXECUTE_READ))
+                break;
+
+            const ULONG* p = (const ULONG*)cur;
+            ULONG i0 = p[0];
+            LPVOID next = NULL;
+
+            if ((i0 & 0xFC000000u) == 0x14000000u)
+            {
+                // B <imm26> (incremental-linking thunk; analog of x64 E9 jmp rel32)
+                INT64 imm26 = (INT64)(i0 & 0x03FFFFFFu);
+                if (imm26 & 0x02000000)
+                    imm26 -= 0x04000000; // sign-extend 26-bit
+                next = (LPVOID)((BYTE*)cur + imm26 * 4);
+            }
+            else if ((i0 & 0x9F000000u) == 0x90000000u &&
+                     (((i0 & 0x1Fu) == 16u) || ((i0 & 0x1Fu) == 17u)))
+            {
+                // ADRP Xn, <page> with Xn in {x16, x17}
+                ULONG    xn = i0 & 0x1Fu;
+                INT64    immlo = (i0 >> 29) & 0x3u;
+                INT64    immhi = (i0 >> 5) & 0x7FFFFu;
+                INT64    imm21 = (immhi << 2) | immlo;
+                if (imm21 & 0x100000)
+                    imm21 -= 0x200000; // sign-extend 21-bit
+                ULONG_PTR page = ((ULONG_PTR)cur & ~(ULONG_PTR)0xFFF) + (ULONG_PTR)(imm21 * 4096);
+                ULONG i1 = p[1];
+                ULONG br = 0xD61F0000u | (xn << 5); // BR Xn
+
+                if (((i1 & 0xFFC00000u) == 0xF9400000u) &&        // LDR Xn,[Xn,#imm12]
+                    (((i1 >> 5) & 0x1Fu) == xn) && ((i1 & 0x1Fu) == xn) &&
+                    (p[2] == br))
+                {
+                    // ADRP+LDR+BR: load the function pointer from the IAT slot
+                    // (analog of x64 FF25 jmp [rip+disp]).
+                    ULONG_PTR imm12 = (i1 >> 10) & 0xFFFu;
+                    ULONG_PTR slot = page + (imm12 << 3);
+                    PROTECT_INSTANCE protect_2;
+                    if (VLDVirtualProtect(&protect_2, (LPVOID)slot, sizeof(LPVOID), PAGE_READONLY))
+                    {
+                        next = *(LPVOID*)slot;
+                        VLDVirtualRestore(&protect_2);
+                    }
+                }
+                else if (((i1 & 0xFFC00000u) == 0x91000000u) &&   // ADD Xn,Xn,#imm12 (LSL 0)
+                         (((i1 >> 5) & 0x1Fu) == xn) && ((i1 & 0x1Fu) == xn))
+                {
+                    ULONG_PTR imm12 = (i1 >> 10) & 0xFFFu;
+                    ULONG_PTR addr = page + imm12;
+                    if (p[2] == br)
+                    {
+                        // ADRP+ADD+BR: branch directly to page+offset.
+                        next = (LPVOID)addr;
+                    }
+                    else if (((p[2] & 0xFFFFFC1Fu) == (0xF9400000u | (xn << 5) | xn)) &&
+                             (p[3] == br))
+                    {
+                        // ADRP+ADD+LDR Xn,[Xn]+BR: load from the materialized slot.
+                        PROTECT_INSTANCE protect_2;
+                        if (VLDVirtualProtect(&protect_2, (LPVOID)addr, sizeof(LPVOID), PAGE_READONLY))
+                        {
+                            next = *(LPVOID*)addr;
+                            VLDVirtualRestore(&protect_2);
+                        }
+                    }
+                }
+            }
+            else if ((i0 & 0xFF000000u) == 0x58000000u &&
+                     (((i0 & 0x1Fu) == 16u) || ((i0 & 0x1Fu) == 17u)))
+            {
+                // LDR Xn, <literal> ; BR Xn  with Xn in {x16, x17}
+                ULONG xn = i0 & 0x1Fu;
+                if (p[1] == (0xD61F0000u | (xn << 5)))
+                {
+                    INT64 imm19 = (i0 >> 5) & 0x7FFFFu;
+                    if (imm19 & 0x40000)
+                        imm19 -= 0x80000; // sign-extend 19-bit
+                    ULONG_PTR lit = (ULONG_PTR)cur + (ULONG_PTR)(imm19 * 4);
+                    PROTECT_INSTANCE protect_2;
+                    if (VLDVirtualProtect(&protect_2, (LPVOID)lit, sizeof(LPVOID), PAGE_READONLY))
+                    {
+                        next = *(LPVOID*)lit;
+                        VLDVirtualRestore(&protect_2);
+                    }
+                }
+            }
+
+            VLDVirtualRestore(&protect_1);
+
+            if (next == NULL || next == cur)
+                break; // not a recognized thunk, or a self-loop: stop here
+            cur = next;
+        }
+        result = cur;
 #else
         // we need to make sure we can read the first 7 ULONG_PTRs
         PROTECT_INSTANCE protect_1;
