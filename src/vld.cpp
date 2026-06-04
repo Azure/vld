@@ -112,17 +112,22 @@ BOOLEAN WINAPI LdrpCallInitRoutine(IN PVOID BaseAddress, IN ULONG Reason, IN PVO
 //
 //   LdrRegisterDllNotification provides the equivalent execution point on ARM64:
 //   the LOADED notification is raised once per newly mapped module (not on
-//   subsequent LoadLibrary refcount bumps), on the loading thread, with the
-//   loader lock held, after the module's imports are snapped and before its
-//   DllMain runs. Patching from here mirrors x64 exactly:
+//   subsequent LoadLibrary refcount bumps), on the loading thread, after the
+//   module's imports are snapped and before its DllMain runs. Patching from here
+//   mirrors x64:
 //     * each module is patched exactly once, so there is no concurrent
 //       same-module IAT VirtualProtect/write race (the failure mode of patching
 //       from the post-LdrLoadDll hook, where 64 threads LoadLibrary the same DLL
-//       and patch its IAT simultaneously),
-//     * the loader lock is already held by this thread, so PatchImport's internal
-//       GetProcAddress reacquires it reentrantly (no contention, no drain
-//       deadlock, no lock-order inversion), and
+//       and patch its IAT simultaneously), and
 //     * the IAT is fully snapped, so the patch sticks.
+//
+//   Unlike x64's LdrpCallInitRoutine detour, this callback does NOT run with the
+//   loader lock held recursively by the current thread: under the parallel
+//   loader the post-snap notification can fire while a different loader worker
+//   owns the lock. PatchImport must therefore avoid any loader-lock-reentrant
+//   call (hooked GetModuleHandleA / GetProcAddress -> LdrLockLoaderLock), which
+//   would deadlock the parallel loader. Those calls are skipped on ARM64 in
+//   PatchImport (see utility.cpp).
 
 typedef struct _VLD_LDR_DLL_NOTIFICATION_DATA {
     ULONG       Flags;
