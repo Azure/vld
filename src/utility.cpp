@@ -810,7 +810,9 @@ BOOL PatchImport (HMODULE importmodule, moduleentry_t *patchModule)
     // VLD's own module base. utility.cpp is compiled into the VLD module, so the
     // address of any function here resolves to VLD's own image. Used below to
     // ensure we never record VLD's own hook as the call-through original.
+#if defined(_M_ARM64)
     HMODULE vldModule = GetCallingModule((UINT_PTR)&PatchImport);
+#endif
 
     // have a stack local array of the addresses, don't want to use malloc for this
     // The reason to precompute and cache these is because VirtualProtect is expensive
@@ -899,10 +901,17 @@ BOOL PatchImport (HMODULE importmodule, moduleentry_t *patchModule)
                             // would make the hook call itself (infinite
                             // recursion). The real address is captured when VLD
                             // patches the exporting module's own import, before
-                            // that slot is redirected.
+                            // that slot is redirected. x64 has no fast-forward
+                            // thunk chain that can route through VLD, so the
+                            // unconditional store from upstream is preserved.
+#if defined(_M_ARM64)
                             if (patchEntry->original != NULL &&
                                 GetCallingModule((UINT_PTR)func) != vldModule)
                                 *patchEntry->original = func;
+#else
+                            if (patchEntry->original != NULL)
+                                *patchEntry->original = func;
+#endif
 
                             DWORD protect;
                             if (VirtualProtect(&thunk->u1.Function, sizeof(thunk->u1.Function), PAGE_EXECUTE_READWRITE, &protect)) {

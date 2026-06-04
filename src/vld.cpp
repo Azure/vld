@@ -152,17 +152,11 @@ static VOID CALLBACK VldDllLoadNotification(ULONG reason, const VLD_LDR_DLL_NOTI
         return;
 
     // Guard against re-entering the patch path on this thread in case patching
-    // ever raises another load notification. RAII so any early return keeps the
-    // flag balanced.
+    // ever raises another load notification.
     static thread_local bool patching = false;
-    struct PatchingGuard {
-        bool* flag;
-        PatchingGuard(bool* f) : flag(f) { *flag = true; }
-        ~PatchingGuard() { *flag = false; }
-    };
     if (patching)
         return;
-    PatchingGuard guard(&patching);
+    patching = true;
 
     // Extract the loading module's base name and full path from the
     // PCUNICODE_STRING fields (Buffer is NOT null-terminated; use Length).
@@ -193,6 +187,7 @@ static VOID CALLBACK VldDllLoadNotification(ULONG reason, const VLD_LDR_DLL_NOTI
     // RefreshModules() before PatchCurrentModule().
     g_vld.Arm64RegisterLoadedModule((HMODULE)data->DllBase, fullPath, baseName, data->SizeOfImage);
     g_vld.PatchCurrentModule((HMODULE)data->DllBase);
+    patching = false;
 }
 
 // ----- ARM64 leak-report symbolization guard -----
