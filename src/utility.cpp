@@ -517,14 +517,15 @@ typedef struct PROTECT_INSTANCE_TAG* PROTECT_HANDLE;
 // These functions are used for trampoline/thunk detection on all architectures.
 static BOOL VLDVirtualProtect(PROTECT_HANDLE protect_handle, LPVOID address, SIZE_T size, DWORD protect)
 {
-    BOOL result = TRUE;
     size_t page_count = 0;
+    size_t pages_done = 0; // number of pages where VirtualProtect succeeded
 
     // save the address and size so that we can restore in the same way
     protect_handle->address = address;
     protect_handle->size = size;
 
     uintptr_t current_address = (uintptr_t)address;
+    BOOL succeeded = TRUE;
 
     // walk all pages while we still have size > 0
     while ((size > 0) && (page_count < MAX_PAGES_PROTECT))
@@ -533,20 +534,54 @@ static BOOL VLDVirtualProtect(PROTECT_HANDLE protect_handle, LPVOID address, SIZ
         SIZE_T size_in_page = page_address + PAGE_SIZE - current_address;
         SIZE_T size_to_protect = (size_in_page < size) ? size_in_page : size;
 
-        result = VirtualProtect((LPVOID)current_address, size_to_protect, protect, &protect_handle->old_protect[page_count]);
+        BOOL result = VirtualProtect((LPVOID)current_address, size_to_protect, protect, &protect_handle->old_protect[page_count]);
         if (!result)
         {
             Report(L"%zu: !!! VirtualProtect FAILED when protecting for address=%p, size=%zu, with GetLastError()=%lu, protect_handle->address=%p, protect_handle->size=%zu\n",
                 __LINE__, current_address, size_to_protect,
                 GetLastError(),
                 protect_handle->address, protect_handle->size);
+            succeeded = FALSE;
+            break;
         }
+        pages_done++;
         page_count++;
         current_address += size_to_protect;
         size -= size_to_protect;
     }
 
-    return result;
+    // On partial failure (some pages already had their protection changed),
+    // unwind those changes here so the caller can safely fail without
+    // leaking page-protection state. Callers historically `break` on a
+    // FALSE return from VLDVirtualProtect without calling VLDVirtualRestore,
+    // which previously left earlier successful pages in the new protection.
+    if (!succeeded && pages_done > 0)
+    {
+        uintptr_t restore_address = (uintptr_t)address;
+        SIZE_T restore_size_remaining = protect_handle->size;
+        for (size_t i = 0; i < pages_done; ++i)
+        {
+            uintptr_t page_address = restore_address & PAGE_MASK;
+            SIZE_T size_in_page = page_address + PAGE_SIZE - restore_address;
+            SIZE_T size_to_restore = (size_in_page < restore_size_remaining) ? size_in_page : restore_size_remaining;
+            DWORD dont_care;
+            // Best-effort restore on the failure path: log if it also fails
+            // but do not abort - we are already in an error path.
+            if (!VirtualProtect((LPVOID)restore_address, size_to_restore, protect_handle->old_protect[i], &dont_care))
+            {
+                Report(L"%zu: !!! VirtualProtect FAILED while unwinding partial protect: address=%p size=%zu err=%lu\n",
+                    __LINE__, restore_address, size_to_restore, GetLastError());
+            }
+            restore_address += size_to_restore;
+            restore_size_remaining -= size_to_restore;
+        }
+        // Zero out the handle so any later (incorrect) VLDVirtualRestore call
+        // becomes a no-op rather than re-applying stale protection.
+        protect_handle->address = NULL;
+        protect_handle->size = 0;
+    }
+
+    return succeeded;
 }
 
 static void VLDVirtualRestore(PROTECT_HANDLE protect_handle)

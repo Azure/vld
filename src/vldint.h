@@ -290,6 +290,7 @@ public:
     VOID DisableModule(HMODULE module);
 #if defined(_M_ARM64)
     VOID Arm64RegisterLoadedModule(HMODULE module, PCWSTR fullPath, PCWSTR baseName, ULONG sizeOfImage);
+    VOID Arm64UnregisterLoadedModule(HMODULE module, ULONG sizeOfImage);
 #endif
     UINT32 GetOptions();
     VOID GetReportFilename(WCHAR *filename);

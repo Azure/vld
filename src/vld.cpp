@@ -141,14 +141,31 @@ typedef VOID(CALLBACK *VLD_LDR_DLL_NOTIFICATION_FUNCTION)(ULONG, const VLD_LDR_D
 typedef NTSTATUS(NTAPI *LdrRegisterDllNotification_t)(ULONG, VLD_LDR_DLL_NOTIFICATION_FUNCTION, PVOID, PVOID*);
 typedef NTSTATUS(NTAPI *LdrUnregisterDllNotification_t)(PVOID);
 
-#define VLD_LDR_DLL_NOTIFICATION_REASON_LOADED 1
+#define VLD_LDR_DLL_NOTIFICATION_REASON_LOADED   1
+#define VLD_LDR_DLL_NOTIFICATION_REASON_UNLOADED 2
 
 static PVOID g_vldDllNotificationCookie = NULL;
 
 static VOID CALLBACK VldDllLoadNotification(ULONG reason, const VLD_LDR_DLL_NOTIFICATION_DATA* data, PVOID context)
 {
     UNREFERENCED_PARAMETER(context);
-    if (reason != VLD_LDR_DLL_NOTIFICATION_REASON_LOADED || data == NULL || data->DllBase == NULL)
+    if (data == NULL || data->DllBase == NULL)
+        return;
+
+    if (reason == VLD_LDR_DLL_NOTIFICATION_REASON_UNLOADED)
+    {
+        // Mirror the LOADED registration: erase any entry matching this module
+        // from m_loadedModules so stale entries do not accumulate as DLLs are
+        // loaded and unloaded over the process lifetime. Without this, repeated
+        // load/unload cycles slowly grow the module set; if a new module is
+        // later mapped into a previously-used address range, the overlap-erase
+        // in Arm64RegisterLoadedModule still saves us, but cleaning up at
+        // unload time matches the contract m_loadedModules represents.
+        g_vld.Arm64UnregisterLoadedModule((HMODULE)data->DllBase, data->SizeOfImage);
+        return;
+    }
+
+    if (reason != VLD_LDR_DLL_NOTIFICATION_REASON_LOADED)
         return;
 
     // Guard against re-entering the patch path on this thread in case patching
@@ -204,9 +221,16 @@ static VOID CALLBACK VldDllLoadNotification(ULONG reason, const VLD_LDR_DLL_NOTI
 //   under the loader lock, whether triggered by FreeLibrary (LdrUnloadDll) or by
 //   normal process exit (LdrShutdownProcess). While that report is in progress
 //   the counter below is non-zero and CallStack symbolization emits address-only
-//   frames instead of calling dbghelp. Leak counts are unaffected: every block's
-//   CRT-startup classification is cached by getLeaksCount while modules are still
-//   stable, so the teardown report never needs dbghelp to decide suppression.
+//   frames instead of calling dbghelp.
+//
+//   The destructor pre-populates the suppression cache (CallStack::m_status and
+//   blockinfo_t::reported) by explicitly calling GetLeaksCount() BEFORE this
+//   scope is activated (see ~VisualLeakDetector). That call walks every block
+//   with dbghelp still usable, so the in-scope ReportLeaks can decide
+//   SkipCrtStartupLeaks / IgnoreFunctionsList / IgnoreModulesList suppression
+//   from cache without touching dbghelp at all - leak counts and the exclusion
+//   set are identical to x64.
+//
 //   Manual VLDReportLeaks() calls do not go through ~VisualLeakDetector, so they
 //   keep full symbol resolution.
 static volatile LONG g_arm64InTeardownReport = 0;
@@ -410,10 +434,18 @@ BOOL NtDllRestore(NTDLL_LDR_PATCH &NtDllPatch)
 __declspec(noinline)
 BOOL WINAPI DllEntryPoint(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved)
 {
-    // Patch/Restore ntdll address that calls the dll entry point
+#if !defined(_M_ARM64)
+    // Patch/Restore ntdll address that calls the dll entry point.
+    // The patch scanner uses x86/x64-specific byte sequences (E9/FF25/4D8B/etc)
+    // which do not appear in ARM64 loader code. On ARM64 we use
+    // LdrRegisterDllNotification (installed from VisualLeakDetector::ctor) instead.
+    // Calling NtDllPatch on ARM64 is at best a no-op and at worst could write
+    // x86/x64 opcodes into ARM64 code if a byte pattern coincidentally matched,
+    // so it is hard-guarded out here.
     if (fdwReason == DLL_PROCESS_ATTACH) {
         NtDllPatch((PBYTE)_ReturnAddress(), patch);
     }
+#endif
 
     if (fdwReason == DLL_PROCESS_ATTACH || fdwReason == DLL_THREAD_ATTACH)
         if (!_CRT_INIT(hinstDLL, fdwReason, lpReserved))
@@ -423,9 +455,11 @@ BOOL WINAPI DllEntryPoint(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved
         if (!_CRT_INIT(hinstDLL, fdwReason, lpReserved))
             return(FALSE);
 
+#if !defined(_M_ARM64)
     if (fdwReason == DLL_PROCESS_DETACH) {
         NtDllRestore(patch);
     }
+#endif
     return(TRUE);
 }
 
@@ -820,13 +854,28 @@ VisualLeakDetector::~VisualLeakDetector ()
             }
             g_vldDllNotificationCookie = NULL;
         }
+
+        // Pre-warm the suppression cache while dbghelp is still usable. The ARM64
+        // teardown scope below disables dbghelp symbol resolution because the
+        // bundled ARM64 dbghelp spins under the loader lock at shutdown; but the
+        // automatic ReportLeaks still needs name-based suppression decisions for
+        // SkipCrtStartupLeaks, IgnoreFunctionsList, and IgnoreModulesList. By
+        // calling GetLeaksCount here, we walk every block and resolve symbols
+        // once, populating CallStack::m_status (and marking suppressed blocks
+        // with info->reported = true) so reportLeaks can decide suppression from
+        // cache without touching dbghelp. Without this pre-warm, any leak whose
+        // suppression had not already been queried by user code (e.g. via
+        // VLDGetLeaksCount) would slip through the filter and be reported as a
+        // false positive on ARM64.
+        (void)GetLeaksCount();
 #endif
 #if defined(_M_ARM64)
         // The entire destructor runs under the loader lock (see LoaderLock above).
         // The bundled ARM64 dbghelp spins forever for any symbol resolution or
         // cleanup in that context, so mark the whole teardown: CallStack
         // symbolization emits address-only frames and SymCleanup is skipped
-        // (x64 parity; leak counts are decided earlier while modules are stable).
+        // (x64 parity; leak counts and suppression are decided earlier while
+        // modules are stable, via the GetLeaksCount() pre-warm above).
         Arm64TeardownReportScope arm64TeardownScope;
 #endif
         // Detach Visual Leak Detector from all previously attached modules.
@@ -864,12 +913,13 @@ VisualLeakDetector::~VisualLeakDetector ()
 
         // Free resources used by the symbol handler.
         DbgTrace(L"dbghelp32.dll %i: SymCleanup\n", GetCurrentThreadId());
-#if defined(_M_ARM64)
-        // SymCleanup also spins in the bundled ARM64 dbghelp under the loader
-        // lock at teardown; skip it (the exiting process reclaims dbghelp's own
-        // bookkeeping immediately).
-        if (!VldArm64InTeardownReport())
-#endif
+        // SymCleanup is safe to call on ARM64 even during teardown: empirically
+        // verified by running the full ARM64 ctest with this call active. Prior
+        // versions of the bundled ARM64 dbghelp reportedly spun here; with the
+        // current bundled dbghelp (10.0.26100.8249) this is no longer the case.
+        // Calling SymCleanup unconditionally restores the dbghelp lifecycle
+        // invariant (every SymInitialize is paired with a SymCleanup), which
+        // matters for in-process unload/reload of VLD-as-DLL.
         if (!g_DbgHelp.SymCleanup(g_currentProcess)) {
             Report(L"WARNING: Visual Leak Detector: The symbol handler failed to deallocate resources (error=%lu).\n",
                 GetLastError());
@@ -2617,10 +2667,17 @@ VOID VisualLeakDetector::PatchCurrentModule(HMODULE module)
 //   for every dll that allocates during CRT initialization but is not VLD-aware
 //   until the test calls VLDEnableModule.
 //
-//   Intentionally avoids any call that could contend with the parallel loader:
-//   no GetProcAddress / GetModuleHandle* / LoadLibrary, no
-//   EnumerateLoadedModulesW64, no dbghelp. Only reads PE/IAT memory and
-//   short-held m_modulesLock.
+//   Also calls SymLoadModuleExW on the new module so dbghelp knows about it for
+//   later SymFromAddrW lookups (function-name resolution in leak callstacks).
+//   SYMOPT_DEFERRED_LOADS is set globally, so this call is cheap: it just
+//   records the module's address range; the PDB is parsed lazily on the first
+//   symbol query, which by that time will run on a normal thread (not from the
+//   LDR notification) without loader-lock contention.
+//
+//   Avoids the loader-lock-unsafe paths that attachToLoadedModules takes:
+//   no GetProcAddress / GetModuleHandle* / LoadLibrary,
+//   no EnumerateLoadedModulesW64. Only reads PE/IAT memory, registers the
+//   module with dbghelp (deferred), and holds m_modulesLock briefly.
 VOID VisualLeakDetector::Arm64RegisterLoadedModule(HMODULE module, PCWSTR fullPath, PCWSTR baseName, ULONG sizeOfImage)
 {
     if (m_options & VLD_OPT_VLDOFF)
@@ -2706,6 +2763,32 @@ VOID VisualLeakDetector::Arm64RegisterLoadedModule(HMODULE module, PCWSTR fullPa
         moduleinfo.path = lowerName;
     }
 
+    // Register the module with dbghelp so SymFromAddrW can later resolve its
+    // function names. SYMOPT_DEFERRED_LOADS is set, so this only records the
+    // address range; the PDB is loaded lazily on first symbol query. Without
+    // this call, dbghelp would not know about modules loaded after VLD init,
+    // and leak callstacks for dynamically loaded DLLs would show address-only
+    // frames (e.g. "dynamic.dll!0x00007FFE88C2BE04()").
+    if (!(moduleFlags & VLD_MODULE_EXCLUDED)) {
+        CriticalSectionLocker<DbgHelp> dbgLocker(g_DbgHelp);
+        DbgTrace(L"dbghelp32.dll %i: SymLoadModuleExW (Arm64RegisterLoadedModule)\n", GetCurrentThreadId());
+        g_DbgHelp.SymLoadModuleExW(
+            g_currentProcess,
+            NULL,
+            moduleinfo.path.c_str(),
+            NULL,
+            (DWORD64)(UINT_PTR)module,
+            sizeOfImage,
+            NULL,
+            0,
+            dbgLocker);
+        // Ignore the return value: SymLoadModuleExW returns 0 if the module is
+        // already loaded (which can happen for overlapping reloads). We do not
+        // mark VLD_MODULE_SYMBOLSLOADED here because attachToLoadedModules'
+        // RefreshModules call (or a future explicit VLDRefreshModules) will set
+        // it properly along with the full SymGetModuleInfoW64 invariants.
+    }
+
     // Insert under m_modulesLock. Remove any prior entry whose range overlaps
     // ours (e.g. unload-then-reload-at-same-base, or stale entry from a prior
     // load of a different module at the same address).
@@ -2717,6 +2800,40 @@ VOID VisualLeakDetector::Arm64RegisterLoadedModule(HMODULE module, PCWSTR fullPa
         m_loadedModules->erase(existing);
     }
     m_loadedModules->insert(moduleinfo);
+}
+
+// Arm64UnregisterLoadedModule - Removes a module from m_loadedModules when
+//   the loader unloads it (LdrUnregisterDllNotification UNLOADED reason).
+//   Without this, m_loadedModules slowly accumulates stale entries over the
+//   life of a process that loads and unloads many DLLs. Since the unloaded
+//   pages are no longer mapped, the stale entries cannot cause direct
+//   misclassification (no allocation can come from unmapped memory), but
+//   they consume memory and slightly slow isModuleExcluded lookups.
+//
+//   Does NOT call SymUnloadModule64 here: that would round-trip through
+//   dbghelp from the LDR notification which we want to keep short. dbghelp
+//   tolerates stale entries for unmapped modules - it will fail symbol
+//   queries for those addresses cleanly. The next RefreshModules() (if any)
+//   will properly unload symbols.
+VOID VisualLeakDetector::Arm64UnregisterLoadedModule(HMODULE module, ULONG sizeOfImage)
+{
+    if (m_options & VLD_OPT_VLDOFF)
+        return;
+    if (module == NULL || sizeOfImage == 0)
+        return;
+
+    moduleinfo_t key;
+    key.addrLow  = (UINT_PTR)module;
+    key.addrHigh = (UINT_PTR)module + sizeOfImage - 1;
+    key.flags    = 0;
+
+    CriticalSectionLocker<> cs(m_modulesLock);
+    while (true) {
+        ModuleSet::Iterator it = m_loadedModules->find(key);
+        if (it == m_loadedModules->end())
+            break;
+        m_loadedModules->erase(it);
+    }
 }
 #endif
 

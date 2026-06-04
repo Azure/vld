@@ -363,6 +363,103 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_functions_test/ignore_functions_tes
 endif()
 
 # ============================================================================
+# Destructor-time suppression regression test
+#
+# Verifies that VLD's automatic destructor report correctly suppresses
+# allocations matched by IgnoreFunctionsList / SkipCrtStartupLeaks even when
+# user code never called VLDGetLeaksCount or any other VLD API to pre-warm
+# the suppression cache. The destructor itself must trigger the cache fill
+# before any teardown scope that disables name-based dbghelp resolution
+# (relevant on ARM64). This test calls no VLD API; success is determined by
+# CTest matching "No memory leaks detected" in the test's stdout.
+# ============================================================================
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/dtor_suppression_test/dtor_suppression_test.cpp)
+    add_vld_test(dtor_suppression_test
+        SOURCES dtor_suppression_test/dtor_suppression_test.cpp
+    )
+
+    # Own output subdirectory so the test's vld.ini does not conflict with peers.
+    set_target_properties(dtor_suppression_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/dtor_suppression_test"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin/Debug/dtor_suppression_test"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin/Release/dtor_suppression_test"
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/bin/RelWithDebInfo/dtor_suppression_test"
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/bin/MinSizeRel/dtor_suppression_test"
+    )
+
+    add_custom_command(TARGET dtor_suppression_test POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/dtor_suppression_test/vld.ini"
+            "$<TARGET_FILE_DIR:dtor_suppression_test>/vld.ini"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:vld>"
+            "$<TARGET_FILE_DIR:dtor_suppression_test>/$<TARGET_FILE_NAME:vld>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/setup/dbghelp/${DBGHELP_ARCH}/dbghelp.dll"
+            "$<TARGET_FILE_DIR:dtor_suppression_test>/dbghelp.dll"
+        COMMENT "Copying dtor_suppression_test vld.ini, VLD DLL, and dbghelp.dll"
+    )
+
+    # The test exits with code 0 unconditionally; CTest determines pass/fail
+    # by inspecting the VLD destructor's stdout output. PASS requires the
+    # "No memory leaks detected" line and FAIL on any actual leak report header.
+    set_property(TEST dtor_suppression_test PROPERTY
+        PASS_REGULAR_EXPRESSION "No memory leaks detected")
+    set_property(TEST dtor_suppression_test PROPERTY
+        FAIL_REGULAR_EXPRESSION "Visual Leak Detector detected [0-9]+ memory leak")
+endif()
+
+# ============================================================================
+# Dynamically loaded module symbol resolution regression test
+#
+# Verifies that VLD resolves function names (via dbghelp) for modules loaded
+# AFTER VLD startup via LoadLibrary. On x64 the LdrpCallInitRoutine detour
+# calls SymLoadModuleExW for each newly loaded module; on ARM64 we have to
+# arrange the equivalent from our LDR LOADED callback. Without that, leak
+# callstacks for dynamically loaded DLLs degrade to address-only frames.
+# The test loads dynamic.dll, calls SimpleLeak_Malloc (which deliberately
+# leaks 6 allocations from named functions in dynamic.dll), then exits.
+# ============================================================================
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/dyn_symbol_test/dyn_symbol_test.cpp)
+    add_vld_test(dyn_symbol_test
+        SOURCES dyn_symbol_test/dyn_symbol_test.cpp
+    )
+    add_dependencies(dyn_symbol_test dynamic)
+
+    set_target_properties(dyn_symbol_test PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/dyn_symbol_test"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin/Debug/dyn_symbol_test"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin/Release/dyn_symbol_test"
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/bin/RelWithDebInfo/dyn_symbol_test"
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/bin/MinSizeRel/dyn_symbol_test"
+    )
+
+    add_custom_command(TARGET dyn_symbol_test POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/dyn_symbol_test/vld.ini"
+            "$<TARGET_FILE_DIR:dyn_symbol_test>/vld.ini"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:vld>"
+            "$<TARGET_FILE_DIR:dyn_symbol_test>/$<TARGET_FILE_NAME:vld>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/setup/dbghelp/${DBGHELP_ARCH}/dbghelp.dll"
+            "$<TARGET_FILE_DIR:dyn_symbol_test>/dbghelp.dll"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:dynamic>"
+            "$<TARGET_FILE_DIR:dyn_symbol_test>/$<TARGET_FILE_NAME:dynamic>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_PDB_FILE:dynamic>"
+            "$<TARGET_FILE_DIR:dyn_symbol_test>/dynamic.pdb"
+        COMMENT "Copying dyn_symbol_test vld.ini, VLD DLL, dbghelp.dll, dynamic.dll, dynamic.pdb"
+    )
+
+    set_property(TEST dyn_symbol_test PROPERTY
+        PASS_REGULAR_EXPRESSION "dynamic\\.dll!LeakMemoryMalloc")
+    set_property(TEST dyn_symbol_test PROPERTY
+        FAIL_REGULAR_EXPRESSION "dynamic\\.dll!0x[0-9A-Fa-f]+\\(")
+endif()
+
+# ============================================================================
 # Deep Callstack Test - Tests for excessively long stack traces (PR #37)
 # ============================================================================
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/deep_callstack_test/deep_callstack_test.cpp)
