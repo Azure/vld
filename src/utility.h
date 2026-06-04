@@ -172,6 +172,9 @@ LPVOID Arm64LookupKernelbaseHeapProc (LPCSTR importname);
 VOID DumpMemoryA (LPCVOID address, SIZE_T length);
 VOID DumpMemoryW (LPCVOID address, SIZE_T length);
 BOOL FindImport (HMODULE importmodule, HMODULE exportmodule, LPCSTR exportmodulename, LPCSTR importname);
+#if defined(_M_ARM64)
+BOOL FindImportByExportAddress (HMODULE importmodule, LPCSTR exportmodulename, LPCVOID exportAddress);
+#endif
 BOOL FindPatch (HMODULE importmodule, moduleentry_t* module);
 VOID InsertReportDelay ();
 BOOL IsModulePatched (HMODULE importmodule, moduleentry_t patchtable [], UINT tablesize);

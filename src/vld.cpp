@@ -152,13 +152,47 @@ static VOID CALLBACK VldDllLoadNotification(ULONG reason, const VLD_LDR_DLL_NOTI
         return;
 
     // Guard against re-entering the patch path on this thread in case patching
-    // ever raises another load notification.
+    // ever raises another load notification. RAII so any early return keeps the
+    // flag balanced.
     static thread_local bool patching = false;
+    struct PatchingGuard {
+        bool* flag;
+        PatchingGuard(bool* f) : flag(f) { *flag = true; }
+        ~PatchingGuard() { *flag = false; }
+    };
     if (patching)
         return;
-    patching = true;
+    PatchingGuard guard(&patching);
+
+    // Extract the loading module's base name and full path from the
+    // PCUNICODE_STRING fields (Buffer is NOT null-terminated; use Length).
+    WCHAR baseName[_MAX_FNAME + _MAX_EXT] = { 0 };
+    WCHAR fullPath[MAX_PATH] = { 0 };
+    PCUNICODE_STRING bdn = (PCUNICODE_STRING)data->BaseDllName;
+    PCUNICODE_STRING fdn = (PCUNICODE_STRING)data->FullDllName;
+    if (bdn != NULL && bdn->Buffer != NULL && bdn->Length > 0) {
+        size_t chars = bdn->Length / sizeof(WCHAR);
+        if (chars >= _countof(baseName))
+            chars = _countof(baseName) - 1;
+        memcpy(baseName, bdn->Buffer, chars * sizeof(WCHAR));
+        baseName[chars] = L'\0';
+    }
+    if (fdn != NULL && fdn->Buffer != NULL && fdn->Length > 0) {
+        size_t chars = fdn->Length / sizeof(WCHAR);
+        if (chars >= _countof(fullPath))
+            chars = _countof(fullPath) - 1;
+        memcpy(fullPath, fdn->Buffer, chars * sizeof(WCHAR));
+        fullPath[chars] = L'\0';
+    }
+
+    // Register the module in m_loadedModules BEFORE patching its IAT, so that
+    // when the patched hooks fire for allocations inside DllMain / static
+    // initializers (e.g. dynamic.dll's "static MemoryLeak ml" in Allocs.cpp),
+    // isModuleExcluded can return TRUE based on the proper VLD_MODULE_EXCLUDED
+    // flag, matching x64 behavior where LdrpCallInitRoutine calls
+    // RefreshModules() before PatchCurrentModule().
+    g_vld.Arm64RegisterLoadedModule((HMODULE)data->DllBase, fullPath, baseName, data->SizeOfImage);
     g_vld.PatchCurrentModule((HMODULE)data->DllBase);
-    patching = false;
 }
 
 // ----- ARM64 leak-report symbolization guard -----
@@ -2576,6 +2610,120 @@ VOID VisualLeakDetector::PatchCurrentModule(HMODULE module)
     // doesn't see it yet (race condition during DLL loading).
     PatchModule(module, m_patchTable, _countof(m_patchTable));
 }
+
+#if defined(_M_ARM64)
+// Arm64RegisterLoadedModule - Pre-registers a freshly loaded module in
+//   m_loadedModules from the LDR LOADED notification, BEFORE the module's
+//   DllMain runs. This mirrors what RefreshModules + attachToLoadedModules do
+//   on x64 from the LdrpCallInitRoutine detour: it sets VLD_MODULE_EXCLUDED on
+//   modules that do not import g_vld, so that allocations made by their static
+//   initializers (e.g. dynamic.dll's "static MemoryLeak ml" in Allocs.cpp) are
+//   excluded from leak tracking. Without this step, ARM64 over-counts by one
+//   for every dll that allocates during CRT initialization but is not VLD-aware
+//   until the test calls VLDEnableModule.
+//
+//   Intentionally avoids any call that could contend with the parallel loader:
+//   no GetProcAddress / GetModuleHandle* / LoadLibrary, no
+//   EnumerateLoadedModulesW64, no dbghelp. Only reads PE/IAT memory and
+//   short-held m_modulesLock.
+VOID VisualLeakDetector::Arm64RegisterLoadedModule(HMODULE module, PCWSTR fullPath, PCWSTR baseName, ULONG sizeOfImage)
+{
+    if (m_options & VLD_OPT_VLDOFF)
+        return;
+    if (module == NULL || sizeOfImage == 0)
+        return;
+    if (m_vldBase == NULL || module == m_vldBase)
+        return;
+    if (baseName == NULL || baseName[0] == L'\0')
+        return;
+
+    WCHAR lowerName[_MAX_FNAME + _MAX_EXT];
+    wcsncpy_s(lowerName, _countof(lowerName), baseName, _TRUNCATE);
+    _wcslwr_s(lowerName, _countof(lowerName));
+
+    LPSTR modulenamea = NULL;
+    ConvertModulePathToAscii(lowerName, &modulenamea);
+
+    // Update m_patchTable[].moduleBase for matching entries (mirrors
+    // addLoadedModule). Single aligned-pointer writes; benign race if two
+    // threads load the same dll simultaneously.
+    if (modulenamea != NULL) {
+        UINT tablesize = _countof(m_patchTable);
+        for (UINT index = 0; index < tablesize; index++) {
+            moduleentry_t *entry = &m_patchTable[index];
+            if (_stricmp(entry->exportModuleName, modulenamea) == 0) {
+                entry->moduleBase = (UINT_PTR)module;
+            }
+        }
+    }
+
+    // Compute module flags mirroring attachToLoadedModules (vld.cpp:1033-1080).
+    // Note: IgnoreModulesList is only consulted inside the !FindImport branch in
+    // the existing code; preserve that exactly.
+    UINT32 moduleFlags = 0;
+    BOOL importsVld = FindImportByExportAddress(module, VLDDLL, (LPCVOID)&g_vld);
+    if (!importsVld) {
+        bool patchKnownModule = false;
+        if (modulenamea != NULL) {
+            UINT tablesize = _countof(m_patchTable);
+            for (UINT index = 0; index < tablesize; index++) {
+                moduleentry_t *entry = &m_patchTable[index];
+                if (_stricmp(entry->exportModuleName, modulenamea) == 0) {
+                    if (entry->reportLeaks != 0)
+                        patchKnownModule = true;
+                    break;
+                }
+            }
+        }
+
+        if (!patchKnownModule) {
+            if ((m_options & VLD_OPT_MODULE_LIST_INCLUDE) != 0) {
+                if (wcsstr(m_forcedModuleList, lowerName) == NULL) {
+                    moduleFlags |= VLD_MODULE_EXCLUDED;
+                }
+            } else {
+                if (wcsstr(m_forcedModuleList, lowerName) != NULL) {
+                    moduleFlags |= VLD_MODULE_EXCLUDED;
+                }
+            }
+        }
+
+        if ((m_options & VLD_OPT_IGNORE_MODULES) != 0) {
+            if (wcsstr(m_ignoreModuleList, lowerName) != NULL) {
+                moduleFlags |= VLD_MODULE_EXCLUDED | VLD_MODULE_IGNORED;
+            }
+        }
+    }
+
+    if (modulenamea != NULL) {
+        delete[] modulenamea;
+        modulenamea = NULL;
+    }
+
+    moduleinfo_t moduleinfo;
+    moduleinfo.addrLow  = (UINT_PTR)module;
+    moduleinfo.addrHigh = (UINT_PTR)module + sizeOfImage - 1;
+    moduleinfo.flags    = moduleFlags;
+    moduleinfo.name     = lowerName;
+    if (fullPath != NULL && fullPath[0] != L'\0') {
+        moduleinfo.path = fullPath;
+    } else {
+        moduleinfo.path = lowerName;
+    }
+
+    // Insert under m_modulesLock. Remove any prior entry whose range overlaps
+    // ours (e.g. unload-then-reload-at-same-base, or stale entry from a prior
+    // load of a different module at the same address).
+    CriticalSectionLocker<> cs(m_modulesLock);
+    while (true) {
+        ModuleSet::Iterator existing = m_loadedModules->find(moduleinfo);
+        if (existing == m_loadedModules->end())
+            break;
+        m_loadedModules->erase(existing);
+    }
+    m_loadedModules->insert(moduleinfo);
+}
+#endif
 
 // Find the information for the module that initiated this reallocation.
 bool VisualLeakDetector::isModuleExcluded(UINT_PTR address)

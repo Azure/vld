@@ -288,6 +288,9 @@ public:
     VOID MarkThreadLeaksAsReported(DWORD threadId);
     VOID EnableModule(HMODULE module);
     VOID DisableModule(HMODULE module);
+#if defined(_M_ARM64)
+    VOID Arm64RegisterLoadedModule(HMODULE module, PCWSTR fullPath, PCWSTR baseName, ULONG sizeOfImage);
+#endif
     UINT32 GetOptions();
     VOID GetReportFilename(WCHAR *filename);
     VOID SetOptions(UINT32 option_mask, SIZE_T maxDataDump, UINT32 maxTraceFrames);

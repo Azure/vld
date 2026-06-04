@@ -344,6 +344,34 @@ BOOL FindImport (HMODULE importmodule, HMODULE exportmodule, LPCSTR exportmodule
     return FALSE;
 }
 
+#if defined(_M_ARM64)
+// FindImportByExportAddress - Same as FindImport but takes a pre-resolved export
+//   address instead of looking it up via GetProcAddress. Used by the ARM64 LDR
+//   notification path where calling GetProcAddress on the loading thread could
+//   contend with the parallel loader.
+BOOL FindImportByExportAddress (HMODULE importmodule, LPCSTR exportmodulename, LPCVOID exportAddress)
+{
+    IMAGE_IMPORT_DESCRIPTOR *idte;
+    IMAGE_THUNK_DATA        *iate;
+
+    if (exportAddress == NULL)
+        return FALSE;
+
+    idte = FindOriginalImportDescriptor(importmodule, exportmodulename);
+    if (idte == NULL)
+        return FALSE;
+
+    iate = (IMAGE_THUNK_DATA*)R2VA(importmodule, idte->FirstThunk);
+    while (iate->u1.Function != 0x0) {
+        if (iate->u1.Function == (DWORD_PTR)exportAddress) {
+            return TRUE;
+        }
+        iate++;
+    }
+    return FALSE;
+}
+#endif
+
 // FindPatch - Determines if the specified module has been patched to use the
 //   specified replacement.
 //
