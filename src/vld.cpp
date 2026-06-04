@@ -75,59 +75,42 @@ moduleentry_t ntdllPatch [] = {
 
 /////////////////////////////////////////////////////////
 
-// We provide our own DllEntryPoint in order to capture the ReturnAddress of the function calling our DllEntryPoint.
-// Then we patch this function namely ntdll.dll!LdrpCallInitRoutine or any equivalent NT loader function by calling
-// our LdrpCallInitRoutine where we RefreshModules before calling the EntryPoint in order to hook all functions required
-// to properly capture all _CRT_INIT memory allocations which include internal CRT startup memory allocations and all
-// global and static initializers.
+// We provide our own DllEntryPoint so VLD can hook into _CRT_INIT.
+// The actual per-module IAT patching for newly loaded DLLs (so VLD can track
+// allocations made by their DllMain and static initializers) is done by the
+// LdrRegisterDllNotification LOADED callback registered in the VLD constructor.
+// The LOADED notification fires inside LdrpDoPostSnapWork - after imports are
+// snapped and before LdrpCallInitRoutine runs DllMain - which is exactly the
+// point at which we need to patch the IAT.
 //
 // In getLeaksCount(), reportLeaks() and resolveStacks(), we take extra measures to identify and exclude debug and release
 // internal CRT allocations from reporting as real memory leaks.
 //
 // Global and static initializers *might* be reported as memory leaks based on the order being unintialised by _CRT_INIT.
 
-typedef BOOLEAN(NTAPI *PDLL_INIT_ROUTINE)(IN PVOID DllHandle, IN ULONG Reason, IN PCONTEXT Context OPTIONAL);
-BOOLEAN WINAPI LdrpCallInitRoutine(IN PVOID BaseAddress, IN ULONG Reason, IN PVOID Context, IN PDLL_INIT_ROUTINE EntryPoint)
-{
-    LoaderLock ll;
-
-    if (Reason == DLL_PROCESS_ATTACH) {
-        g_vld.RefreshModules();
-        // Explicitly patch the module being loaded, in case EnumerateLoadedModulesW64
-        // doesn't see it yet (race condition during DLL loading)
-        g_vld.PatchCurrentModule((HMODULE)BaseAddress);
-    }
-
-    return EntryPoint(BaseAddress, Reason, (PCONTEXT)Context);
-}
-
-#if defined(_M_ARM64)
-// ----- ARM64 dynamic-module patching via LDR DLL notifications -----
+// ----- Dynamic-module patching via LDR DLL notifications -----
 //
-//   On x64 a dynamically loaded module's IAT is patched from the
-//   LdrpCallInitRoutine machine-code detour above. That detour runs once per
-//   module, on the loading thread, while it already owns the loader lock, right
-//   before the module's DllMain. The detour is x86/x64 assembly and cannot be
-//   installed on ARM64.
-//
-//   LdrRegisterDllNotification provides the equivalent execution point on ARM64:
-//   the LOADED notification is raised once per newly mapped module (not on
-//   subsequent LoadLibrary refcount bumps), on the loading thread, after the
-//   module's imports are snapped and before its DllMain runs. Patching from here
-//   mirrors x64:
+//   When a DLL is mapped into the process by the loader, LdrpDoPostSnapWork
+//   sends a LOADED notification to all registered callbacks (registered via
+//   LdrRegisterDllNotification). That notification fires once per newly mapped
+//   module (not on subsequent LoadLibrary refcount bumps), after the module's
+//   imports are snapped, and BEFORE LdrpCallInitRoutine runs the module's
+//   DllMain. Patching here means:
 //     * each module is patched exactly once, so there is no concurrent
 //       same-module IAT VirtualProtect/write race (the failure mode of patching
-//       from the post-LdrLoadDll hook, where 64 threads LoadLibrary the same DLL
+//       from the post-LdrLoadDll hook, where N threads LoadLibrary the same DLL
 //       and patch its IAT simultaneously), and
-//     * the IAT is fully snapped, so the patch sticks.
+//     * the IAT is fully snapped, so the patch sticks, and
+//     * DllMain / static initializers run with the patched IAT in place, so
+//       their allocations route through VLD's hooks.
 //
-//   Unlike x64's LdrpCallInitRoutine detour, this callback does NOT run with the
-//   loader lock held recursively by the current thread: under the parallel
-//   loader the post-snap notification can fire while a different loader worker
-//   owns the lock. PatchImport must therefore avoid any loader-lock-reentrant
-//   call (hooked GetModuleHandleA / GetProcAddress -> LdrLockLoaderLock), which
-//   would deadlock the parallel loader. Those calls are skipped on ARM64 in
-//   PatchImport (see utility.cpp).
+//   Important: under the parallel loader (Win10+) the LOADED notification can
+//   fire while a different loader worker owns the loader lock. The callback
+//   must therefore avoid any loader-lock-reentrant call (hooked GetModuleHandleA
+//   / GetProcAddress -> LdrLockLoaderLock would deadlock). PatchImport in
+//   utility.cpp is written accordingly: it never invokes a hooked import; the
+//   saved real GetProcAddress (VisualLeakDetector::_RGetProcAddress) is used to
+//   resolve every patch-table entry.
 
 typedef struct _VLD_LDR_DLL_NOTIFICATION_DATA {
     ULONG       Flags;
@@ -154,14 +137,14 @@ static VOID CALLBACK VldDllLoadNotification(ULONG reason, const VLD_LDR_DLL_NOTI
 
     if (reason == VLD_LDR_DLL_NOTIFICATION_REASON_UNLOADED)
     {
-        // Mirror the LOADED registration: erase any entry matching this module
-        // from m_loadedModules so stale entries do not accumulate as DLLs are
-        // loaded and unloaded over the process lifetime. Without this, repeated
+        // Mirror the LOADED registration: erase the matching entry from
+        // m_loadedModules so stale entries do not accumulate as DLLs are loaded
+        // and unloaded over the process lifetime. Without this, repeated
         // load/unload cycles slowly grow the module set; if a new module is
         // later mapped into a previously-used address range, the overlap-erase
-        // in Arm64RegisterLoadedModule still saves us, but cleaning up at
-        // unload time matches the contract m_loadedModules represents.
-        g_vld.Arm64UnregisterLoadedModule((HMODULE)data->DllBase, data->SizeOfImage);
+        // in RegisterLoadedModule still saves us, but cleaning up at unload
+        // time matches the contract m_loadedModules represents.
+        g_vld.UnregisterLoadedModule((HMODULE)data->DllBase, data->SizeOfImage);
         return;
     }
 
@@ -200,13 +183,13 @@ static VOID CALLBACK VldDllLoadNotification(ULONG reason, const VLD_LDR_DLL_NOTI
     // when the patched hooks fire for allocations inside DllMain / static
     // initializers (e.g. dynamic.dll's "static MemoryLeak ml" in Allocs.cpp),
     // isModuleExcluded can return TRUE based on the proper VLD_MODULE_EXCLUDED
-    // flag, matching x64 behavior where LdrpCallInitRoutine calls
-    // RefreshModules() before PatchCurrentModule().
-    g_vld.Arm64RegisterLoadedModule((HMODULE)data->DllBase, fullPath, baseName, data->SizeOfImage);
+    // flag.
+    g_vld.RegisterLoadedModule((HMODULE)data->DllBase, fullPath, baseName, data->SizeOfImage);
     g_vld.PatchCurrentModule((HMODULE)data->DllBase);
     patching = false;
 }
 
+#if defined(_M_ARM64)
 // ----- ARM64 leak-report symbolization guard -----
 //
 //   The bundled ARM64 dbghelp spins forever inside SymFromInlineContextW /
@@ -247,186 +230,6 @@ struct Arm64TeardownReportScope
 };
 #endif
 
-PBYTE NtDllFindDetourAddress(const PBYTE pAddress, SIZE_T dwSize)
-{
-    MEMORY_BASIC_INFORMATION meminfo = { 0 };
-    if (VirtualQuery(pAddress, &meminfo, sizeof(meminfo))) {
-        // Find spare bytes at the end of the memory region that are unused
-        // so we can jump to this address and set up the detour.
-        PBYTE end = (PBYTE)meminfo.BaseAddress + meminfo.RegionSize;
-        PBYTE begin = end;
-
-        while (((SIZE_T)(end - begin) < dwSize) && (begin != pAddress)) {
-            if (*(--begin) != 0x00)
-                end = begin;
-        }
-        if (begin != pAddress)
-            return begin;
-    }
-    return NULL;
-}
-
-PBYTE NtDllFindParamAddress(const PBYTE pAddress)
-{
-    PBYTE ptr = pAddress;
-    // Test previous 32 bytes to find the begining address we need to patch
-    // for 32bit find => push [ebp][14h] => parameters are pushed to stack
-    // for 64bit find => mov r8,... => parameters are moved to registers r8, edx, rcx
-    while (pAddress - --ptr < 0x20) {
-#ifdef _WIN64
-        if (((ptr[0] & 0x4D) >= 0x4C) && (ptr[1] == 0x8B) && ((ptr[2] & 0xC7) == ptr[2])) {
-#else
-        if ((ptr[0] == 0xFF) && (ptr[1] == 0x75) && (ptr[2] == 0x14)) {
-#endif
-            return ptr;
-        }
-        }
-    return NULL;
-    }
-
-PBYTE NtDllFindCallAddress(const PBYTE pAddress)
-{
-    PBYTE ptr = pAddress;
-    // Test previous 32 bytes to find the begining address we need to patch
-    // for 32bit find => call [ebp][08h]
-    // for 64bit find => call <register>
-    while (pAddress - --ptr < 0x20) {
-#ifdef _WIN64
-        if ((ptr[0] == 0xFF) && ((ptr[1] & 0xD7) == ptr[1])) {
-            if ((*(ptr - 1) & 0x41) == *(ptr - 1)) {
-                --ptr;
-            }
-#else
-        if ((ptr[0] == 0xFF) && (ptr[1] == 0x55) && (ptr[2] == 0x08)) {
-#endif
-            return ptr;
-        }
-        }
-    return NULL;
-    }
-
-typedef struct _NTDLL_LDR_PATCH {
-    PBYTE pPatchAddress;
-    SIZE_T nPatchSize;
-    BYTE pBackup[0x20];
-    PBYTE pDetourAddress;
-    SIZE_T nDetourSize;
-    BOOL bState;
-} NTDLL_LDR_PATCH, *PNTDLL_LDR_PATCH;
-
-NTDLL_LDR_PATCH patch;
-
-
-BOOL NtDllPatch(const PBYTE pReturnAddress, NTDLL_LDR_PATCH &NtDllPatch)
-{
-    if (NtDllPatch.bState == FALSE) {
-#ifdef _WIN64
-        BYTE ptr[] = { '?', 0x8B, '?' };                                     // mov r9, r..
-        BYTE mov[] = { 0x48, 0xB8, '?', '?', '?', '?', '?', '?', '?', '?' }; // mov rax, 0x0000000000000000
-        BYTE call[] = { 0xFF, 0xD0 };                                        // call rax
-#else
-        BYTE ptr[] = { 0xFF, 0x75, 0x08 };                                   // push [ebp][08h]
-        BYTE mov[] = { 0x90, 0xB8, '?', '?', '?', '?' };                     // mov eax, 0x00000000
-        BYTE call[] = { 0xFF, 0xD0 };                                        // call eax
-#endif
-        BYTE jmp[] = { 0xE9, '?', '?', '?', '?' };                           // jmp 0x00000000
-
-        NtDllPatch.pPatchAddress = NtDllFindParamAddress(pReturnAddress);
-        PBYTE pCallAddress = NtDllFindCallAddress(pReturnAddress);
-        NtDllPatch.nPatchSize = pReturnAddress - NtDllPatch.pPatchAddress;
-        SIZE_T nParamSize = pCallAddress - NtDllPatch.pPatchAddress;
-
-        NtDllPatch.nDetourSize = _countof(ptr) + nParamSize + _countof(mov) + _countof(jmp);
-        NtDllPatch.pDetourAddress = NtDllFindDetourAddress(pReturnAddress, NtDllPatch.nDetourSize);
-
-        if (NtDllPatch.pPatchAddress && NtDllPatch.pDetourAddress && ((_countof(jmp) + _countof(call)) <= NtDllPatch.nPatchSize)) {
-            memcpy(NtDllPatch.pBackup, NtDllPatch.pPatchAddress, NtDllPatch.nPatchSize);
-
-            DWORD dwProtect = 0;
-            if (VirtualProtect(NtDllPatch.pDetourAddress, NtDllPatch.nDetourSize, PAGE_EXECUTE_READWRITE, &dwProtect)) {
-                memset(NtDllPatch.pDetourAddress, 0x90, NtDllPatch.nDetourSize);
-#ifdef _WIN64
-                // Copy original param instructions
-                memcpy(NtDllPatch.pDetourAddress, NtDllPatch.pPatchAddress, nParamSize);
-
-                BYTE reg = 0x00;
-
-                LPBYTE icall = NtDllPatch.pPatchAddress + nParamSize - (3 /*instruction size*/ + sizeof(DWORD));
-                if ((*(LPDWORD)icall & 0x000D8B4C) == 0x000D8B4C) {
-                    // From Windows 10 (1607) calls to the EntryPoint are dispatched through
-                    // __guard_dispatch_icall_fptr. In such case correct the relative address.
-                    DWORD fptr = *(LPDWORD)(icall + 3) + (3 /*instruction size*/ + sizeof(DWORD)) - (DWORD)(NtDllPatch.pDetourAddress - NtDllPatch.pPatchAddress);
-                    memcpy(NtDllPatch.pDetourAddress + nParamSize - sizeof(DWORD), &fptr, sizeof(DWORD));
-
-                    // Additionally in such case the EntryPoint is held in another register
-                    // that was moved to rax. In such case identify the correct register
-                    // holding the EntryPoint
-                    reg = ((*(icall - 3) & 0xF1) == 0x41 ? 0x08 : 0x00) + (*(icall - 1) & 0x07);
-                } else {
-                    reg = ((pCallAddress[0] & 0xF1) == 0x41 ? 0x08 : 0x00) + (pCallAddress[pReturnAddress - pCallAddress - 1] & 0x07);
-                }
-
-                // Copy the register that holds the EntryPoint to r9
-                ptr[0] = 0x4C + ((reg & 0x08) ? 0x01 : 0x00);
-                ptr[2] = 0xC8 + (reg & 0x07);
-                memcpy(&NtDllPatch.pDetourAddress[nParamSize], &ptr, _countof(ptr));
-#else
-                // Push EntryPoint as last parameter
-                memcpy(&NtDllPatch.pDetourAddress[0], &ptr, _countof(ptr));
-                // Copy original param instructions
-                memcpy(&NtDllPatch.pDetourAddress[_countof(ptr)], NtDllPatch.pPatchAddress, nParamSize);
-#endif
-                // Move LdrpCallInitRoutine to eax/rax
-                *(PSIZE_T)(&mov[2]) = (SIZE_T)LdrpCallInitRoutine;
-                memcpy(&NtDllPatch.pDetourAddress[_countof(ptr) + nParamSize], &mov, _countof(mov));
-
-                // Jump to original function
-                *(DWORD*)(&jmp[1]) = (DWORD)(pReturnAddress - _countof(call) - (NtDllPatch.pDetourAddress + NtDllPatch.nDetourSize));
-                memcpy(&NtDllPatch.pDetourAddress[_countof(ptr) + nParamSize + _countof(mov)], &jmp, _countof(jmp));
-
-                VirtualProtect(NtDllPatch.pDetourAddress, NtDllPatch.nDetourSize, dwProtect, &dwProtect);
-
-                if (VirtualProtect(NtDllPatch.pPatchAddress, NtDllPatch.nPatchSize, PAGE_EXECUTE_READWRITE, &dwProtect)) {
-                    memset(NtDllPatch.pPatchAddress, 0x90, NtDllPatch.nPatchSize);
-
-                    // Jump to detour address
-                    *(DWORD*)(&jmp[1]) = (DWORD)(NtDllPatch.pDetourAddress - (pReturnAddress - _countof(call)));
-                    memcpy(pReturnAddress - _countof(call) - _countof(jmp), &jmp, _countof(jmp));
-
-                    // Call LdrpCallInitRoutine from eax/rax
-                    memcpy(pReturnAddress - _countof(call), &call, _countof(call));
-
-                    VirtualProtect(NtDllPatch.pPatchAddress, NtDllPatch.nPatchSize, dwProtect, &dwProtect);
-
-                    NtDllPatch.bState = TRUE;
-                }
-            }
-        }
-    }
-    return NtDllPatch.bState;
-}
-
-
-BOOL NtDllRestore(NTDLL_LDR_PATCH &NtDllPatch)
-{
-    // Restore patched bytes
-    BOOL bResult = FALSE;
-    if (NtDllPatch.bState && NtDllPatch.nPatchSize && &NtDllPatch.pBackup[0]) {
-        DWORD dwProtect = 0;
-        if (VirtualProtect(NtDllPatch.pPatchAddress, NtDllPatch.nPatchSize, PAGE_EXECUTE_READWRITE, &dwProtect)) {
-            memcpy(NtDllPatch.pPatchAddress, NtDllPatch.pBackup, NtDllPatch.nPatchSize);
-            VirtualProtect(NtDllPatch.pPatchAddress, NtDllPatch.nPatchSize, dwProtect, &dwProtect);
-
-            if (VirtualProtect(NtDllPatch.pDetourAddress, NtDllPatch.nDetourSize, PAGE_EXECUTE_READWRITE, &dwProtect)) {
-                memset(NtDllPatch.pDetourAddress, 0x00, NtDllPatch.nDetourSize);
-                VirtualProtect(NtDllPatch.pDetourAddress, NtDllPatch.nDetourSize, dwProtect, &dwProtect);
-                bResult = TRUE;
-            }
-        }
-    }
-    return bResult;
-}
-
 #define _DECL_DLLMAIN  // for _CRT_INIT
 #include <process.h>   // for _CRT_INIT
 #pragma comment(linker, "/entry:DllEntryPoint")
@@ -434,19 +237,12 @@ BOOL NtDllRestore(NTDLL_LDR_PATCH &NtDllPatch)
 __declspec(noinline)
 BOOL WINAPI DllEntryPoint(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved)
 {
-#if !defined(_M_ARM64)
-    // Patch/Restore ntdll address that calls the dll entry point.
-    // The patch scanner uses x86/x64-specific byte sequences (E9/FF25/4D8B/etc)
-    // which do not appear in ARM64 loader code. On ARM64 we use
-    // LdrRegisterDllNotification (installed from VisualLeakDetector::ctor) instead.
-    // Calling NtDllPatch on ARM64 is at best a no-op and at worst could write
-    // x86/x64 opcodes into ARM64 code if a byte pattern coincidentally matched,
-    // so it is hard-guarded out here.
-    if (fdwReason == DLL_PROCESS_ATTACH) {
-        NtDllPatch((PBYTE)_ReturnAddress(), patch);
-    }
-#endif
-
+    // VLD's only job in DllEntryPoint is to drive _CRT_INIT. Per-module
+    // patching of newly loaded DLLs is done from the LdrRegisterDllNotification
+    // LOADED callback (VldDllLoadNotification) installed by the VLD
+    // constructor, which fires at the same loader checkpoint as the
+    // historical machine-code detour into LdrpCallInitRoutine but without
+    // hot-patching ntdll. See the comment above VldDllLoadNotification.
     if (fdwReason == DLL_PROCESS_ATTACH || fdwReason == DLL_THREAD_ATTACH)
         if (!_CRT_INIT(hinstDLL, fdwReason, lpReserved))
             return(FALSE);
@@ -455,11 +251,6 @@ BOOL WINAPI DllEntryPoint(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved
         if (!_CRT_INIT(hinstDLL, fdwReason, lpReserved))
             return(FALSE);
 
-#if !defined(_M_ARM64)
-    if (fdwReason == DLL_PROCESS_DETACH) {
-        NtDllRestore(patch);
-    }
-#endif
     return(TRUE);
 }
 
@@ -704,11 +495,12 @@ VisualLeakDetector::VisualLeakDetector ()
     delete oldmodules;
     m_status |= VLD_STATUS_INSTALLED;
 
-#if defined(_M_ARM64)
-    // On ARM64 the x64 LdrpCallInitRoutine machine-code detour cannot be used, so
-    // modules loaded after this point are patched from the LDR LOADED
-    // notification (see VldDllLoadNotification). Modules already present are
-    // covered by attachToLoadedModules above.
+    // Register for LDR DLL load/unload notifications. Modules loaded after
+    // this point are patched from the LOADED callback (VldDllLoadNotification)
+    // which fires after imports are snapped and before DllMain. Modules
+    // already present at this point are covered by attachToLoadedModules above.
+    // This replaces the historical x64 LdrpCallInitRoutine machine-code detour;
+    // see the comment above VldDllLoadNotification.
     if (ntdll != NULL)
     {
         LdrRegisterDllNotification_t pLdrRegisterDllNotification =
@@ -716,7 +508,6 @@ VisualLeakDetector::VisualLeakDetector ()
         if (pLdrRegisterDllNotification != NULL)
             pLdrRegisterDllNotification(0, VldDllLoadNotification, NULL, &g_vldDllNotificationCookie);
     }
-#endif
 
     m_dbghlpBase = GetModuleHandleW(L"dbghelp.dll");
     if (m_dbghlpBase)
@@ -837,11 +628,10 @@ VisualLeakDetector::~VisualLeakDetector ()
     }
 
     if (m_status & VLD_STATUS_INSTALLED) {
-#if defined(_M_ARM64)
-        // Unregister the DLL load notification first: once VLD is unloaded the loader
-        // would otherwise call the (now invalid) callback for any DLL loaded during
-        // teardown or process exit (e.g. the CRT's exit path), faulting in unmapped
-        // memory. x64 uses a code detour that is removed by RestoreImport instead.
+        // Unregister the DLL load/unload notification first: once VLD is
+        // unloaded the loader would otherwise call the (now invalid) callback
+        // for any DLL loaded during teardown or process exit (e.g. the CRT's
+        // exit path), faulting in unmapped memory.
         if (g_vldDllNotificationCookie != NULL)
         {
             HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
@@ -854,7 +644,7 @@ VisualLeakDetector::~VisualLeakDetector ()
             }
             g_vldDllNotificationCookie = NULL;
         }
-
+#if defined(_M_ARM64)
         // Pre-warm the suppression cache while dbghelp is still usable. The ARM64
         // teardown scope below disables dbghelp symbol resolution because the
         // bundled ARM64 dbghelp spins under the loader lock at shutdown; but the
@@ -868,14 +658,13 @@ VisualLeakDetector::~VisualLeakDetector ()
         // VLDGetLeaksCount) would slip through the filter and be reported as a
         // false positive on ARM64.
         (void)GetLeaksCount();
-#endif
-#if defined(_M_ARM64)
+
         // The entire destructor runs under the loader lock (see LoaderLock above).
         // The bundled ARM64 dbghelp spins forever for any symbol resolution or
         // cleanup in that context, so mark the whole teardown: CallStack
-        // symbolization emits address-only frames and SymCleanup is skipped
-        // (x64 parity; leak counts and suppression are decided earlier while
-        // modules are stable, via the GetLeaksCount() pre-warm above).
+        // symbolization emits address-only frames (x64 parity; leak counts and
+        // suppression are decided earlier while modules are stable, via the
+        // GetLeaksCount() pre-warm above).
         Arm64TeardownReportScope arm64TeardownScope;
 #endif
         // Detach Visual Leak Detector from all previously attached modules.
@@ -2656,29 +2445,30 @@ VOID VisualLeakDetector::PatchCurrentModule(HMODULE module)
     PatchModule(module, m_patchTable, _countof(m_patchTable));
 }
 
-#if defined(_M_ARM64)
-// Arm64RegisterLoadedModule - Pre-registers a freshly loaded module in
+// RegisterLoadedModule - Pre-registers a freshly loaded module in
 //   m_loadedModules from the LDR LOADED notification, BEFORE the module's
-//   DllMain runs. This mirrors what RefreshModules + attachToLoadedModules do
-//   on x64 from the LdrpCallInitRoutine detour: it sets VLD_MODULE_EXCLUDED on
-//   modules that do not import g_vld, so that allocations made by their static
-//   initializers (e.g. dynamic.dll's "static MemoryLeak ml" in Allocs.cpp) are
-//   excluded from leak tracking. Without this step, ARM64 over-counts by one
-//   for every dll that allocates during CRT initialization but is not VLD-aware
-//   until the test calls VLDEnableModule.
+//   DllMain runs. Mirrors what attachToLoadedModules does at VLD startup for
+//   modules already present: classifies the module (VLD_MODULE_EXCLUDED for
+//   modules that do not import g_vld), records it with dbghelp via
+//   SymLoadModuleExW so leak callstacks resolve later, and inserts it under
+//   m_modulesLock.
 //
-//   Also calls SymLoadModuleExW on the new module so dbghelp knows about it for
-//   later SymFromAddrW lookups (function-name resolution in leak callstacks).
-//   SYMOPT_DEFERRED_LOADS is set globally, so this call is cheap: it just
-//   records the module's address range; the PDB is parsed lazily on the first
-//   symbol query, which by that time will run on a normal thread (not from the
-//   LDR notification) without loader-lock contention.
+//   Called from the LDR notification path, which under the parallel loader can
+//   fire while a different worker thread owns the loader lock. The function
+//   therefore avoids any loader-lock-reentrant call: no GetProcAddress,
+//   no GetModuleHandle*, no LoadLibrary, no EnumerateLoadedModulesW64. It only
+//   reads PE/IAT memory, registers the module with dbghelp (cheap because
+//   SYMOPT_DEFERRED_LOADS is set globally - the PDB is parsed lazily on first
+//   symbol query), and holds m_modulesLock briefly.
 //
-//   Avoids the loader-lock-unsafe paths that attachToLoadedModules takes:
-//   no GetProcAddress / GetModuleHandle* / LoadLibrary,
-//   no EnumerateLoadedModulesW64. Only reads PE/IAT memory, registers the
-//   module with dbghelp (deferred), and holds m_modulesLock briefly.
-VOID VisualLeakDetector::Arm64RegisterLoadedModule(HMODULE module, PCWSTR fullPath, PCWSTR baseName, ULONG sizeOfImage)
+//   Without this step:
+//     * dynamic.dll's "static MemoryLeak ml" allocation in Allocs.cpp would
+//       run before VLD knew the module was loaded, so isModuleExcluded would
+//       return FALSE and the allocation would be reported as a leak.
+//     * dbghelp would not know about the module either, so leak callstacks
+//       for dynamically loaded DLLs would show address-only frames
+//       (e.g. "dynamic.dll!0x00007FFE88C2BE04()").
+VOID VisualLeakDetector::RegisterLoadedModule(HMODULE module, PCWSTR fullPath, PCWSTR baseName, ULONG sizeOfImage)
 {
     if (m_options & VLD_OPT_VLDOFF)
         return;
@@ -2764,14 +2554,11 @@ VOID VisualLeakDetector::Arm64RegisterLoadedModule(HMODULE module, PCWSTR fullPa
     }
 
     // Register the module with dbghelp so SymFromAddrW can later resolve its
-    // function names. SYMOPT_DEFERRED_LOADS is set, so this only records the
-    // address range; the PDB is loaded lazily on first symbol query. Without
-    // this call, dbghelp would not know about modules loaded after VLD init,
-    // and leak callstacks for dynamically loaded DLLs would show address-only
-    // frames (e.g. "dynamic.dll!0x00007FFE88C2BE04()").
+    // function names. SYMOPT_DEFERRED_LOADS keeps this cheap: it only records
+    // the address range; the PDB is loaded lazily on first symbol query.
     if (!(moduleFlags & VLD_MODULE_EXCLUDED)) {
         CriticalSectionLocker<DbgHelp> dbgLocker(g_DbgHelp);
-        DbgTrace(L"dbghelp32.dll %i: SymLoadModuleExW (Arm64RegisterLoadedModule)\n", GetCurrentThreadId());
+        DbgTrace(L"dbghelp32.dll %i: SymLoadModuleExW (RegisterLoadedModule)\n", GetCurrentThreadId());
         g_DbgHelp.SymLoadModuleExW(
             g_currentProcess,
             NULL,
@@ -2802,20 +2589,20 @@ VOID VisualLeakDetector::Arm64RegisterLoadedModule(HMODULE module, PCWSTR fullPa
     m_loadedModules->insert(moduleinfo);
 }
 
-// Arm64UnregisterLoadedModule - Removes a module from m_loadedModules when
-//   the loader unloads it (LdrUnregisterDllNotification UNLOADED reason).
-//   Without this, m_loadedModules slowly accumulates stale entries over the
-//   life of a process that loads and unloads many DLLs. Since the unloaded
-//   pages are no longer mapped, the stale entries cannot cause direct
-//   misclassification (no allocation can come from unmapped memory), but
-//   they consume memory and slightly slow isModuleExcluded lookups.
+// UnregisterLoadedModule - Removes a module from m_loadedModules when the
+//   loader unloads it (LDR UNLOADED notification reason). Without this,
+//   m_loadedModules slowly accumulates stale entries over the life of a
+//   process that loads and unloads many DLLs. Since the unloaded pages are no
+//   longer mapped, the stale entries cannot cause direct misclassification
+//   (no allocation can come from unmapped memory), but they consume memory
+//   and slightly slow isModuleExcluded lookups.
 //
 //   Does NOT call SymUnloadModule64 here: that would round-trip through
 //   dbghelp from the LDR notification which we want to keep short. dbghelp
 //   tolerates stale entries for unmapped modules - it will fail symbol
 //   queries for those addresses cleanly. The next RefreshModules() (if any)
 //   will properly unload symbols.
-VOID VisualLeakDetector::Arm64UnregisterLoadedModule(HMODULE module, ULONG sizeOfImage)
+VOID VisualLeakDetector::UnregisterLoadedModule(HMODULE module, ULONG sizeOfImage)
 {
     if (m_options & VLD_OPT_VLDOFF)
         return;
@@ -2835,7 +2622,6 @@ VOID VisualLeakDetector::Arm64UnregisterLoadedModule(HMODULE module, ULONG sizeO
         m_loadedModules->erase(it);
     }
 }
-#endif
 
 // Find the information for the module that initiated this reallocation.
 bool VisualLeakDetector::isModuleExcluded(UINT_PTR address)

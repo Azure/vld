@@ -345,11 +345,11 @@ BOOL FindImport (HMODULE importmodule, HMODULE exportmodule, LPCSTR exportmodule
     return FALSE;
 }
 
-#if defined(_M_ARM64)
 // FindImportByExportAddress - Same as FindImport but takes a pre-resolved export
-//   address instead of looking it up via GetProcAddress. Used by the ARM64 LDR
-//   notification path where calling GetProcAddress on the loading thread could
-//   contend with the parallel loader.
+//   address instead of looking it up via GetProcAddress. Used by the LDR
+//   notification path on all architectures (LdrRegisterDllNotification can
+//   fire under the parallel loader where another worker holds the loader
+//   lock; the hooked GetProcAddress would deadlock there).
 BOOL FindImportByExportAddress (HMODULE importmodule, LPCSTR exportmodulename, LPCVOID exportAddress)
 {
     IMAGE_IMPORT_DESCRIPTOR *idte;
@@ -371,7 +371,6 @@ BOOL FindImportByExportAddress (HMODULE importmodule, LPCSTR exportmodulename, L
     }
     return FALSE;
 }
-#endif
 
 // FindPatch - Determines if the specified module has been patched to use the
 //   specified replacement.
@@ -861,18 +860,12 @@ BOOL PatchImport (HMODULE importmodule, moduleentry_t *patchModule)
         LPCSTR importname = patchEntry->importName;
 
         // Get the *real* address of the import. If we find this address in the IAT,
-        // then we've found the entry that needs to be patched.
+        // then we've found the entry that needs to be patched. We use the saved
+        // pointer to the real GetProcAddress (_RGetProcAddress); never the public
+        // GetProcAddress, because PatchImport is called from the LDR LOADED
+        // notification path and the public GetProcAddress is hooked - calling it
+        // here could re-enter the loader lock and deadlock the parallel loader.
         LPVOID import = VisualLeakDetector::_RGetProcAddress(exportmodule, importname);
-#if !defined(_M_ARM64)
-        if (!import)
-            import = GetProcAddress(exportmodule, importname);
-#else
-        // On ARM64 PatchImport runs from the LDR DLL-load notification
-        // (VldDllLoadNotification), inside the parallel loader. The hooked
-        // GetProcAddress re-enters the loader lock and deadlocks. _RGetProcAddress
-        // (the saved real GetProcAddress) resolves every patch-table import, so
-        // the loader-lock-reentrant fallback is neither needed nor safe here.
-#endif
         import = FindRealCode(import);
 
         realAddresses[i] = import;
@@ -894,15 +887,9 @@ BOOL PatchImport (HMODULE importmodule, moduleentry_t *patchModule)
     while (idte->FirstThunk != 0x0) {
         PCHAR importdllname = (PCHAR)R2VA(importmodule, idte->Name);
         UNREFERENCED_PARAMETER(importdllname);
-#if !defined(_M_ARM64)
-        // The result is unused; this lookup exists only for the PRINTHOOKINFO
-        // diagnostics below (which actually use importdllname, not the handle).
-        // On ARM64 PatchImport runs from the LDR DLL-load notification, where
-        // this hooked GetModuleHandleA re-enters the loader lock and deadlocks
-        // the parallel loader, so it is skipped.
-        HMODULE importdllbaseaddress = GetModuleHandleA(importdllname);
-        UNREFERENCED_PARAMETER(importdllbaseaddress);
-#endif
+        // (No GetModuleHandleA here: it was previously called only to feed an
+        // unused diagnostic, and like GetProcAddress it is hooked - calling it
+        // from the LDR notification path would re-enter the loader lock.)
 
         // Locate the import's IAT entry.
         IMAGE_THUNK_DATA *thunk = (IMAGE_THUNK_DATA*)R2VA(importmodule, idte->FirstThunk);
