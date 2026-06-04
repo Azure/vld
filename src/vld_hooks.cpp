@@ -131,9 +131,9 @@ BOOL VisualLeakDetector::_HeapDestroy (HANDLE heap)
 
 #if defined(_M_ARM64)
     {
-        // On ARM64X, calling kernel32 HeapDestroy here routes through kernel32's
-        // patched dispatch slot back into this hook (infinite recursion). Call the
-        // captured real terminal body instead.
+        // On ARM64, calling kernel32 HeapDestroy here routes through kernel32's
+        // patched ARM64X dispatch slot back into this hook (infinite recursion).
+        // Call the captured real terminal body instead.
         LPVOID real = Arm64LookupKernelbaseHeapProc("HeapDestroy");
         if (real != NULL)
             return ((decltype(&::HeapDestroy))real)(heap);
@@ -184,9 +184,9 @@ LPVOID VisualLeakDetector::_HeapAlloc (HANDLE heap, DWORD flags, SIZE_T size)
 #if defined(_M_ARM64)
     LPVOID block;
     {
-        // On ARM64X, calling kernel32 HeapAlloc here routes through kernel32's
-        // patched dispatch slot back into this hook (infinite recursion). Call the
-        // captured real terminal body instead.
+        // On ARM64, calling kernel32 HeapAlloc here routes through kernel32's
+        // patched ARM64X dispatch slot back into this hook (infinite recursion).
+        // Call the captured real terminal body instead.
         LPVOID real = Arm64LookupKernelbaseHeapProc("HeapAlloc");
         block = (real != NULL) ? ((decltype(&::HeapAlloc))real)(heap, flags, size)
                                : HeapAlloc(heap, flags, size);
@@ -310,9 +310,9 @@ LPVOID VisualLeakDetector::_HeapReAlloc (HANDLE heap, DWORD flags, LPVOID mem, S
 #if defined(_M_ARM64)
     LPVOID newmem;
     {
-        // On ARM64X, calling kernel32 HeapReAlloc here routes through kernel32's
-        // patched dispatch slot back into this hook (infinite recursion). Call the
-        // captured real terminal body instead.
+        // On ARM64, calling kernel32 HeapReAlloc here routes through kernel32's
+        // patched ARM64X dispatch slot back into this hook (infinite recursion).
+        // Call the captured real terminal body instead.
         LPVOID real = Arm64LookupKernelbaseHeapProc("HeapReAlloc");
         newmem = (real != NULL) ? ((decltype(&::HeapReAlloc))real)(heap, flags, mem, size)
                                 : HeapReAlloc(heap, flags, mem, size);

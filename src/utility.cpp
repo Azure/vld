@@ -46,15 +46,16 @@ static encoding_e   s_reportEncoding = ascii;  // Output encoding of the memory 
 #define IS_ORDINAL(name) (((UINT_PTR)name & 0xFFFF) == ((UINT_PTR)name))
 
 #if defined(_M_ARM64)
-// On ARM64X, kernel32's heap exports (HeapCreate/HeapAlloc/HeapReAlloc/HeapFree/
-// HeapDestroy) are fast-forward dispatch thunks: their target slot is resolved
-// lazily and the resolving stub patches the CALLING module's IAT (not the kernel32
-// slot), so the kernel32 slot stays permanently unresolved. When RestoreImport
-// writes GetProcAddress(kernel32, "HeapXxx") (the dispatch thunk) back into a
-// module's IAT, the first call through it at process detach (under the loader lock)
-// reads the unresolved slot and spins forever. The real, terminal function bodies
-// live in kernelbase.dll, so we capture them once at DLL attach and restore IATs to
-// those instead. x64 has no fast-forward thunks and uses the original code path.
+// On ARM64, kernel32's heap exports (HeapCreate/HeapAlloc/HeapReAlloc/HeapFree/
+// HeapDestroy) are ARM64X fast-forward dispatch thunks: their target slot is
+// resolved lazily and the resolving stub patches the CALLING module's IAT (not
+// the kernel32 slot), so the kernel32 slot stays permanently unresolved. When
+// RestoreImport writes GetProcAddress(kernel32, "HeapXxx") (the dispatch thunk)
+// back into a module's IAT, the first call through it at process detach (under
+// the loader lock) reads the unresolved slot and spins forever. The real,
+// terminal function bodies live in kernelbase.dll, so we capture them once at
+// DLL attach and restore IATs to those instead. x64 has no fast-forward thunks
+// and uses the original code path.
 static struct { LPCSTR name; LPVOID proc; } g_arm64KernelbaseHeapProcs[] = {
     { "HeapCreate",  NULL },
     { "HeapAlloc",   NULL },
