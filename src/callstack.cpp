@@ -43,6 +43,13 @@ extern CriticalSection    g_heapMapLock;
 extern VisualLeakDetector g_vld;
 extern DbgHelp g_DbgHelp;
 
+#if defined(_M_ARM64)
+// Defined in vld.cpp. True while VLD's automatic leak report is running under
+// the loader lock at teardown; the bundled ARM64 dbghelp hangs resolving symbols
+// in that context, so we emit address-only frames instead (x64 parity).
+extern "C" bool VldArm64InTeardownReport(void);
+#endif
+
 // Helper function to compare the begin of a string with a substring
 //
 template <size_t N>
@@ -214,6 +221,17 @@ LPCWSTR CallStack::getFunctionName(SIZE_T programCounter, DWORD64& displacement6
     // counter address.
     displacement64 = 0;
     LPCWSTR functionName;
+#if defined(_M_ARM64)
+    // Skip dbghelp during the teardown leak report: the bundled ARM64 dbghelp
+    // spins forever resolving any address while the loader lock is held at
+    // shutdown. Emitting address-only matches the fast address-only result x64
+    // dbghelp returns for the same case.
+    if (VldArm64InTeardownReport()) {
+        auto result = fmt::format_to_n(functionInfo->Name, MAX_SYMBOL_NAME_LENGTH - 1, L"" ADDRESSCPPFORMAT, programCounter);
+        *result.out = L'\0';
+        return functionInfo->Name;
+    }
+#endif
     DbgTrace(L"dbghelp32.dll %i: SymFromAddrW\n", GetCurrentThreadId());
     if (g_DbgHelp.SymFromAddrW(g_currentProcess, programCounter, &displacement64, functionInfo, locker)) {
         functionName = functionInfo->Name;
@@ -455,7 +473,11 @@ int CallStack::resolve(BOOL showInternalFrames)
         // When that happens there is nothing we can do except crash.
         DWORD            displacement = 0;
         DbgTrace(L"dbghelp32.dll %i: SymGetLineFromAddrW64\n", GetCurrentThreadId());
-        BOOL foundline = g_DbgHelp.SymGetLineFromAddrW64(g_currentProcess, programCounter, &displacement, &sourceInfo, locker);
+        BOOL foundline = FALSE;
+#if defined(_M_ARM64)
+        if (!VldArm64InTeardownReport())
+#endif
+        foundline = g_DbgHelp.SymGetLineFromAddrW64(g_currentProcess, programCounter, &displacement, &sourceInfo, locker);
 
         bool isFrameInternal = false;
         if (foundline && !showInternalFrames) {

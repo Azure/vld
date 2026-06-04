@@ -45,6 +45,46 @@ static encoding_e   s_reportEncoding = ascii;  // Output encoding of the memory 
 
 #define IS_ORDINAL(name) (((UINT_PTR)name & 0xFFFF) == ((UINT_PTR)name))
 
+#if defined(_M_ARM64)
+// On ARM64X, kernel32's heap exports (HeapCreate/HeapAlloc/HeapReAlloc/HeapFree/
+// HeapDestroy) are fast-forward dispatch thunks: their target slot is resolved
+// lazily and the resolving stub patches the CALLING module's IAT (not the kernel32
+// slot), so the kernel32 slot stays permanently unresolved. When RestoreImport
+// writes GetProcAddress(kernel32, "HeapXxx") (the dispatch thunk) back into a
+// module's IAT, the first call through it at process detach (under the loader lock)
+// reads the unresolved slot and spins forever. The real, terminal function bodies
+// live in kernelbase.dll, so we capture them once at DLL attach and restore IATs to
+// those instead. x64 has no fast-forward thunks and uses the original code path.
+static struct { LPCSTR name; LPVOID proc; } g_arm64KernelbaseHeapProcs[] = {
+    { "HeapCreate",  NULL },
+    { "HeapAlloc",   NULL },
+    { "HeapReAlloc", NULL },
+    { "HeapFree",    NULL },
+    { "HeapDestroy", NULL },
+};
+
+VOID Arm64CaptureKernelbaseHeapProcs (VOID)
+{
+    HMODULE kernelbase = GetModuleHandleW(L"kernelbase.dll");
+    if (kernelbase == NULL)
+        return;
+    for (size_t i = 0; i < _countof(g_arm64KernelbaseHeapProcs); ++i)
+        g_arm64KernelbaseHeapProcs[i].proc = (LPVOID)GetProcAddress(kernelbase, g_arm64KernelbaseHeapProcs[i].name);
+}
+
+LPVOID Arm64LookupKernelbaseHeapProc (LPCSTR importname)
+{
+    if (IS_ORDINAL(importname))
+        return NULL;
+    for (size_t i = 0; i < _countof(g_arm64KernelbaseHeapProcs); ++i)
+    {
+        if (strcmp(g_arm64KernelbaseHeapProcs[i].name, importname) == 0)
+            return g_arm64KernelbaseHeapProcs[i].proc;
+    }
+    return NULL;
+}
+#endif
+
 // DumpMemoryA - Dumps a nicely formatted rendition of a region of memory.
 //   Includes both the hex value of each byte and its ASCII equivalent (if
 //   printable).
@@ -525,20 +565,24 @@ LPVOID FindRealCode(LPVOID pCode)
         // patched on ARM64, causing CRT allocations to be attributed to ucrtbase
         // instead of the user module.
         //
-        // ARM64 has no single fixed jump opcode, so we recognize the common
-        // veneer shapes the MSVC linker emits. The scratch register is x16 or
-        // x17 (both are used in practice), so the register field is decoded
-        // rather than hard-coded. Resolution is iterative with a depth bound and
-        // a self-loop guard to avoid runaway recursion on malformed chains. On
-        // any failure to read or decode we return the current address (safe for
-        // normalization) rather than NULL.
+        // ARM64 has no single fixed jump opcode, so we recognize the two thunk
+        // shapes the MSVC linker emits that are the direct analogs of the x64
+        // E9/FF25 thunks: the incremental-linking branch (B imm26) and the IAT
+        // import stub (ADRP Xn; LDR Xn,[Xn,#imm12]; BR Xn). We deliberately do
+        // not decode broader ADRP+ADD or LDR-literal shapes, which collide with
+        // ordinary function prologues and would over-resolve real imports. The
+        // scratch register is x16 or x17 (both are used in practice), so the
+        // register field is decoded rather than hard-coded. Resolution is
+        // iterative with a depth bound and a self-loop guard to avoid runaway
+        // recursion on malformed chains. On any failure to read or decode we
+        // return the current address (safe for normalization) rather than NULL.
         LPVOID cur = pCode;
         for (int depth = 0; depth < 16; depth++)
         {
             PROTECT_INSTANCE protect_1;
-            // Protect up to 4 instructions (16 bytes); the longest sequence we
-            // decode is ADRP+ADD+LDR+BR.
-            if (!VLDVirtualProtect(&protect_1, cur, sizeof(ULONG) * 4, PAGE_EXECUTE_READ))
+            // Protect up to 3 instructions (12 bytes); the longest sequence we
+            // decode is ADRP+LDR+BR.
+            if (!VLDVirtualProtect(&protect_1, cur, sizeof(ULONG) * 3, PAGE_EXECUTE_READ))
                 break;
 
             const ULONG* p = (const ULONG*)cur;
@@ -579,47 +623,6 @@ LPVOID FindRealCode(LPVOID pCode)
                     if (VLDVirtualProtect(&protect_2, (LPVOID)slot, sizeof(LPVOID), PAGE_READONLY))
                     {
                         next = *(LPVOID*)slot;
-                        VLDVirtualRestore(&protect_2);
-                    }
-                }
-                else if (((i1 & 0xFFC00000u) == 0x91000000u) &&   // ADD Xn,Xn,#imm12 (LSL 0)
-                         (((i1 >> 5) & 0x1Fu) == xn) && ((i1 & 0x1Fu) == xn))
-                {
-                    ULONG_PTR imm12 = (i1 >> 10) & 0xFFFu;
-                    ULONG_PTR addr = page + imm12;
-                    if (p[2] == br)
-                    {
-                        // ADRP+ADD+BR: branch directly to page+offset.
-                        next = (LPVOID)addr;
-                    }
-                    else if (((p[2] & 0xFFFFFC1Fu) == (0xF9400000u | (xn << 5) | xn)) &&
-                             (p[3] == br))
-                    {
-                        // ADRP+ADD+LDR Xn,[Xn]+BR: load from the materialized slot.
-                        PROTECT_INSTANCE protect_2;
-                        if (VLDVirtualProtect(&protect_2, (LPVOID)addr, sizeof(LPVOID), PAGE_READONLY))
-                        {
-                            next = *(LPVOID*)addr;
-                            VLDVirtualRestore(&protect_2);
-                        }
-                    }
-                }
-            }
-            else if ((i0 & 0xFF000000u) == 0x58000000u &&
-                     (((i0 & 0x1Fu) == 16u) || ((i0 & 0x1Fu) == 17u)))
-            {
-                // LDR Xn, <literal> ; BR Xn  with Xn in {x16, x17}
-                ULONG xn = i0 & 0x1Fu;
-                if (p[1] == (0xD61F0000u | (xn << 5)))
-                {
-                    INT64 imm19 = (i0 >> 5) & 0x7FFFFu;
-                    if (imm19 & 0x40000)
-                        imm19 -= 0x80000; // sign-extend 19-bit
-                    ULONG_PTR lit = (ULONG_PTR)cur + (ULONG_PTR)(imm19 * 4);
-                    PROTECT_INSTANCE protect_2;
-                    if (VLDVirtualProtect(&protect_2, (LPVOID)lit, sizeof(LPVOID), PAGE_READONLY))
-                    {
-                        next = *(LPVOID*)lit;
                         VLDVirtualRestore(&protect_2);
                     }
                 }
@@ -776,6 +779,11 @@ BOOL PatchImport (HMODULE importmodule, moduleentry_t *patchModule)
 	DWORD dwLength = ::GetModuleFileNameA(importmodule, pszBuffer, dwMaxChars);
 #endif
 
+    // VLD's own module base. utility.cpp is compiled into the VLD module, so the
+    // address of any function here resolves to VLD's own image. Used below to
+    // ensure we never record VLD's own hook as the call-through original.
+    HMODULE vldModule = GetCallingModule((UINT_PTR)&PatchImport);
+
     // have a stack local array of the addresses, don't want to use malloc for this
     // The reason to precompute and cache these is because VirtualProtect is expensive
     // Thus first we compute *only* once the real addresses for the export module
@@ -840,7 +848,17 @@ BOOL PatchImport (HMODULE importmodule, moduleentry_t *patchModule)
                         // writable.
                         if (import != replacement)
                         {
-                            if (patchEntry->original != NULL)
+                            // Never record VLD's own code as the call-through
+                            // original. On ARM64 an ARM64X veneer can route a
+                            // module's import through kernel32's internal IAT
+                            // slot, which VLD has already patched, so FindRealCode
+                            // may resolve "func" into VLD's own hook; storing that
+                            // would make the hook call itself (infinite
+                            // recursion). The real address is captured when VLD
+                            // patches the exporting module's own import, before
+                            // that slot is redirected.
+                            if (patchEntry->original != NULL &&
+                                GetCallingModule((UINT_PTR)func) != vldModule)
                                 *patchEntry->original = func;
 
                             DWORD protect;
@@ -1133,7 +1151,16 @@ VOID RestoreImport (HMODULE importmodule, moduleentry_t* module)
 
             // Get the *real* address of the import.
             //LPCVOID original = entry->original;
+#if defined(_M_ARM64)
+            // On ARM64, resolve heap APIs to the real kernelbase body captured at
+            // attach rather than the kernel32 fast-forward dispatch thunk, whose
+            // slot never resolves and spins at teardown (see Arm64Capture...).
+            LPCVOID original = Arm64LookupKernelbaseHeapProc(importname);
+            if (original == NULL)
+                original = g_vld._RGetProcAddress(exportmodule, importname);
+#else
             LPCVOID original = g_vld._RGetProcAddress(exportmodule, importname);
+#endif
             if (original == NULL) // Perhaps the named export module does not actually export the named import?
             {
                 entry++; i++;

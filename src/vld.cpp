@@ -101,6 +101,94 @@ BOOLEAN WINAPI LdrpCallInitRoutine(IN PVOID BaseAddress, IN ULONG Reason, IN PVO
     return EntryPoint(BaseAddress, Reason, (PCONTEXT)Context);
 }
 
+#if defined(_M_ARM64)
+// ----- ARM64 dynamic-module patching via LDR DLL notifications -----
+//
+//   On x64 a dynamically loaded module's IAT is patched from the
+//   LdrpCallInitRoutine machine-code detour above. That detour runs once per
+//   module, on the loading thread, while it already owns the loader lock, right
+//   before the module's DllMain. The detour is x86/x64 assembly and cannot be
+//   installed on ARM64.
+//
+//   LdrRegisterDllNotification provides the equivalent execution point on ARM64:
+//   the LOADED notification is raised once per newly mapped module (not on
+//   subsequent LoadLibrary refcount bumps), on the loading thread, with the
+//   loader lock held, after the module's imports are snapped and before its
+//   DllMain runs. Patching from here mirrors x64 exactly:
+//     * each module is patched exactly once, so there is no concurrent
+//       same-module IAT VirtualProtect/write race (the failure mode of patching
+//       from the post-LdrLoadDll hook, where 64 threads LoadLibrary the same DLL
+//       and patch its IAT simultaneously),
+//     * the loader lock is already held by this thread, so PatchImport's internal
+//       GetProcAddress reacquires it reentrantly (no contention, no drain
+//       deadlock, no lock-order inversion), and
+//     * the IAT is fully snapped, so the patch sticks.
+
+typedef struct _VLD_LDR_DLL_NOTIFICATION_DATA {
+    ULONG       Flags;
+    const void* FullDllName;
+    const void* BaseDllName;
+    PVOID       DllBase;
+    ULONG       SizeOfImage;
+} VLD_LDR_DLL_NOTIFICATION_DATA, *PVLD_LDR_DLL_NOTIFICATION_DATA;
+
+typedef VOID(CALLBACK *VLD_LDR_DLL_NOTIFICATION_FUNCTION)(ULONG, const VLD_LDR_DLL_NOTIFICATION_DATA*, PVOID);
+typedef NTSTATUS(NTAPI *LdrRegisterDllNotification_t)(ULONG, VLD_LDR_DLL_NOTIFICATION_FUNCTION, PVOID, PVOID*);
+typedef NTSTATUS(NTAPI *LdrUnregisterDllNotification_t)(PVOID);
+
+#define VLD_LDR_DLL_NOTIFICATION_REASON_LOADED 1
+
+static PVOID g_vldDllNotificationCookie = NULL;
+
+static VOID CALLBACK VldDllLoadNotification(ULONG reason, const VLD_LDR_DLL_NOTIFICATION_DATA* data, PVOID context)
+{
+    UNREFERENCED_PARAMETER(context);
+    if (reason != VLD_LDR_DLL_NOTIFICATION_REASON_LOADED || data == NULL || data->DllBase == NULL)
+        return;
+
+    // Guard against re-entering the patch path on this thread in case patching
+    // ever raises another load notification.
+    static thread_local bool patching = false;
+    if (patching)
+        return;
+    patching = true;
+    g_vld.PatchCurrentModule((HMODULE)data->DllBase);
+    patching = false;
+}
+
+// ----- ARM64 leak-report symbolization guard -----
+//
+//   The bundled ARM64 dbghelp spins forever inside SymFromInlineContextW /
+//   SymFindFileInPathW (its deferred-PDB-load path) when symbol resolution runs
+//   while the loader lock is held during teardown. x64 dbghelp returns
+//   address-only instantly for the same inputs, so the leak report completes.
+//   The hang is not specific to any module: three different ARM64 dbghelp builds
+//   spin identically, and even frames in still-loaded modules (e.g. ucrtbased)
+//   trigger it once the report runs under the loader lock.
+//
+//   VLD's automatic leak report (~VisualLeakDetector -> ReportLeaks) always runs
+//   under the loader lock, whether triggered by FreeLibrary (LdrUnloadDll) or by
+//   normal process exit (LdrShutdownProcess). While that report is in progress
+//   the counter below is non-zero and CallStack symbolization emits address-only
+//   frames instead of calling dbghelp. Leak counts are unaffected: every block's
+//   CRT-startup classification is cached by getLeaksCount while modules are still
+//   stable, so the teardown report never needs dbghelp to decide suppression.
+//   Manual VLDReportLeaks() calls do not go through ~VisualLeakDetector, so they
+//   keep full symbol resolution.
+static volatile LONG g_arm64InTeardownReport = 0;
+
+extern "C" bool VldArm64InTeardownReport(void)
+{
+    return InterlockedCompareExchange(&g_arm64InTeardownReport, 0, 0) != 0;
+}
+
+struct Arm64TeardownReportScope
+{
+    Arm64TeardownReportScope()  { InterlockedIncrement(&g_arm64InTeardownReport); }
+    ~Arm64TeardownReportScope() { InterlockedDecrement(&g_arm64InTeardownReport); }
+};
+#endif
+
 PBYTE NtDllFindDetourAddress(const PBYTE pAddress, SIZE_T dwSize)
 {
     MEMORY_BASIC_INFORMATION meminfo = { 0 };
@@ -408,6 +496,36 @@ VisualLeakDetector::VisualLeakDetector ()
     g_currentThread = GetCurrentThread();
     g_processHeap = GetProcessHeap();
 
+#if defined(_M_ARM64)
+    // On ARM64, kernel32 heap APIs (HeapAlloc/HeapFree/HeapReAlloc/HeapSize/HeapDestroy)
+    // are ARM64X fast-forward dispatch thunks whose target slots are resolved lazily by
+    // the loader on the first call. VLD patches and later restores these kernel32 slots;
+    // if a slot is still unresolved when first exercised at process detach (under the
+    // loader lock, e.g. the CRT freeing memory or VLD destroying its private heap), the
+    // unresolved stub branches to itself and spins forever. Resolving the forwarders here
+    // at DLL attach (also under the loader lock, but while the loader is fully functional)
+    // makes the resolution stick process wide and ensures the originals VLD saves are
+    // already resolved. x64 has no fast-forward thunks and is unaffected.
+    {
+        HANDLE warmHeap = HeapCreate(0, 0, 0);
+        if (warmHeap != NULL) {
+            void* warmPtr = HeapAlloc(warmHeap, 0, 16);
+            if (warmPtr != NULL) {
+                void* warmPtr2 = HeapReAlloc(warmHeap, 0, warmPtr, 32);
+                if (warmPtr2 != NULL)
+                    warmPtr = warmPtr2;
+                (void)HeapSize(warmHeap, 0, warmPtr);
+                HeapFree(warmHeap, 0, warmPtr);
+            }
+            HeapDestroy(warmHeap);
+        }
+    }
+    // Capture the real kernelbase heap-function bodies now (after warm-up has
+    // resolved kernelbase's internal ntdll forwarders) so teardown can restore
+    // module IATs to executable code instead of the unresolved kernel32 thunk.
+    Arm64CaptureKernelbaseHeapProcs();
+#endif
+
     LoaderLock ll;
 
     g_heapMapLock.Initialize();
@@ -517,6 +635,20 @@ VisualLeakDetector::VisualLeakDetector ()
     m_loadedModules = newmodules;
     delete oldmodules;
     m_status |= VLD_STATUS_INSTALLED;
+
+#if defined(_M_ARM64)
+    // On ARM64 the x64 LdrpCallInitRoutine machine-code detour cannot be used, so
+    // modules loaded after this point are patched from the LDR LOADED
+    // notification (see VldDllLoadNotification). Modules already present are
+    // covered by attachToLoadedModules above.
+    if (ntdll != NULL)
+    {
+        LdrRegisterDllNotification_t pLdrRegisterDllNotification =
+            (LdrRegisterDllNotification_t)GetProcAddress(ntdll, "LdrRegisterDllNotification");
+        if (pLdrRegisterDllNotification != NULL)
+            pLdrRegisterDllNotification(0, VldDllLoadNotification, NULL, &g_vldDllNotificationCookie);
+    }
+#endif
 
     m_dbghlpBase = GetModuleHandleW(L"dbghelp.dll");
     if (m_dbghlpBase)
@@ -637,6 +769,32 @@ VisualLeakDetector::~VisualLeakDetector ()
     }
 
     if (m_status & VLD_STATUS_INSTALLED) {
+#if defined(_M_ARM64)
+        // Unregister the DLL load notification first: once VLD is unloaded the loader
+        // would otherwise call the (now invalid) callback for any DLL loaded during
+        // teardown or process exit (e.g. the CRT's exit path), faulting in unmapped
+        // memory. x64 uses a code detour that is removed by RestoreImport instead.
+        if (g_vldDllNotificationCookie != NULL)
+        {
+            HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+            if (ntdll != NULL)
+            {
+                LdrUnregisterDllNotification_t pLdrUnregisterDllNotification =
+                    (LdrUnregisterDllNotification_t)GetProcAddress(ntdll, "LdrUnregisterDllNotification");
+                if (pLdrUnregisterDllNotification != NULL)
+                    pLdrUnregisterDllNotification(g_vldDllNotificationCookie);
+            }
+            g_vldDllNotificationCookie = NULL;
+        }
+#endif
+#if defined(_M_ARM64)
+        // The entire destructor runs under the loader lock (see LoaderLock above).
+        // The bundled ARM64 dbghelp spins forever for any symbol resolution or
+        // cleanup in that context, so mark the whole teardown: CallStack
+        // symbolization emits address-only frames and SymCleanup is skipped
+        // (x64 parity; leak counts are decided earlier while modules are stable).
+        Arm64TeardownReportScope arm64TeardownScope;
+#endif
         // Detach Visual Leak Detector from all previously attached modules.
         DbgTrace(L"dbghelp32.dll %i: EnumerateLoadedModulesW64\n", GetCurrentThreadId());
         g_LoadedModules.EnumerateLoadedModulesW64(g_currentProcess, detachFromModule, NULL);
@@ -672,6 +830,12 @@ VisualLeakDetector::~VisualLeakDetector ()
 
         // Free resources used by the symbol handler.
         DbgTrace(L"dbghelp32.dll %i: SymCleanup\n", GetCurrentThreadId());
+#if defined(_M_ARM64)
+        // SymCleanup also spins in the bundled ARM64 dbghelp under the loader
+        // lock at teardown; skip it (the exiting process reclaims dbghelp's own
+        // bookkeeping immediately).
+        if (!VldArm64InTeardownReport())
+#endif
         if (!g_DbgHelp.SymCleanup(g_currentProcess)) {
             Report(L"WARNING: Visual Leak Detector: The symbol handler failed to deallocate resources (error=%lu).\n",
                 GetLastError());
@@ -2323,7 +2487,9 @@ FARPROC VisualLeakDetector::_RGetProcAddressForCaller(HMODULE module, LPCSTR pro
 NTSTATUS VisualLeakDetector::_LdrLoadDll (LPWSTR searchpath, PULONG flags, unicodestring_t *modulename,
     PHANDLE modulehandle)
 {
-    // Load the DLL
+    // Load the DLL. On ARM64 the newly loaded module is patched from the LDR
+    // LOADED notification (see VldDllLoadNotification); on x64 it is patched from
+    // the LdrpCallInitRoutine detour. This hook is a pure passthrough.
     NTSTATUS status = LdrLoadDll(searchpath, flags, modulename, modulehandle);
     return status;
 }
@@ -2331,7 +2497,7 @@ NTSTATUS VisualLeakDetector::_LdrLoadDll (LPWSTR searchpath, PULONG flags, unico
 NTSTATUS VisualLeakDetector::_LdrLoadDllWin8 (DWORD_PTR reserved, PULONG flags, unicodestring_t *modulename,
                                           PHANDLE modulehandle)
 {
-    // Load the DLL
+    // Load the DLL. See _LdrLoadDll above; pure passthrough.
     NTSTATUS status = LdrLoadDllWin8(reserved, flags, modulename, modulehandle);
     return status;
 }
