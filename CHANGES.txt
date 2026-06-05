@@ -1,7 +1,17 @@
-Visual Leak Detector (VLD) Version 2.5.12
+Visual Leak Detector (VLD) Version 2.5.16
 
 
   Change Log / Release Notes
+
+2.5.16 (5 June 2026)
+----------------------------
+  Changes:
+  + Added the ReportSystemAllocations option (default "no"). When an
+    allocation's immediate caller is a non-reporting CRT/system module, VLD now
+    excludes it based solely on the immediate caller by default, restoring the
+    VLD 2.5.10 behavior. Set ReportSystemAllocations = yes to re-enable the
+    behavior of walking the call stack to attribute such allocations to user
+    code.
 
 2.5.12 (26 January 2026)
 ----------------------------

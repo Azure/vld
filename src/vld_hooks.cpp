@@ -129,6 +129,16 @@ BOOL VisualLeakDetector::_HeapDestroy (HANDLE heap)
 
     g_vld.unmapHeap(heap);
 
+#if defined(_M_ARM64)
+    {
+        // On ARM64, calling kernel32 HeapDestroy here routes through kernel32's
+        // patched fast-forward dispatch slot back into this hook (infinite
+        // recursion). Call the captured real terminal body instead.
+        LPVOID real = Arm64LookupKernelbaseHeapProc("HeapDestroy");
+        if (real != NULL)
+            return ((decltype(&::HeapDestroy))real)(heap);
+    }
+#endif
     return HeapDestroy(heap);
 }
 
@@ -171,7 +181,19 @@ LPVOID VisualLeakDetector::_HeapAlloc (HANDLE heap, DWORD flags, SIZE_T size)
 {
     PRINT_HOOKED_FUNCTION2();
     // Allocate the block.
+#if defined(_M_ARM64)
+    LPVOID block;
+    {
+        // On ARM64, calling kernel32 HeapAlloc here routes through kernel32's
+        // patched fast-forward dispatch slot back into this hook (infinite
+        // recursion). Call the captured real terminal body instead.
+        LPVOID real = Arm64LookupKernelbaseHeapProc("HeapAlloc");
+        block = (real != NULL) ? ((decltype(&::HeapAlloc))real)(heap, flags, size)
+                               : HeapAlloc(heap, flags, size);
+    }
+#else
     LPVOID block = HeapAlloc(heap, flags, size);
+#endif
 
     if ((block == NULL) || !g_vld.enabled())
         return block;
@@ -285,7 +307,19 @@ LPVOID VisualLeakDetector::_HeapReAlloc (HANDLE heap, DWORD flags, LPVOID mem, S
     PRINT_HOOKED_FUNCTION();
 
     // Reallocate the block.
+#if defined(_M_ARM64)
+    LPVOID newmem;
+    {
+        // On ARM64, calling kernel32 HeapReAlloc here routes through kernel32's
+        // patched fast-forward dispatch slot back into this hook (infinite
+        // recursion). Call the captured real terminal body instead.
+        LPVOID real = Arm64LookupKernelbaseHeapProc("HeapReAlloc");
+        newmem = (real != NULL) ? ((decltype(&::HeapReAlloc))real)(heap, flags, mem, size)
+                                : HeapReAlloc(heap, flags, mem, size);
+    }
+#else
     LPVOID newmem = HeapReAlloc(heap, flags, mem, size);
+#endif
     if ((newmem == NULL) || !g_vld.enabled())
         return newmem;
 

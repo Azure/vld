@@ -44,6 +44,7 @@
 #define VLD_OPT_SKIP_CRTSTARTUP_LEAKS   0x4000 //   If set, VLD skip crt srtartup memory leaks.
 #define VLD_OPT_IGNORE_FUNCTIONS        0x8000 //   If set, VLD skips the defined functions in IgnoreFunctionsList. 
 #define VLD_OPT_IGNORE_MODULES         0x10000 //   If set, VLD excludes the modules listed in IgnoreModulesList.
+#define VLD_OPT_REPORT_SYSTEM_ALLOCS   0x20000 //   If set, when the immediate caller is a non-reporting CRT/system module, VLD walks the call stack to attribute the allocation to user code (always-stack-walk behavior). If not set, VLD excludes based solely on the immediate caller (VLD 2.5.10 behavior).
 
 #define VLD_RPTHOOK_INSTALL  0
 #define VLD_RPTHOOK_REMOVE   1

@@ -288,6 +288,8 @@ public:
     VOID MarkThreadLeaksAsReported(DWORD threadId);
     VOID EnableModule(HMODULE module);
     VOID DisableModule(HMODULE module);
+    VOID RegisterLoadedModule(HMODULE module, PCWSTR fullPath, PCWSTR baseName, ULONG sizeOfImage);
+    VOID UnregisterLoadedModule(HMODULE module, ULONG sizeOfImage);
     UINT32 GetOptions();
     VOID GetReportFilename(WCHAR *filename);
     VOID SetOptions(UINT32 option_mask, SIZE_T maxDataDump, UINT32 maxTraceFrames);
@@ -407,7 +409,7 @@ private:
 
     static patchentry_t  m_kernelbasePatch [];
     static patchentry_t  m_kernel32Patch [];
-    static patchentry_t  m_ntdllPatch [];
+    static patchentry_t  m_ntdllImportPatch [];
     static patchentry_t  m_ole32Patch [];
     static moduleentry_t m_patchTable [58];   // Table of imports patched for attaching VLD to other modules.
     FILE                *m_reportFile;        // File where the memory leak report may be sent to.

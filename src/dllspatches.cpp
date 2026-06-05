@@ -763,7 +763,7 @@ static patchentry_t ucrtbasedPatch[] = {
     NULL,                           NULL,                                               NULL,
 };
 
-patchentry_t VisualLeakDetector::m_ntdllPatch [] = {
+patchentry_t VisualLeakDetector::m_ntdllImportPatch [] = {
     "RtlAllocateHeap",    NULL, _RtlAllocateHeap,
     "RtlFreeHeap",        NULL, _RtlFreeHeap,
     "RtlReAllocateHeap",  NULL, _RtlReAllocateHeap,
@@ -841,7 +841,7 @@ moduleentry_t VisualLeakDetector::m_patchTable [] = {
     "ucrtbased.dll",FALSE,  0x0, ucrtbasedPatch,
 
     // NT APIs.
-    "ntdll.dll",    FALSE,  0x0, m_ntdllPatch,
+    "ntdll.dll",    FALSE,  0x0, m_ntdllImportPatch,
 
     // COM heap APIs.
     "ole32.dll",    FALSE,  0x0, m_ole32Patch
