@@ -60,7 +60,9 @@ LoadedModules g_LoadedModules;
 // The one and only VisualLeakDetector object instance.
 __declspec(dllexport) VisualLeakDetector g_vld;
 
-// Patch only this entries in Kernel32.dll and KernelBase.dll
+// IAT patch entries for ntdll loader-lock and DLL-resolution exports. Patched
+// into kernel32 and kernelbase so VLD sees loader-lock acquire/release and can
+// route LdrLoadDll through a pass-through hook.
 patchentry_t ldrLoadDllPatch [] = {
     "LdrLoadDll",             NULL, VisualLeakDetector::_LdrLoadDll,
     "LdrGetDllHandle",        NULL, VisualLeakDetector::_LdrGetDllHandle,
@@ -69,7 +71,7 @@ patchentry_t ldrLoadDllPatch [] = {
     "LdrUnlockLoaderLock",    NULL, VisualLeakDetector::_LdrUnlockLoaderLock,
     NULL,                     NULL, NULL
 };
-moduleentry_t ntdllPatch [] = {
+moduleentry_t ntdllModuleEntry [] = {
     "ntdll.dll",    FALSE,  NULL,   ldrLoadDllPatch,
 };
 
@@ -97,9 +99,10 @@ moduleentry_t ntdllPatch [] = {
 //   imports are snapped, and BEFORE LdrpCallInitRoutine runs the module's
 //   DllMain. Patching here means:
 //     * each module is patched exactly once, so there is no concurrent
-//       same-module IAT VirtualProtect/write race (the failure mode of patching
-//       from the post-LdrLoadDll hook, where N threads LoadLibrary the same DLL
-//       and patch its IAT simultaneously), and
+//       same-module IAT VirtualProtect/write race (the historical failure
+//       mode of an alternative design that patched from the post-LdrLoadDll
+//       return path, where N threads LoadLibrary the same DLL and patch its
+//       IAT simultaneously), and
 //     * the IAT is fully snapped, so the patch sticks, and
 //     * DllMain / static initializers run with the patched IAT in place, so
 //       their allocations route through VLD's hooks.
@@ -357,14 +360,17 @@ VisualLeakDetector::VisualLeakDetector ()
 
 #if defined(_M_ARM64)
     // On ARM64, kernel32 heap APIs (HeapAlloc/HeapFree/HeapReAlloc/HeapSize/HeapDestroy)
-    // are ARM64X fast-forward dispatch thunks whose target slots are resolved lazily by
-    // the loader on the first call. VLD patches and later restores these kernel32 slots;
-    // if a slot is still unresolved when first exercised at process detach (under the
-    // loader lock, e.g. the CRT freeing memory or VLD destroying its private heap), the
-    // unresolved stub branches to itself and spins forever. Resolving the forwarders here
-    // at DLL attach (also under the loader lock, but while the loader is fully functional)
-    // makes the resolution stick process wide and ensures the originals VLD saves are
-    // already resolved. x64 has no fast-forward thunks and is unaffected.
+    // are fast-forward dispatch thunks whose target slots are resolved lazily by
+    // the loader on the first call. (Kernel32 on ARM64 Windows ships as an ARM64X
+    // binary; the dispatch thunks are the ARM64X mechanism for forwarding from
+    // kernel32 to the terminal body in kernelbase.) VLD patches and later restores
+    // these kernel32 slots; if a slot is still unresolved when first exercised at
+    // process detach (under the loader lock, e.g. the CRT freeing memory or VLD
+    // destroying its private heap), the unresolved stub branches to itself and
+    // spins forever. Resolving the forwarders here at DLL attach (also under the
+    // loader lock, but while the loader is fully functional) makes the resolution
+    // stick process wide and ensures the originals VLD saves are already resolved.
+    // x64 has no fast-forward thunks and is unaffected.
     {
         HANDLE warmHeap = HeapCreate(0, 0, 0);
         if (warmHeap != NULL) {
@@ -479,10 +485,10 @@ VisualLeakDetector::VisualLeakDetector ()
     }
     delete [] symbolpath;
 
-    ntdllPatch[0].moduleBase = (UINT_PTR)ntdll;
-    PatchImport(kernel32, ntdllPatch);
+    ntdllModuleEntry[0].moduleBase = (UINT_PTR)ntdll;
+    PatchImport(kernel32, ntdllModuleEntry);
     if (kernelBase != NULL)
-        PatchImport(kernelBase, ntdllPatch);
+        PatchImport(kernelBase, ntdllModuleEntry);
 
     // Attach Visual Leak Detector to every module loaded in the process.
     ModuleSet* newmodules = new ModuleSet();
@@ -673,9 +679,9 @@ VisualLeakDetector::~VisualLeakDetector ()
 
         HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
         HMODULE kernelBase = GetModuleHandleW(L"KernelBase.dll");
-        RestoreImport(kernel32, ntdllPatch);
+        RestoreImport(kernel32, ntdllModuleEntry);
         if (kernelBase != NULL)
-            RestoreImport(kernelBase, ntdllPatch);
+            RestoreImport(kernelBase, ntdllModuleEntry);
 
         BOOL threadsactive = waitForAllVLDThreads();
 
@@ -1212,7 +1218,7 @@ VOID VisualLeakDetector::configure ()
 
     // When the immediate caller of an allocation is a non-reporting CRT/system
     // module, this option controls whether VLD walks the call stack to find a
-    // user module (VLD 2.5.15 behavior) or excludes based solely on the
+    // user module (always-stack-walk behavior) or excludes based solely on the
     // immediate caller (VLD 2.5.10 behavior). Defaults to the 2.5.10 behavior.
     if (LoadBoolOption(L"ReportSystemAllocations", L"no", inipath)) {
         m_options |= VLD_OPT_REPORT_SYSTEM_ALLOCS;
@@ -2335,34 +2341,14 @@ FARPROC VisualLeakDetector::_RGetProcAddressForCaller(HMODULE module, LPCSTR pro
     return m_GetProcAddressForCaller(module, procname, caller);
 }
 
-// _LdrLoadDll - Calls to LdrLoadDll are patched through to this function. This
-//   function invokes the real LdrLoadDll and then re-attaches VLD to all
-//   modules loaded in the process after loading of the new DLL is complete.
-//   All modules must be re-enumerated because the explicit load of the
-//   specified module may result in the implicit load of one or more additional
-//   modules which are dependencies of the specified module.
-//
-//  - searchpath (IN): The path to use for searching for the specified module to
-//      be loaded.
-//
-//  - flags (IN): Pointer to action flags.
-//
-//  - modulename (IN): Pointer to a unicodestring_t structure specifying the
-//      name of the module to be loaded.
-//
-//  - modulehandle (OUT): Address of a HANDLE to receive the newly loaded
-//      module's handle.
-//
-//  Return Value:
-//
-//    Returns the value returned by LdrLoadDll.
-//
+// _LdrLoadDll - Pure pass-through. Per-module IAT patching for newly loaded
+//   DLLs is now driven from the LdrRegisterDllNotification LOADED callback
+//   (see VldDllLoadNotification), so the LdrLoadDll hook itself does no real
+//   work; it remains hooked only because the surrounding ldrLoadDllPatch entry
+//   is part of a shared patch table.
 NTSTATUS VisualLeakDetector::_LdrLoadDll (LPWSTR searchpath, PULONG flags, unicodestring_t *modulename,
     PHANDLE modulehandle)
 {
-    // Load the DLL. On ARM64 the newly loaded module is patched from the LDR
-    // LOADED notification (see VldDllLoadNotification); on x64 it is patched from
-    // the LdrpCallInitRoutine detour. This hook is a pure passthrough.
     NTSTATUS status = LdrLoadDll(searchpath, flags, modulename, modulehandle);
     return status;
 }
@@ -2370,7 +2356,7 @@ NTSTATUS VisualLeakDetector::_LdrLoadDll (LPWSTR searchpath, PULONG flags, unico
 NTSTATUS VisualLeakDetector::_LdrLoadDllWin8 (DWORD_PTR reserved, PULONG flags, unicodestring_t *modulename,
                                           PHANDLE modulehandle)
 {
-    // Load the DLL. See _LdrLoadDll above; pure passthrough.
+    // Pure pass-through. See _LdrLoadDll above.
     NTSTATUS status = LdrLoadDllWin8(reserved, flags, modulename, modulehandle);
     return status;
 }
@@ -2439,9 +2425,10 @@ VOID VisualLeakDetector::PatchCurrentModule(HMODULE module)
     if (m_options & VLD_OPT_VLDOFF)
         return;
 
-    // Patch the specified module directly. This is called from LdrpCallInitRoutine
-    // to ensure the module being loaded is patched, even if EnumerateLoadedModulesW64
-    // doesn't see it yet (race condition during DLL loading).
+    // Patch the specified module directly. Called from VldDllLoadNotification
+    // (the LDR LOADED callback) for newly loaded DLLs, before their DllMain
+    // runs, so the module's IAT is hooked before any static initializer makes
+    // an allocation.
     PatchModule(module, m_patchTable, _countof(m_patchTable));
 }
 
@@ -2571,9 +2558,9 @@ VOID VisualLeakDetector::RegisterLoadedModule(HMODULE module, PCWSTR fullPath, P
             dbgLocker);
         // Ignore the return value: SymLoadModuleExW returns 0 if the module is
         // already loaded (which can happen for overlapping reloads). We do not
-        // mark VLD_MODULE_SYMBOLSLOADED here because attachToLoadedModules'
-        // RefreshModules call (or a future explicit VLDRefreshModules) will set
-        // it properly along with the full SymGetModuleInfoW64 invariants.
+        // mark VLD_MODULE_SYMBOLSLOADED here; a subsequent explicit
+        // VLDRefreshModules call (if any) will set it properly along with the
+        // full SymGetModuleInfoW64 invariants.
     }
 
     // Insert under m_modulesLock. Remove any prior entry whose range overlaps
@@ -2600,8 +2587,8 @@ VOID VisualLeakDetector::RegisterLoadedModule(HMODULE module, PCWSTR fullPath, P
 //   Does NOT call SymUnloadModule64 here: that would round-trip through
 //   dbghelp from the LDR notification which we want to keep short. dbghelp
 //   tolerates stale entries for unmapped modules - it will fail symbol
-//   queries for those addresses cleanly. The next RefreshModules() (if any)
-//   will properly unload symbols.
+//   queries for those addresses cleanly. An explicit VLDRefreshModules call
+//   (if the host code chooses to make one) will properly unload symbols.
 VOID VisualLeakDetector::UnregisterLoadedModule(HMODULE module, ULONG sizeOfImage)
 {
     if (m_options & VLD_OPT_VLDOFF)
@@ -2643,13 +2630,13 @@ bool VisualLeakDetector::isModuleExcluded(UINT_PTR address)
 //   explicitly listed in IgnoreModulesList. This is distinct from
 //   isModuleExcluded which also covers ForceIncludeModules exclusions.
 //
-//   When a DLL is loaded dynamically (via LoadLibrary), there is a race
-//   condition where EnumerateLoadedModulesW64 may not see the DLL yet
-//   during RefreshModules. PatchCurrentModule patches the DLL's IAT so
-//   allocations are tracked, but the module may not be in m_loadedModules.
-//   To handle this, if the address is not found in m_loadedModules, we
-//   fall back to resolving the module name from the address and checking
-//   it against m_ignoreModuleList directly.
+//   With the LDR LOADED notification, RegisterLoadedModule inserts every
+//   dynamically loaded DLL into m_loadedModules before its DllMain runs, so
+//   the fast path below normally succeeds. The fallback that resolves the
+//   module name from the address is retained for safety: VLDRefreshModules
+//   or future code paths that bypass the LOADED notification might leave a
+//   stale or missing m_loadedModules entry, in which case we still want
+//   IgnoreModulesList to apply.
 bool VisualLeakDetector::isModuleIgnored(UINT_PTR address)
 {
     if ((g_vld.m_options & VLD_OPT_IGNORE_MODULES) == 0)
@@ -3380,8 +3367,9 @@ BOOL CaptureContext::IsExcludedModule() {
             // 1. CRT is doing internal allocation (should exclude)
             // 2. User module's IAT wasn't patched, so call went through unhooked CRT (should NOT exclude)
             // By default (VLD 2.5.10 behavior) exclude based solely on the
-            // immediate caller. Only when ReportSystemAllocations is enabled do
-            // we walk the stack to look for a user module in the chain.
+            // immediate caller. Only when ReportSystemAllocations is enabled
+            // (fall through to the stack walk below) do we look for a user
+            // module higher in the chain.
             if (!(g_vld.GetOptions() & VLD_OPT_REPORT_SYSTEM_ALLOCS)) {
                 return TRUE;
             }
@@ -3389,8 +3377,9 @@ BOOL CaptureContext::IsExcludedModule() {
         }
     }
 
-    // If we got here because the immediate caller is a CRT with reportLeaks=FALSE,
-    // walk the stack to look for a user module
+    // Reached only when ReportSystemAllocations is enabled and the immediate
+    // caller is a CRT module with reportLeaks=FALSE. Walk the stack to look
+    // for a user module higher in the chain.
     if (IsCrtModuleWithNoReporting(hModule)) {
         // Capture a few frames from the stack
         const UINT32 maxframes = 32;

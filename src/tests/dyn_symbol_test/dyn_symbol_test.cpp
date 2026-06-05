@@ -2,17 +2,13 @@
 //
 // Regression test for VLD's symbol resolution of DYNAMICALLY LOADED modules.
 //
-// On x64, when a DLL is loaded via LoadLibrary AFTER VLD has started, the
-// LdrpCallInitRoutine detour calls RefreshModules -> attachToLoadedModules
-// which invokes SymLoadModuleExW for the newly loaded module. dbghelp can then
-// resolve function names in that DLL when leak callstacks are printed.
-//
-// On ARM64, the LdrpCallInitRoutine detour cannot be installed (x64 assembly
-// only). VLD uses LdrRegisterDllNotification's LOADED callback to patch IATs
-// and register the module. If that path does NOT also call SymLoadModuleExW,
-// dynamically loaded DLLs are unknown to dbghelp; SymFromAddrW returns the
-// address as a string instead of the function name, and leak callstacks for
-// dynamically loaded DLLs degrade to address-only frames.
+// When a DLL is loaded via LoadLibrary AFTER VLD has started, VLD's
+// LdrRegisterDllNotification LOADED callback (VldDllLoadNotification) fires.
+// That callback calls RegisterLoadedModule, which invokes SymLoadModuleExW so
+// dbghelp can later resolve function names inside that DLL. Without the
+// SymLoadModuleExW call, SymFromAddrW returns the address as a string instead
+// of the function name and leak callstacks for dynamically loaded DLLs degrade
+// to address-only frames.
 //
 // This test exercises the path: LoadLibrary("dynamic.dll"), GetProcAddress for
 // SimpleLeak_Malloc, call it (which leaks 6 allocations from named functions

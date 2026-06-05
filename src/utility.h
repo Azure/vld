@@ -166,7 +166,7 @@ VOID Arm64CaptureKernelbaseHeapProcs (VOID);
 // Returns the captured terminal kernelbase/ntdll body for a kernel32 heap export
 // name (HeapCreate/HeapAlloc/HeapReAlloc/HeapFree/HeapDestroy), or NULL if not
 // captured. Used by the heap hooks so VLD's own pass-through call goes to the real
-// body instead of kernel32's patchable ARM64X dispatch thunk (which would recurse).
+// body instead of kernel32's patchable fast-forward dispatch thunk (which would recurse).
 LPVOID Arm64LookupKernelbaseHeapProc (LPCSTR importname);
 #endif
 VOID DumpMemoryA (LPCVOID address, SIZE_T length);

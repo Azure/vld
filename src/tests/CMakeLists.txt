@@ -413,10 +413,11 @@ endif()
 # Dynamically loaded module symbol resolution regression test
 #
 # Verifies that VLD resolves function names (via dbghelp) for modules loaded
-# AFTER VLD startup via LoadLibrary. On x64 the LdrpCallInitRoutine detour
-# calls SymLoadModuleExW for each newly loaded module; on ARM64 we have to
-# arrange the equivalent from our LDR LOADED callback. Without that, leak
-# callstacks for dynamically loaded DLLs degrade to address-only frames.
+# AFTER VLD startup via LoadLibrary. The LDR LOADED callback registered by
+# VLD (VldDllLoadNotification) calls SymLoadModuleExW for the newly loaded
+# module via RegisterLoadedModule, so dbghelp can later resolve symbols in
+# that module. Without that registration, leak callstacks for dynamically
+# loaded DLLs would degrade to address-only frames.
 # The test loads dynamic.dll, calls SimpleLeak_Malloc (which deliberately
 # leaks 6 allocations from named functions in dynamic.dll), then exits.
 # ============================================================================

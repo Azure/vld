@@ -409,7 +409,7 @@ private:
 
     static patchentry_t  m_kernelbasePatch [];
     static patchentry_t  m_kernel32Patch [];
-    static patchentry_t  m_ntdllPatch [];
+    static patchentry_t  m_ntdllImportPatch [];
     static patchentry_t  m_ole32Patch [];
     static moduleentry_t m_patchTable [58];   // Table of imports patched for attaching VLD to other modules.
     FILE                *m_reportFile;        // File where the memory leak report may be sent to.

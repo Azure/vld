@@ -47,15 +47,18 @@ static encoding_e   s_reportEncoding = ascii;  // Output encoding of the memory 
 
 #if defined(_M_ARM64)
 // On ARM64, kernel32's heap exports (HeapCreate/HeapAlloc/HeapReAlloc/HeapFree/
-// HeapDestroy) are ARM64X fast-forward dispatch thunks: their target slot is
-// resolved lazily and the resolving stub patches the CALLING module's IAT (not
-// the kernel32 slot), so the kernel32 slot stays permanently unresolved. When
-// RestoreImport writes GetProcAddress(kernel32, "HeapXxx") (the dispatch thunk)
-// back into a module's IAT, the first call through it at process detach (under
-// the loader lock) reads the unresolved slot and spins forever. The real,
-// terminal function bodies live in kernelbase.dll, so we capture them once at
-// DLL attach and restore IATs to those instead. x64 has no fast-forward thunks
-// and uses the original code path.
+// HeapDestroy) are fast-forward dispatch thunks: their target slot is resolved
+// lazily and the resolving stub patches the CALLING module's IAT (not the
+// kernel32 slot), so the kernel32 slot stays permanently unresolved.
+// (Kernel32 on ARM64 Windows ships as an ARM64X binary; the dispatch thunks
+// are the ARM64X forwarding mechanism. The terminology only matters to the
+// kernel32 binary itself - VLD is built as a native ARM64 DLL.) When
+// RestoreImport writes GetProcAddress(kernel32, "HeapXxx") (the dispatch
+// thunk) back into a module's IAT, the first call through it at process
+// detach (under the loader lock) reads the unresolved slot and spins forever.
+// The real, terminal function bodies live in kernelbase.dll, so we capture
+// them once at DLL attach and restore IATs to those instead. x64 has no
+// fast-forward thunks and uses the original code path.
 static struct { LPCSTR name; LPVOID proc; } g_arm64KernelbaseHeapProcs[] = {
     { "HeapCreate",  NULL },
     { "HeapAlloc",   NULL },
@@ -917,14 +920,15 @@ BOOL PatchImport (HMODULE importmodule, moduleentry_t *patchModule)
                         if (import != replacement)
                         {
                             // Never record VLD's own code as the call-through
-                            // original. On ARM64 an ARM64X veneer can route a
-                            // module's import through kernel32's internal IAT
-                            // slot, which VLD has already patched, so FindRealCode
-                            // may resolve "func" into VLD's own hook; storing that
-                            // would make the hook call itself (infinite
-                            // recursion). The real address is captured when VLD
-                            // patches the exporting module's own import, before
-                            // that slot is redirected. x64 has no fast-forward
+                            // original. On ARM64 the kernel32 fast-forward
+                            // dispatch can route a module's import through
+                            // kernel32's internal IAT slot, which VLD has
+                            // already patched, so FindRealCode may resolve
+                            // "func" into VLD's own hook; storing that would
+                            // make the hook call itself (infinite recursion).
+                            // The real address is captured when VLD patches
+                            // the exporting module's own import, before that
+                            // slot is redirected. x64 has no fast-forward
                             // thunk chain that can route through VLD, so the
                             // unconditional store from upstream is preserved.
 #if defined(_M_ARM64)
