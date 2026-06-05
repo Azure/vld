@@ -39,7 +39,6 @@ __declspec(noinline) void* LeakInIgnoredHelper()
 int main()
 {
     void* p = LeakInIgnoredHelper();
-    (void)p;
-    printf("dtor_suppression_test: leak from LeakInIgnoredHelper allocated; relying on VLD destructor to suppress it\n");
+    printf("dtor_suppression_test: leak from LeakInIgnoredHelper allocated at %p; relying on VLD destructor to suppress it\n", p);
     return 0;
 }
