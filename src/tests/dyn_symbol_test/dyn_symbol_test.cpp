@@ -38,8 +38,9 @@ int main()
         fprintf(stderr, "LoadLibrary(dynamic.dll) failed: %lu\n", GetLastError());
         return 1;
     }
-    // Make sure the module is in VLD's tracked set. If the cluster B fix is
-    // missing, this enables tracking but symbol resolution is still broken.
+    // Make sure the module is in VLD's tracked set. Without the dbghelp
+    // pre-registration in RegisterLoadedModule, this enables VLD tracking but
+    // symbol resolution would still be broken.
     VLDEnableModule(hdyn);
 
     SimpleLeak_Malloc_t func = (SimpleLeak_Malloc_t)GetProcAddress(hdyn, "SimpleLeak_Malloc");
