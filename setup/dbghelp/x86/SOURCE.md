@@ -1,39 +1,63 @@
 # Source of bundled x86 dbghelp.dll
 
-## Current contents
+## Currently bundled file
 
-| File         | Version           | Size (bytes) |
-| ------------ | ----------------- | ------------ |
-| dbghelp.dll  | 10.0.26100.5074   | 1854352      |
+| Field                    | Value                                                              |
+| ------------------------ | ------------------------------------------------------------------ |
+| `dbghelp.dll` FileVersion | **10.0.26100.5074** (WinBuild.160101.0800)                         |
+| ProductVersion           | 10.0.26100.5074                                                    |
+| OriginalFilename         | DBGHELP.DLL                                                        |
+| FileDescription          | Windows Image Helper                                               |
+| Size on disk             | 1,854,352 bytes                                                    |
 
-Microsoft.DTfW.DHL.manifest is the standard Microsoft side-by-side activation
-manifest shipped alongside the redistributable dbghelp.
+Get the stamped version of the local file at any time with:
 
-## Provenance
+```powershell
+(Get-Item setup\dbghelp\x86\dbghelp.dll).VersionInfo | Format-List FileVersion, ProductVersion
+```
 
-The Microsoft Windows Kits 10 "Debugging Tools for Windows" SDK component does
-not include an x86 dbghelp.dll on modern installations. The closest available
-redistributable source is the system-shipped 32-bit dbghelp.dll in:
+`Microsoft.DTfW.DHL.manifest` is the standard side-by-side activation manifest
+that ships with the Windows redistributable dbghelp.
+
+## Exact source
+
+As of Windows 10 SDK version **10.0.26100.0** the "Debugging Tools for
+Windows" optional component installs ONLY an x64 Debuggers folder. The SDK
+no longer ships an x86 dbghelp redistributable on installs verified during
+this update:
+
+    C:\Program Files (x86)\Windows Kits\10\Debuggers\
+        x64\
+            dbghelp.dll  <-- only this exists
+        (no x86 folder)
+        (no arm64 folder unless installed from an ARM64 machine)
+
+The fallback redistributable x86 dbghelp is the system-shipped 32-bit copy:
 
     C:\Windows\SysWOW64\dbghelp.dll
 
-That is a Microsoft-redistributed copy of the Windows Image Helper Library
-identical in lineage to the SDK Debuggers redistributable; it is the same
-binary Microsoft ships to every Windows machine. VLD copies it next to every
-x86 test executable so that x86 test behavior does not depend on whatever
-dbghelp the system loader happens to find first.
+That is the Microsoft-published, redistributable Windows Image Helper Library
+identical in lineage to the SDK Debuggers redistributable. It was extracted
+from a dev machine running:
 
-The companion import library lives in `lib/dbghelp/lib/Win32/DbgHelp.Lib`.
+    Windows 11 Enterprise, build 26200.8390 (25H2 / Cumulative Update KB-level
+    determines the dbghelp UBR; on this machine the stamp was 10.0.26100.5074
+    even though the host OS reports build 26200.8390).
 
 ## How to update
 
-1. Look for a newer dbghelp under the Windows SDK "Debugging Tools for
-   Windows" component first. If a `Debuggers\x86\dbghelp.dll` exists on the
-   SDK install, prefer that; otherwise fall back to `C:\Windows\SysWOW64\
-   dbghelp.dll` from an up-to-date Windows installation.
-2. Copy it into this folder, replacing the existing file.
-3. Re-run the full test suite (x86 + x64 + ARM64) before committing. Past
+1. Look for a newer dbghelp under the Windows 10 SDK "Debugging Tools for
+   Windows" component first. If a future SDK version starts shipping a
+   `Debuggers\x86\dbghelp.dll` again, prefer that and document its SDK
+   version below.
+2. Otherwise fall back to `C:\Windows\SysWOW64\dbghelp.dll` from an
+   up-to-date Windows 11 installation. Record the OS build/UBR (eg
+   `winver` / `(Get-CimInstance Win32_OperatingSystem).Version`) and the
+   stamped FileVersion of the copied DLL.
+3. Copy the new file into this folder, replacing the existing one.
+4. Update the "Currently bundled file" table above with the new FileVersion
+   and size.
+5. Re-run the full test suite (x86 + x64 + ARM64) before committing. Past
    updates of this DLL changed how dbghelp resolves static-function names,
    which can break exact-match `IgnoreFunctionsList` entries in
-   `ignore_functions_test` and similar tests; expect to look at the test
-   output if those start failing.
+   `ignore_functions_test` and similar tests.

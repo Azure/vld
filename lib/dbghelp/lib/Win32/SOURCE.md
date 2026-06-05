@@ -1,31 +1,39 @@
 # Source of bundled x86 DbgHelp.Lib
 
-## Current contents
+## Currently bundled file
 
-| File         | Notes                                                |
-| ------------ | ---------------------------------------------------- |
-| DbgHelp.Lib  | x86 import library for dbghelp.dll.                  |
+| Field        | Value                                                                       |
+| ------------ | --------------------------------------------------------------------------- |
+| Size on disk | 56,180 bytes                                                                |
+| SHA256       | (run `Get-FileHash lib\dbghelp\lib\Win32\DbgHelp.Lib -Algorithm SHA256`)    |
 
-## Provenance
+## Exact source
 
-The import library is taken from the Microsoft "Debugging Tools for Windows"
-component of the Windows 10 SDK (Windows Kits 10), Debuggers package, x86
-flavor. On a machine where the Debuggers component installs the x86 lib (some
-SDK versions ship it under `lib/x86/` of the Debuggers tree; other versions
-omit it and the linker uses the system SDK `um/x86/DbgHelp.lib` instead), it
-can be located at one of:
+This import library was inherited verbatim from the upstream **VLD 2.5.15**
+release commit `4d6e7da` and has not been refreshed since. It does NOT match
+the x86 DbgHelp.Lib that ships with the currently-installed Windows 10 SDK
+version 10.0.26100.0:
 
-    C:\Program Files (x86)\Windows Kits\10\Debuggers\lib\x86\DbgHelp.Lib
-    C:\Program Files (x86)\Windows Kits\10\Lib\<sdk-version>\um\x86\DbgHelp.lib
+    C:\Program Files (x86)\Windows Kits\10\Lib\10.0.26100.0\um\x86\DbgHelp.Lib
+        size = 60,310 bytes
+        DOES NOT MATCH
 
-VLD bundles it so that the build is self-contained and the linker does not
-have to discover an SDK install path. The runtime DLL it pairs with lives in
-`setup/dbghelp/x86/dbghelp.dll`.
+The bundled file is therefore from an older SDK release (the exact version
+was not recorded by upstream). It is paired by symbol-level compatibility
+with the runtime DLL in `setup/dbghelp/x86/dbghelp.dll` and with the bundled
+header in `lib/dbghelp/include/DbgHelp.h`.
 
 ## How to update
 
-1. Install or update the Windows SDK Debuggers component.
-2. Copy the new x86 `DbgHelp.Lib` from the path above into this folder.
-3. Update `setup/dbghelp/x86/dbghelp.dll` if you bumped the SDK version so the
-   import library and runtime DLL stay in sync.
-4. Rebuild and re-run the full test suite before committing.
+1. Install or update **Windows 10 SDK** ("Debugging Tools for Windows"
+   optional component selected). Record the SDK version.
+2. Copy the new import library from:
+
+        C:\Program Files (x86)\Windows Kits\10\Lib\<sdk-version>\um\x86\DbgHelp.Lib
+
+   into this folder, replacing the existing file.
+3. Update the "Currently bundled file" table above with the new size.
+4. Update `setup/dbghelp/x86/dbghelp.dll` and `lib/dbghelp/include/DbgHelp.h`
+   in the same commit so the import library, the header, and the runtime
+   DLL all come from the same SDK version.
+5. Rebuild and re-run the full test suite before committing.
