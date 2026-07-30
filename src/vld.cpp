@@ -231,6 +231,26 @@ struct Arm64TeardownReportScope
     Arm64TeardownReportScope()  { InterlockedIncrement(&g_arm64InTeardownReport); }
     ~Arm64TeardownReportScope() { InterlockedDecrement(&g_arm64InTeardownReport); }
 };
+
+// Broad "in ARM64 process-exit teardown" flag. Unlike g_arm64InTeardownReport
+// (which suppresses dbghelp symbolization and must stay off during the pre-warm),
+// this covers the ENTIRE leak report, including the pre-warm GetLeaksCount(). It
+// is consulted only by GetCallingModule() (utility.cpp) to pick a loader-based
+// module lookup instead of QueryVirtualMemoryInformation/VirtualQuery, whose
+// NtQueryVirtualMemory intermittently livelocks under the loader lock on ARM64
+// at process exit (aka.ms/AA10dvw4). It changes no leak decision.
+static volatile LONG g_arm64InTeardown = 0;
+
+extern "C" bool VldArm64InTeardown(void)
+{
+    return InterlockedCompareExchange(&g_arm64InTeardown, 0, 0) != 0;
+}
+
+struct Arm64TeardownScope
+{
+    Arm64TeardownScope()  { InterlockedIncrement(&g_arm64InTeardown); }
+    ~Arm64TeardownScope() { InterlockedDecrement(&g_arm64InTeardown); }
+};
 #endif
 
 #define _DECL_DLLMAIN  // for _CRT_INIT
@@ -651,6 +671,32 @@ VisualLeakDetector::~VisualLeakDetector ()
             g_vldDllNotificationCookie = NULL;
         }
 #if defined(_M_ARM64)
+        // [ARM64 process-exit teardown hang fix] Route GetCallingModule() through a
+        // loader-based module lookup for the whole leak report. Set BEFORE the
+        // pre-warm below because the pre-warm's call-stack resolution asks for the
+        // module of every frame; on ARM64 the QueryVirtualMemoryInformation /
+        // VirtualQuery path that GetCallingModule() normally uses reaches
+        // NtQueryVirtualMemory, which intermittently livelocks under the loader
+        // lock at process exit (aka.ms/AA10dvw4). (This is separate from
+        // Arm64TeardownReportScope, which only suppresses dbghelp symbolization and
+        // must stay OFF during the pre-warm so suppression names can be resolved.)
+        Arm64TeardownScope arm64TeardownGetCallingModuleScope;
+
+        // [ARM64 process-exit teardown hang fix] Disable leak detection on THIS
+        // (teardown) thread across the pre-warm and the leak report below. Both
+        // allocate: dbghelp allocates internally during symbol resolution, and
+        // VLD's own ReportLeaks() bookkeeping allocates through the heap hooks.
+        // With detection disabled those transient allocations bypass the
+        // allocation hooks instead of being tracked; tracking them would call
+        // GetCallingModule() -> QueryVirtualMemoryInformation() per allocation,
+        // which intermittently wedges forever on ARM64 under the loader lock at
+        // process exit (aka.ms/AA10dvw4). Restored right after ReportLeaks(),
+        // while thread-local storage is still valid (it is torn down later in
+        // this destructor). Non-weakening: the report only reads the block map
+        // already populated during the run; nothing user-relevant allocates
+        // after main returns.
+        DisableLeakDetection();
+
         // Pre-warm the suppression cache while dbghelp is still usable. The ARM64
         // teardown scope below disables dbghelp symbol resolution because the
         // bundled ARM64 dbghelp spins under the loader lock at shutdown; but the
@@ -705,6 +751,13 @@ VisualLeakDetector::~VisualLeakDetector ()
                 Report(L"Total allocations: %Iu bytes.\n", m_totalAlloc);
             }
         }
+
+#if defined(_M_ARM64)
+        // Re-enable leak detection now that the ARM64 leak report is complete and
+        // before this destructor tears down thread-local storage below (pairs
+        // with the DisableLeakDetection() before the pre-warm above).
+        RestoreLeakDetectionState();
+#endif
 
         // Free resources used by the symbol handler.
         DbgTrace(L"dbghelp32.dll %i: SymCleanup\n", GetCurrentThreadId());
@@ -3262,6 +3315,25 @@ CaptureContext::CaptureContext(void* func, context_t& context, BOOL debug, BOOL 
 CaptureContext::~CaptureContext() {
     if (!m_bFirst)
         return;
+
+#if defined(_M_ARM64)
+    // [ARM64 process-exit teardown hang fix] Mirror the allocation-hook guards
+    // (see VisualLeakDetector::_HeapAlloc): when leak detection is disabled on
+    // this thread, or when this thread already holds the DbgHelp lock (a
+    // re-entrant allocation made from inside VLD's own dbghelp symbol
+    // resolution), the inner heap / RtlAllocateHeap hooks never recorded a block
+    // (m_tls->blockWithoutGuard stays NULL), so there is nothing to map here.
+    // Skip IsExcludedModule() as well: it calls GetCallingModule() ->
+    // QueryVirtualMemoryInformation(), a per-allocation memory-region query that
+    // intermittently wedges forever on ARM64 under the loader lock at process
+    // teardown (aka.ms/AA10dvw4; see the ARM64 report handling in
+    // ~VisualLeakDetector). Such allocations are never user leaks, so this
+    // reports no different leak -- it only avoids the wedge-prone query.
+    if (!g_vld.enabled() || g_DbgHelp.IsLockedByCurrentThread()) {
+        Reset();
+        return;
+    }
+#endif
 
     BOOL excluded = IsExcludedModule();
     if ((m_tls->blockWithoutGuard) && (!excluded)) {

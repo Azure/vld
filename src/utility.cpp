@@ -35,6 +35,9 @@
 extern ReportHookSet*   g_pReportHooks;
 extern VisualLeakDetector g_vld;
 extern ImageDirectoryEntries g_Ide;
+#if defined(_M_ARM64)
+extern "C" bool VldArm64InTeardown(void);
+#endif
 
 // Global variables.
 static BOOL         s_reportDelay = FALSE;     // If TRUE, we sleep for a bit after calling OutputDebugString to give the debugger time to catch up.
@@ -1509,6 +1512,26 @@ void GetFormattedMessage(DWORD last_error)
 HMODULE GetCallingModule(UINT_PTR pCaller )
 {
     HMODULE hModule = NULL;
+
+#if defined(_M_ARM64)
+    if (VldArm64InTeardown())
+    {
+        // During ARM64 process-exit teardown the loader lock is held and the
+        // QueryVirtualMemoryInformation / VirtualQuery calls below reach
+        // NtQueryVirtualMemory, which intermittently livelocks (aka.ms/AA10dvw4).
+        // Use a loader-based lookup that walks the loaded-module list instead and
+        // cannot wedge. For a code address (every call-stack frame) this returns
+        // the same module base; for a non-module address it returns NULL, which
+        // all callers already treat as "not a tracked module".
+        HMODULE hMod = NULL;
+        if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               reinterpret_cast<LPCWSTR>(pCaller), &hMod))
+        {
+            return hMod;
+        }
+        return NULL;
+    }
+#endif
 
     // Try QueryVirtualMemoryInformation first (Windows 10 1607+)
     WIN32_MEMORY_REGION_INFORMATION memoryRegionInfo;
