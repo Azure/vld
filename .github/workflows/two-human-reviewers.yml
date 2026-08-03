@@ -1,0 +1,41 @@
+name: Two human reviewers
+# Requires approvals from two distinct humans on bot-authored pull requests, so a PR the agent opened is
+# not merged on the single approval that would normally be the *second* human to look at a change.
+#
+# The logic lives in c-build-tools so every repository shares one definition; see
+# `.github/workflows/two-human-reviewers.yml` there for why this is a workflow rather than a branch rule,
+# and for the `required-approvals` and `exempt-bots` inputs. This repository does not need to reference
+# c-build-tools any other way: a reusable workflow is fetched by Actions from the ref below, and is not a
+# checkout or a submodule.
+#
+# Keep BOTH triggers below. A called workflow's own triggers are ignored, so these are what re-run the
+# gate; drop `pull_request_review` and it evaluates once at open, finds no approvals, and never re-runs
+# when someone approves - leaving the required check failing until an unrelated push happens to re-trigger
+# it.
+#
+# Do not add a required status check for this until the file is on the default branch, or every open pull
+# request will wait forever on a check that cannot run. Use the `workflow_dispatch` below to produce a
+# first result on pull requests that were already open when it landed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number to evaluate.
+        type: string
+        required: true
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+# Set here because a called workflow can never hold more permission than its caller.
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  two-human-reviewers:
+    uses: Azure/c-build-tools/.github/workflows/two-human-reviewers.yml@master
+    with:
+      pr: ${{ github.event.pull_request.number || inputs.pr }}
