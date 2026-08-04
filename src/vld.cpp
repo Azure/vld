@@ -232,24 +232,29 @@ struct Arm64TeardownReportScope
     ~Arm64TeardownReportScope() { InterlockedDecrement(&g_arm64InTeardownReport); }
 };
 
-// Broad "in ARM64 process-exit teardown" flag. Unlike g_arm64InTeardownReport
-// (which suppresses dbghelp symbolization and must stay off during the pre-warm),
-// this covers the ENTIRE leak report, including the pre-warm GetLeaksCount(). It
-// is consulted only by GetCallingModule() (utility.cpp) to pick a loader-based
-// module lookup instead of QueryVirtualMemoryInformation/VirtualQuery, whose
-// NtQueryVirtualMemory intermittently livelocks under the loader lock on ARM64
-// at process exit (aka.ms/AA10dvw4). It changes no leak decision.
-static volatile LONG g_arm64InTeardown = 0;
+// The ARM64 teardown thread uses a loader-based module lookup during the entire
+// leak report, including the pre-warm GetLeaksCount(). Other threads must keep
+// using the normal lookup because they do not hold the loader lock.
+static volatile LONG g_arm64TeardownThreadId = 0;
 
 extern "C" bool VldArm64InTeardown(void)
 {
-    return InterlockedCompareExchange(&g_arm64InTeardown, 0, 0) != 0;
+    DWORD teardownThreadId = static_cast<DWORD>(
+        InterlockedCompareExchange(&g_arm64TeardownThreadId, 0, 0));
+    return teardownThreadId != 0 && teardownThreadId == GetCurrentThreadId();
 }
 
 struct Arm64TeardownScope
 {
-    Arm64TeardownScope()  { InterlockedIncrement(&g_arm64InTeardown); }
-    ~Arm64TeardownScope() { InterlockedDecrement(&g_arm64InTeardown); }
+    Arm64TeardownScope()
+    {
+        InterlockedExchange(&g_arm64TeardownThreadId, static_cast<LONG>(GetCurrentThreadId()));
+    }
+
+    ~Arm64TeardownScope()
+    {
+        InterlockedExchange(&g_arm64TeardownThreadId, 0);
+    }
 };
 #endif
 
