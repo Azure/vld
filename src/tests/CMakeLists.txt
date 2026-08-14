@@ -410,6 +410,16 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/dtor_suppression_test/dtor_suppression_tes
 endif()
 
 # ============================================================================
+# ARM64 process-exit teardown hang regression test
+# ============================================================================
+if(VLD_PLATFORM STREQUAL "ARM64")
+    add_vld_test(arm64_teardown_hang_test
+        SOURCES arm64_teardown_hang_test/arm64_teardown_hang_test.cpp
+    )
+    set_property(TEST arm64_teardown_hang_test PROPERTY TIMEOUT 15)
+endif()
+
+# ============================================================================
 # Dynamically loaded module symbol resolution regression test
 #
 # Verifies that VLD resolves function names (via dbghelp) for modules loaded
