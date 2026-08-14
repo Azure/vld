@@ -1,21 +1,27 @@
 name: Two human reviewers
-# Requires approvals from two distinct humans on bot-authored pull requests, so a PR the agent opened is
-# not merged on the single approval that would normally be the *second* human to look at a change.
-#
 # The logic lives in c-build-tools so every repository shares one definition; see
 # `.github/workflows/two-human-reviewers.yml` there for why this is a workflow rather than a branch rule,
-# and for the `required-approvals` and `exempt-bots` inputs. This repository does not need to reference
-# c-build-tools any other way: a reusable workflow is fetched by Actions from the ref below, and is not a
-# checkout or a submodule.
+# and for the `required-approvals` and `exempt-bots` inputs.
 #
 # Keep BOTH triggers below. A called workflow's own triggers are ignored, so these are what re-run the
 # gate; drop `pull_request_review` and it evaluates once at open, finds no approvals, and never re-runs
 # when someone approves - leaving the required check failing until an unrelated push happens to re-trigger
 # it.
 #
+# `pull_request_target` rather than `pull_request`, because the gate publishes its verdict as a commit
+# status and a pull request from a fork carries a read-only token on `pull_request`. It could never
+# publish for one, and the fork's pull request would then wait forever on a status that never arrives.
+# `pull_request_target` runs in the base repository's context, with a token that can write.
+#
+# That is only safe because the gate never checks out the pull request's code - it reads the API and
+# nothing else. Do not add a checkout here, and do not add one to the called workflow: with
+# `pull_request_target` that code would run with a writable token against the base repository.
+#
 # Do not add a required status check for this until the file is on the default branch, or every open pull
-# request will wait forever on a check that cannot run. Use the `workflow_dispatch` below to produce a
-# first result on pull requests that were already open when it landed.
+# request will wait forever on a check that cannot run. Pull requests that were already open when it landed
+# get no event either, and are unstuck by reopening them, or by any push to them. Dispatching does not do
+# it: a dispatch runs against the default branch, so its check run attaches to that branch's commit rather
+# than to a pull request's head. It reports the verdict to the run log, and is useful for that.
 
 on:
   workflow_dispatch:
@@ -24,7 +30,7 @@ on:
         description: PR number to evaluate.
         type: string
         required: true
-  pull_request:
+  pull_request_target:
     types: [opened, reopened, synchronize, ready_for_review]
   pull_request_review:
     types: [submitted, dismissed]
@@ -33,9 +39,12 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  statuses: write
 
 jobs:
   two-human-reviewers:
+    # Pin to a tag or commit SHA instead of a branch if you need the gate's behaviour to change only when
+    # you choose to update it.
     uses: Azure/c-build-tools/.github/workflows/two-human-reviewers.yml@master
     with:
       pr: ${{ github.event.pull_request.number || inputs.pr }}
