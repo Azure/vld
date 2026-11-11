@@ -811,9 +811,38 @@ static BOOL GetArm64EcExportNameUnsafe(UINT_PTR programCounter, LPWSTR name, SIZ
     return FALSE;
 }
 
+static BOOL s_isArm64Host = FALSE;
+
+static BOOL CALLBACK QueryArm64Host(PINIT_ONCE, PVOID, PVOID*)
+{
+    typedef BOOL (WINAPI *IsWow64Process2_t)(HANDLE, USHORT*, USHORT*);
+    // IsWow64Process2 tells the real host machine even to an emulated x64
+    // process (GetNativeSystemInfo reports AMD64 there). It exists since
+    // Windows 10 1709, the first release that runs on ARM64.
+    IsWow64Process2_t isWow64Process2 = (IsWow64Process2_t)GetProcAddress(
+        GetModuleHandleW(L"kernel32.dll"), "IsWow64Process2");
+    USHORT processMachine = IMAGE_FILE_MACHINE_UNKNOWN;
+    USHORT nativeMachine = IMAGE_FILE_MACHINE_UNKNOWN;
+    s_isArm64Host = isWow64Process2 != NULL &&
+        isWow64Process2(GetCurrentProcess(), &processMachine, &nativeMachine) &&
+        nativeMachine == IMAGE_FILE_MACHINE_ARM64;
+    return TRUE;
+}
+
+// Only ARM64 hosts load ARM64X images into x64 processes.
+static BOOL IsArm64Host()
+{
+    static INIT_ONCE s_arm64HostOnce = INIT_ONCE_STATIC_INIT;
+    if (!InitOnceExecuteOnce(&s_arm64HostOnce, QueryArm64Host, NULL, NULL))
+    {
+        return FALSE;
+    }
+    return s_isArm64Host;
+}
+
 BOOL GetArm64EcExportName(UINT_PTR programCounter, LPWSTR name, SIZE_T nameChars, DWORD64* displacement)
 {
-    if (name == NULL || nameChars == 0 || displacement == NULL)
+    if (name == NULL || nameChars == 0 || displacement == NULL || !IsArm64Host())
         return FALSE;
     // Built aside so that a fault halfway leaves the caller's name intact.
     WCHAR candidate[256];
