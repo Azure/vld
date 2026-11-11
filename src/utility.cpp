@@ -794,9 +794,12 @@ static BOOL GetArm64EcExportNameUnsafe(UINT_PTR programCounter, LPWSTR name, SIZ
         if (targetRva != function->BeginAddress)
             continue;
 
+        if (nameRvas[i] >= imageSize)
+            continue;
         const char* exportName = (const char*)(base + nameRvas[i]);
+        SIZE_T maxLength = imageSize - nameRvas[i];
         SIZE_T length = 0;
-        while (length + 1 < nameChars && exportName[length] != '\0')
+        while (length + 1 < nameChars && length < maxLength && exportName[length] != '\0')
         {
             name[length] = (WCHAR)(BYTE)exportName[length];
             length++;
@@ -812,15 +815,26 @@ BOOL GetArm64EcExportName(UINT_PTR programCounter, LPWSTR name, SIZE_T nameChars
 {
     if (name == NULL || nameChars == 0 || displacement == NULL)
         return FALSE;
+    // Built aside so that a fault halfway leaves the caller's name intact.
+    WCHAR candidate[256];
+    DWORD64 candidateDisplacement = 0;
+    BOOL found;
     // The module can be unloaded concurrently; treat any fault as "does not apply".
     __try
     {
-        return GetArm64EcExportNameUnsafe(programCounter, name, nameChars, displacement);
+        found = GetArm64EcExportNameUnsafe(programCounter, candidate,
+            nameChars < _countof(candidate) ? nameChars : _countof(candidate), &candidateDisplacement);
     }
     __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH)
     {
-        return FALSE;
+        found = FALSE;
     }
+    if (found)
+    {
+        wcsncpy_s(name, nameChars, candidate, _TRUNCATE);
+        *displacement = candidateDisplacement;
+    }
+    return found;
 }
 #endif // _M_X64
 

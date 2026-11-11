@@ -53,6 +53,7 @@ unsigned char* g_fptableEnd = nullptr;
 struct PendingRestore
 {
     LPVOID address;
+    SIZE_T size;
     DWORD oldProtect;
 };
 
@@ -106,7 +107,8 @@ BOOL WINAPI CountingVirtualProtect(LPVOID address, SIZE_T size, DWORD newProtect
     bool isRestore = false;
     for (size_t i = g_pendingCount; i > 0; i--)
     {
-        if (g_pending[i - 1].address == address && g_pending[i - 1].oldProtect == newProtect)
+        if (g_pending[i - 1].address == address && g_pending[i - 1].size == size &&
+            g_pending[i - 1].oldProtect == newProtect)
         {
             g_pending[i - 1] = g_pending[--g_pendingCount];
             isRestore = true;
@@ -128,7 +130,7 @@ BOOL WINAPI CountingVirtualProtect(LPVOID address, SIZE_T size, DWORD newProtect
         }
         if (g_pendingCount < MAX_PENDING)
         {
-            g_pending[g_pendingCount++] = { address, previous };
+            g_pending[g_pendingCount++] = { address, size, previous };
         }
     }
 
@@ -283,6 +285,11 @@ int main()
             g_reported[i].newProtect, g_reported[i].oldProtect);
     }
 
+    if (totalCalls == 0)
+    {
+        std::printf("FAIL: no VirtualProtect call went through the hook\n");
+        return 2;
+    }
     if (violations != 0)
     {
         std::printf("FAIL: VLD changed page protection to read memory\n");
