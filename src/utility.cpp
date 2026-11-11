@@ -511,9 +511,13 @@ static BOOL IsReadableMemory(LPCVOID address, SIZE_T size)
     {
         MEMORY_BASIC_INFORMATION mbi;
         if (VirtualQuery(current, &mbi, sizeof(mbi)) != sizeof(mbi))
+        {
             return FALSE;
+        }
         if (mbi.State != MEM_COMMIT || (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0)
+        {
             return FALSE;
+        }
         switch (mbi.Protect & 0xFF)
         {
         case PAGE_READONLY:
@@ -535,7 +539,9 @@ static BOOL IsReadableMemory(LPCVOID address, SIZE_T size)
 static BOOL ReadMemory(LPCVOID address, LPVOID buffer, SIZE_T size)
 {
     if (!IsReadableMemory(address, size))
+    {
         return FALSE;
+    }
     __try
     {
         memcpy(buffer, address, size);
@@ -579,7 +585,9 @@ LPVOID FindRealCode(LPVOID pCode)
             // is ADRP+LDR+BR.
             ULONG p[3];
             if (!ReadMemory(cur, p, sizeof(p)))
+            {
                 break;
+            }
 
             ULONG i0 = p[0];
             LPVOID next = NULL;
@@ -616,7 +624,9 @@ LPVOID FindRealCode(LPVOID pCode)
                     ULONG_PTR slot = page + (imm12 << 3);
                     LPVOID target;
                     if (ReadMemory((LPCVOID)slot, &target, sizeof(target)))
+                    {
                         next = target;
+                    }
                 }
             }
 
@@ -641,9 +651,13 @@ LPVOID FindRealCode(LPVOID pCode)
 #endif
                 LPVOID target;
                 if (ReadMemory(slot, &target, sizeof(target)))
+                {
                     result = FindRealCode(target);
+                }
                 else
+                {
                     result = NULL;
+                }
             }
             else if (code[0] == 0xE9) // JMP rel32
             {
@@ -709,23 +723,33 @@ static BOOL GetArm64EcExportNameUnsafe(UINT_PTR programCounter, LPWSTR name, SIZ
 {
     BYTE* base = (BYTE*)GetCallingModule(programCounter);
     if (base == NULL)
+    {
         return FALSE;
+    }
     IMAGE_NT_HEADERS64* nt = (IMAGE_NT_HEADERS64*)(base + ((IMAGE_DOS_HEADER*)base)->e_lfanew);
     if (nt->Signature != IMAGE_NT_SIGNATURE || nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+    {
         return FALSE;
+    }
     DWORD imageSize = nt->OptionalHeader.SizeOfImage;
     DWORD pcRva = (DWORD)(programCounter - (UINT_PTR)base);
 
     IMAGE_DATA_DIRECTORY loadConfigDir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG];
     if (loadConfigDir.VirtualAddress == 0)
+    {
         return FALSE;
+    }
     IMAGE_LOAD_CONFIG_DIRECTORY64* loadConfig = (IMAGE_LOAD_CONFIG_DIRECTORY64*)(base + loadConfigDir.VirtualAddress);
     if (loadConfig->Size < offsetof(IMAGE_LOAD_CONFIG_DIRECTORY64, CHPEMetadataPointer) + sizeof(ULONGLONG) ||
         loadConfig->CHPEMetadataPointer == 0)
+    {
         return FALSE;
+    }
     const ARM64EC_METADATA* metadata = (const ARM64EC_METADATA*)loadConfig->CHPEMetadataPointer;
     if ((BYTE*)metadata < base || (BYTE*)(metadata + 1) > base + imageSize)
+    {
         return FALSE;
+    }
 
     // The program counter must be in ARM64EC code.
     const ARM64EC_CODE_RANGE* codeMap = (const ARM64EC_CODE_RANGE*)(base + metadata->CodeMap);
@@ -741,7 +765,9 @@ static BOOL GetArm64EcExportNameUnsafe(UINT_PTR programCounter, LPWSTR name, SIZ
         }
     }
     if (!inEcCode)
+    {
         return FALSE;
+    }
 
     // Find the ARM64 function containing the program counter (sorted by BeginAddress).
     const IMAGE_ARM64_RUNTIME_FUNCTION_ENTRY* functions =
@@ -752,25 +778,39 @@ static BOOL GetArm64EcExportNameUnsafe(UINT_PTR programCounter, LPWSTR name, SIZ
     {
         ULONG mid = low + (high - low) / 2;
         if (functions[mid].BeginAddress <= pcRva)
+        {
             low = mid + 1;
+        }
         else
+        {
             high = mid;
+        }
     }
     if (low == 0)
+    {
         return FALSE;
+    }
     const IMAGE_ARM64_RUNTIME_FUNCTION_ENTRY* function = &functions[low - 1];
     DWORD functionLength;
     if (function->Flag != 0)
+    {
         functionLength = function->FunctionLength * 4;
+    }
     else
+    {
         functionLength = (*(const DWORD*)(base + function->UnwindData) & 0x3FFFF) * 4;
+    }
     if (pcRva - function->BeginAddress >= functionLength)
+    {
         return FALSE;
+    }
 
     // Find the export whose x64 thunk jumps to that function.
     IMAGE_DATA_DIRECTORY exportDir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
     if (exportDir.VirtualAddress == 0)
+    {
         return FALSE;
+    }
     const IMAGE_EXPORT_DIRECTORY* exports = (const IMAGE_EXPORT_DIRECTORY*)(base + exportDir.VirtualAddress);
     const DWORD* functionRvas = (const DWORD*)(base + exports->AddressOfFunctions);
     const DWORD* nameRvas = (const DWORD*)(base + exports->AddressOfNames);
@@ -779,23 +819,33 @@ static BOOL GetArm64EcExportNameUnsafe(UINT_PTR programCounter, LPWSTR name, SIZ
     {
         WORD ordinal = nameOrdinals[i];
         if (ordinal >= exports->NumberOfFunctions)
+        {
             continue;
+        }
         DWORD thunkRva = functionRvas[ordinal];
         // Skip forwarders (RVA inside the export directory) and anything that
         // does not leave room for a complete thunk.
         if ((thunkRva >= exportDir.VirtualAddress && thunkRva - exportDir.VirtualAddress < exportDir.Size) ||
             thunkRva == 0 || thunkRva > imageSize - (sizeof(g_arm64EcExportThunk) + sizeof(LONG)))
+        {
             continue;
+        }
         const BYTE* thunk = base + thunkRva;
         if (memcmp(thunk, g_arm64EcExportThunk, sizeof(g_arm64EcExportThunk)) != 0)
+        {
             continue;
+        }
         LONG rel = *(const LONG*)(thunk + sizeof(g_arm64EcExportThunk));
         DWORD targetRva = thunkRva + (DWORD)(sizeof(g_arm64EcExportThunk) + sizeof(LONG)) + (DWORD)rel;
         if (targetRva != function->BeginAddress)
+        {
             continue;
+        }
 
         if (nameRvas[i] >= imageSize)
+        {
             continue;
+        }
         const char* exportName = (const char*)(base + nameRvas[i]);
         SIZE_T maxLength = imageSize - nameRvas[i];
         SIZE_T length = 0;
@@ -843,7 +893,9 @@ static BOOL IsArm64Host()
 BOOL GetArm64EcExportName(UINT_PTR programCounter, LPWSTR name, SIZE_T nameChars, DWORD64* displacement)
 {
     if (name == NULL || nameChars == 0 || displacement == NULL || !IsArm64Host())
+    {
         return FALSE;
+    }
     // Built aside so that a fault halfway leaves the caller's name intact.
     WCHAR candidate[256];
     DWORD64 candidateDisplacement = 0;
