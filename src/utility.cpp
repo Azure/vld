@@ -880,7 +880,7 @@ static BOOL CALLBACK QueryArm64Host(PINIT_ONCE, PVOID, PVOID*)
 }
 
 // Only ARM64 hosts load ARM64X images into x64 processes.
-static BOOL IsArm64Host()
+BOOL IsArm64Host()
 {
     static INIT_ONCE s_arm64HostOnce = INIT_ONCE_STATIC_INIT;
     if (!InitOnceExecuteOnce(&s_arm64HostOnce, QueryArm64Host, NULL, NULL))

@@ -206,6 +206,9 @@ HMODULE GetCallingModule(UINT_PTR pCaller);
 // process running on ARM64) after the export whose x64 thunk enters that exact
 // function. Returns FALSE when that does not apply.
 BOOL GetArm64EcExportName(UINT_PTR programCounter, LPWSTR name, SIZE_T nameChars, DWORD64* displacement);
+// TRUE when the host is ARM64. The first call resolves IsWow64Process2, which
+// may need the loader; make it before VLD holds any of its own locks.
+BOOL IsArm64Host();
 #endif
 DWORD FilterFunction(long);
 BOOL LoadBoolOption(LPCWSTR optionname, LPCWSTR defaultvalue, LPCWSTR inipath);
