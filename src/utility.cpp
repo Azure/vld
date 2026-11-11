@@ -500,124 +500,51 @@ BOOL IsModulePatched (HMODULE importmodule, moduleentry_t patchtable [], UINT ta
     return FALSE;
 }
 
-#define MAX_PAGES_PROTECT 2
-
-typedef struct PROTECT_INSTANCE_TAG
+// Returns TRUE if [address, address + size) is committed, readable and not a
+// guard page. Never changes page protection: doing so on ARM64X system DLL data
+// pages faults inside the loader under x64 emulation on ARM64.
+static BOOL IsReadableMemory(LPCVOID address, SIZE_T size)
 {
-    DWORD old_protect[MAX_PAGES_PROTECT];
-    LPVOID address;
-    SIZE_T size;
-} PROTECT_INSTANCE;
-
-typedef struct PROTECT_INSTANCE_TAG* PROTECT_HANDLE;
-
-#ifdef _WIN64
-#define PAGE_MASK 0xFFFFFFFFFFFFF000
-#else
-#define PAGE_MASK 0xFFFFF000
-#endif
-
-#define PAGE_SIZE 0x1000
-
-// These functions are used for trampoline/thunk detection on all architectures.
-static BOOL VLDVirtualProtect(PROTECT_HANDLE protect_handle, LPVOID address, SIZE_T size, DWORD protect)
-{
-    size_t page_count = 0;
-    size_t pages_done = 0; // number of pages where VirtualProtect succeeded
-
-    // save the address and size so that we can restore in the same way
-    protect_handle->address = address;
-    protect_handle->size = size;
-
-    uintptr_t current_address = (uintptr_t)address;
-    BOOL succeeded = TRUE;
-
-    // walk all pages while we still have size > 0
-    while ((size > 0) && (page_count < MAX_PAGES_PROTECT))
+    const BYTE* current = (const BYTE*)address;
+    const BYTE* end = current + size;
+    while (current < end)
     {
-        uintptr_t page_address = current_address & PAGE_MASK;
-        SIZE_T size_in_page = page_address + PAGE_SIZE - current_address;
-        SIZE_T size_to_protect = (size_in_page < size) ? size_in_page : size;
-
-        BOOL result = VirtualProtect((LPVOID)current_address, size_to_protect, protect, &protect_handle->old_protect[page_count]);
-        if (!result)
+        MEMORY_BASIC_INFORMATION mbi;
+        if (VirtualQuery(current, &mbi, sizeof(mbi)) != sizeof(mbi))
+            return FALSE;
+        if (mbi.State != MEM_COMMIT || (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0)
+            return FALSE;
+        switch (mbi.Protect & 0xFF)
         {
-            Report(L"%zu: !!! VirtualProtect FAILED when protecting for address=%p, size=%zu, with GetLastError()=%lu, protect_handle->address=%p, protect_handle->size=%zu\n",
-                __LINE__, current_address, size_to_protect,
-                GetLastError(),
-                protect_handle->address, protect_handle->size);
-            succeeded = FALSE;
+        case PAGE_READONLY:
+        case PAGE_READWRITE:
+        case PAGE_WRITECOPY:
+        case PAGE_EXECUTE_READ:
+        case PAGE_EXECUTE_READWRITE:
+        case PAGE_EXECUTE_WRITECOPY:
             break;
+        default:
+            return FALSE;
         }
-        pages_done++;
-        page_count++;
-        current_address += size_to_protect;
-        size -= size_to_protect;
+        current = (const BYTE*)mbi.BaseAddress + mbi.RegionSize;
     }
-
-    // On partial failure (some pages already had their protection changed),
-    // unwind those changes here so the caller can safely fail without
-    // leaking page-protection state. Callers historically `break` on a
-    // FALSE return from VLDVirtualProtect without calling VLDVirtualRestore,
-    // which previously left earlier successful pages in the new protection.
-    if (!succeeded && pages_done > 0)
-    {
-        uintptr_t restore_address = (uintptr_t)address;
-        SIZE_T restore_size_remaining = protect_handle->size;
-        for (size_t i = 0; i < pages_done; ++i)
-        {
-            uintptr_t page_address = restore_address & PAGE_MASK;
-            SIZE_T size_in_page = page_address + PAGE_SIZE - restore_address;
-            SIZE_T size_to_restore = (size_in_page < restore_size_remaining) ? size_in_page : restore_size_remaining;
-            DWORD dont_care;
-            // Best-effort restore on the failure path: log if it also fails
-            // but do not abort - we are already in an error path.
-            if (!VirtualProtect((LPVOID)restore_address, size_to_restore, protect_handle->old_protect[i], &dont_care))
-            {
-                Report(L"%zu: !!! VirtualProtect FAILED while unwinding partial protect: address=%p size=%zu err=%lu\n",
-                    __LINE__, restore_address, size_to_restore, GetLastError());
-            }
-            restore_address += size_to_restore;
-            restore_size_remaining -= size_to_restore;
-        }
-        // Zero out the handle so any later (incorrect) VLDVirtualRestore call
-        // becomes a no-op rather than re-applying stale protection.
-        protect_handle->address = NULL;
-        protect_handle->size = 0;
-    }
-
-    return succeeded;
+    return TRUE;
 }
 
-static void VLDVirtualRestore(PROTECT_HANDLE protect_handle)
+// Copies size bytes from address into buffer without changing page protection.
+static BOOL ReadMemory(LPCVOID address, LPVOID buffer, SIZE_T size)
 {
-    size_t page_count = 0;
-    SIZE_T size = protect_handle->size;
-    uintptr_t current_address = (uintptr_t)protect_handle->address;
-
-    // walk all pages while we still have size > 0
-    while ((size > 0) && (page_count < MAX_PAGES_PROTECT))
+    if (!IsReadableMemory(address, size))
+        return FALSE;
+    __try
     {
-        uintptr_t page_address = current_address & PAGE_MASK;
-        SIZE_T size_in_page = page_address + PAGE_SIZE - current_address;
-        SIZE_T size_to_protect = (size_in_page < size) ? size_in_page : size;
-
-        DWORD dont_care;
-        if (!VirtualProtect((LPVOID)current_address, size_to_protect, protect_handle->old_protect[page_count], &dont_care))
-        {
-            static volatile DWORD lastError = GetLastError();
-            Report(L"%zu: !!! VirtualProtect FAILED when restoring for address=%p, size=%zu, with GetLastError()=%lu, protect_handle->old_protect[page_count]=%lu, protect_handle->address=%p, protect_handle->size=%zu\n",
-                __LINE__, current_address, size_to_protect,
-                GetLastError(), protect_handle->old_protect[page_count],
-                protect_handle->address, protect_handle->size);
-            abort();
-        }
-
-        page_count++;
-        current_address += size_to_protect;
-        size -= size_to_protect;
+        memcpy(buffer, address, size);
     }
-
+    __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH)
+    {
+        return FALSE;
+    }
+    return TRUE;
 }
 
 LPVOID FindRealCode(LPVOID pCode)
@@ -648,13 +575,12 @@ LPVOID FindRealCode(LPVOID pCode)
         LPVOID cur = pCode;
         for (int depth = 0; depth < 16; depth++)
         {
-            PROTECT_INSTANCE protect_1;
-            // Protect up to 3 instructions (12 bytes); the longest sequence we
-            // decode is ADRP+LDR+BR.
-            if (!VLDVirtualProtect(&protect_1, cur, sizeof(ULONG) * 3, PAGE_EXECUTE_READ))
+            // Up to 3 instructions (12 bytes); the longest sequence we decode
+            // is ADRP+LDR+BR.
+            ULONG p[3];
+            if (!ReadMemory(cur, p, sizeof(p)))
                 break;
 
-            const ULONG* p = (const ULONG*)cur;
             ULONG i0 = p[0];
             LPVOID next = NULL;
 
@@ -688,16 +614,11 @@ LPVOID FindRealCode(LPVOID pCode)
                     // (analog of x64 FF25 jmp [rip+disp]).
                     ULONG_PTR imm12 = (i1 >> 10) & 0xFFFu;
                     ULONG_PTR slot = page + (imm12 << 3);
-                    PROTECT_INSTANCE protect_2;
-                    if (VLDVirtualProtect(&protect_2, (LPVOID)slot, sizeof(LPVOID), PAGE_READONLY))
-                    {
-                        next = *(LPVOID*)slot;
-                        VLDVirtualRestore(&protect_2);
-                    }
+                    LPVOID target;
+                    if (ReadMemory((LPCVOID)slot, &target, sizeof(target)))
+                        next = target;
                 }
             }
-
-            VLDVirtualRestore(&protect_1);
 
             if (next == NULL || next == cur)
                 break; // not a recognized thunk, or a self-loop: stop here
@@ -705,72 +626,34 @@ LPVOID FindRealCode(LPVOID pCode)
         }
         result = cur;
 #else
-        // we need to make sure we can read the first 7 ULONG_PTRs
-        PROTECT_INSTANCE protect_1;
-
-        if (VLDVirtualProtect(&protect_1, pCode, sizeof(ULONG_PTR) * 7, PAGE_EXECUTE_READ))
+        // JMP r/m32 (FF 25 disp32/addr32) and JMP rel32 (E9 rel32) are at most 6 bytes.
+        BYTE code[6];
+        if (ReadMemory(pCode, code, sizeof(code)))
         {
-            if (*(WORD*)pCode == 0x25ff) // JMP r/m32
+            if (*(WORD*)code == 0x25ff) // JMP r/m32
             {
 #ifdef _WIN64
-                LONG offset = *((LONG*)((ULONG_PTR)pCode + 2));
                 // RIP relative addressing
-                PBYTE pNextInst = (PBYTE)((ULONG_PTR)pCode + 6);
-
-                // now that we got the offset, make sure we can read the code at the offset
-                PROTECT_INSTANCE protect_2;
-                PBYTE addr = pNextInst + offset;
-
-                if (VLDVirtualProtect(&protect_2, (LPVOID*)addr, sizeof(LPVOID), PAGE_EXECUTE_READ))
-                {
-                    pCode = *(LPVOID*)(addr);
-                    result = FindRealCode(pCode);
-                    VLDVirtualRestore(&protect_2);
-                }
-                else
-                {
-                    result = NULL;
-                }
+                LONG offset = *(LONG*)(code + 2);
+                PBYTE slot = (PBYTE)pCode + 6 + offset;
 #else
-                DWORD addr = *((DWORD*)((ULONG_PTR)pCode + 2));
-                // now that we got the address to read, make sure we can read the code at the offset
-                PROTECT_INSTANCE protect_2;
-                if (VLDVirtualProtect(&protect_2, (LPVOID)addr, sizeof(LPVOID), PAGE_EXECUTE_READ))
-                {
-                    pCode = *(LPVOID*)(addr);
-                    result = FindRealCode(pCode);
-                    VLDVirtualRestore(&protect_2);
-                }
-                else
-                {
-                    result = NULL;
-                }
+                PBYTE slot = (PBYTE)(ULONG_PTR)*(DWORD*)(code + 2);
 #endif
-            }
-            else if (*(BYTE*)pCode == 0xE9) // JMP rel32
-            {
-                // Relative next instruction
-                PROTECT_INSTANCE protect_2;
-                PBYTE pNextInst = (PBYTE)((ULONG_PTR)pCode + 5);
-                LONG offset = *((LONG*)((ULONG_PTR)pCode + 1));
-                if (VLDVirtualProtect(&protect_2, pNextInst + offset, sizeof(LPVOID), PAGE_EXECUTE_READ))
-                {
-                    pCode = (LPVOID*)(pNextInst + offset);
-                    result = FindRealCode(pCode);
-                    VLDVirtualRestore(&protect_2);
-                }
+                LPVOID target;
+                if (ReadMemory(slot, &target, sizeof(target)))
+                    result = FindRealCode(target);
                 else
-                {
                     result = NULL;
-                }
+            }
+            else if (code[0] == 0xE9) // JMP rel32
+            {
+                LONG offset = *(LONG*)(code + 1);
+                result = FindRealCode((PBYTE)pCode + 5 + offset);
             }
             else
             {
                 result = pCode;
             }
-
-            // restore the page protection state
-            VLDVirtualRestore(&protect_1);
         }
         else
         {
