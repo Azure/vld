@@ -2746,6 +2746,10 @@ bool VisualLeakDetector::isModuleIgnored(UINT_PTR address)
 
 bool VisualLeakDetector::isFunctionIgnored(LPCWSTR functionName)
 {
+    // ARM64EC code in ARM64X system DLLs (what x64 processes run on ARM64) has
+    // its symbols decorated with a leading '#'.
+    if (functionName != NULL && functionName[0] == L'#')
+        functionName++;
     functioninfo_t functioninfo = { functionName };
     return g_vld.m_ignoreFunctions->find(functioninfo) != g_vld.m_ignoreFunctions->end();
 }
