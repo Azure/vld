@@ -668,6 +668,162 @@ LPVOID FindRealCode(LPVOID pCode)
     return result;
 }
 
+#if defined(_M_X64)
+// IMAGE_ARM64EC_METADATA, which the SDK does not declare. The load config
+// CHPEMetadataPointer of an ARM64X image (seen from an x64 process) points here.
+typedef struct ARM64EC_METADATA_TAG
+{
+    ULONG Version;
+    ULONG CodeMap;
+    ULONG CodeMapCount;
+    ULONG CodeRangesToEntryPoints;
+    ULONG RedirectionMetadata;
+    ULONG DispatchCallNoRedirect;
+    ULONG DispatchRet;
+    ULONG DispatchCall;
+    ULONG DispatchICall;
+    ULONG DispatchICallCfg;
+    ULONG AlternateEntryPoint;
+    ULONG AuxiliaryIAT;
+    ULONG CodeRangesToEntryPointsCount;
+    ULONG RedirectionMetadataCount;
+    ULONG GetX64InformationFunctionPointer;
+    ULONG SetX64InformationFunctionPointer;
+    ULONG ExtraRFETable;     // ARM64 RUNTIME_FUNCTIONs of the ARM64/ARM64EC code
+    ULONG ExtraRFETableSize;
+} ARM64EC_METADATA;
+
+#define ARM64EC_CODE_RANGE_ARM64EC 1
+
+typedef struct ARM64EC_CODE_RANGE_TAG
+{
+    ULONG StartOffset;  // low 2 bits: range type
+    ULONG Length;
+} ARM64EC_CODE_RANGE;
+
+// x64 export thunk of an ARM64X image: mov rax,rsp; mov [rax+20h],rbx;
+// push rbp; pop rbp; jmp rel32 <ARM64EC body>.
+static const BYTE g_arm64EcExportThunk[] = { 0x48, 0x8B, 0xC4, 0x48, 0x89, 0x58, 0x20, 0x55, 0x5D, 0xE9 };
+
+static BOOL GetArm64EcExportNameUnsafe(UINT_PTR programCounter, LPWSTR name, SIZE_T nameChars, DWORD64* displacement)
+{
+    BYTE* base = (BYTE*)GetCallingModule(programCounter);
+    if (base == NULL)
+        return FALSE;
+    IMAGE_NT_HEADERS64* nt = (IMAGE_NT_HEADERS64*)(base + ((IMAGE_DOS_HEADER*)base)->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE || nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+        return FALSE;
+    DWORD imageSize = nt->OptionalHeader.SizeOfImage;
+    DWORD pcRva = (DWORD)(programCounter - (UINT_PTR)base);
+
+    IMAGE_DATA_DIRECTORY loadConfigDir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG];
+    if (loadConfigDir.VirtualAddress == 0)
+        return FALSE;
+    IMAGE_LOAD_CONFIG_DIRECTORY64* loadConfig = (IMAGE_LOAD_CONFIG_DIRECTORY64*)(base + loadConfigDir.VirtualAddress);
+    if (loadConfig->Size < offsetof(IMAGE_LOAD_CONFIG_DIRECTORY64, CHPEMetadataPointer) + sizeof(ULONGLONG) ||
+        loadConfig->CHPEMetadataPointer == 0)
+        return FALSE;
+    const ARM64EC_METADATA* metadata = (const ARM64EC_METADATA*)loadConfig->CHPEMetadataPointer;
+    if ((BYTE*)metadata < base || (BYTE*)(metadata + 1) > base + imageSize)
+        return FALSE;
+
+    // The program counter must be in ARM64EC code.
+    const ARM64EC_CODE_RANGE* codeMap = (const ARM64EC_CODE_RANGE*)(base + metadata->CodeMap);
+    BOOL inEcCode = FALSE;
+    for (ULONG i = 0; i < metadata->CodeMapCount; i++)
+    {
+        DWORD start = codeMap[i].StartOffset & ~3u;
+        if ((codeMap[i].StartOffset & 3u) == ARM64EC_CODE_RANGE_ARM64EC &&
+            pcRva >= start && pcRva - start < codeMap[i].Length)
+        {
+            inEcCode = TRUE;
+            break;
+        }
+    }
+    if (!inEcCode)
+        return FALSE;
+
+    // Find the ARM64 function containing the program counter (sorted by BeginAddress).
+    const IMAGE_ARM64_RUNTIME_FUNCTION_ENTRY* functions =
+        (const IMAGE_ARM64_RUNTIME_FUNCTION_ENTRY*)(base + metadata->ExtraRFETable);
+    ULONG low = 0;
+    ULONG high = metadata->ExtraRFETableSize / sizeof(IMAGE_ARM64_RUNTIME_FUNCTION_ENTRY);
+    while (low < high)
+    {
+        ULONG mid = low + (high - low) / 2;
+        if (functions[mid].BeginAddress <= pcRva)
+            low = mid + 1;
+        else
+            high = mid;
+    }
+    if (low == 0)
+        return FALSE;
+    const IMAGE_ARM64_RUNTIME_FUNCTION_ENTRY* function = &functions[low - 1];
+    DWORD functionLength;
+    if (function->Flag != 0)
+        functionLength = function->FunctionLength * 4;
+    else
+        functionLength = (*(const DWORD*)(base + function->UnwindData) & 0x3FFFF) * 4;
+    if (pcRva - function->BeginAddress >= functionLength)
+        return FALSE;
+
+    // Find the export whose x64 thunk jumps to that function.
+    IMAGE_DATA_DIRECTORY exportDir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+    if (exportDir.VirtualAddress == 0)
+        return FALSE;
+    const IMAGE_EXPORT_DIRECTORY* exports = (const IMAGE_EXPORT_DIRECTORY*)(base + exportDir.VirtualAddress);
+    const DWORD* functionRvas = (const DWORD*)(base + exports->AddressOfFunctions);
+    const DWORD* nameRvas = (const DWORD*)(base + exports->AddressOfNames);
+    const WORD* nameOrdinals = (const WORD*)(base + exports->AddressOfNameOrdinals);
+    for (DWORD i = 0; i < exports->NumberOfNames; i++)
+    {
+        WORD ordinal = nameOrdinals[i];
+        if (ordinal >= exports->NumberOfFunctions)
+            continue;
+        DWORD thunkRva = functionRvas[ordinal];
+        // Skip forwarders (RVA inside the export directory) and anything that
+        // does not leave room for a complete thunk.
+        if ((thunkRva >= exportDir.VirtualAddress && thunkRva - exportDir.VirtualAddress < exportDir.Size) ||
+            thunkRva == 0 || thunkRva > imageSize - (sizeof(g_arm64EcExportThunk) + sizeof(LONG)))
+            continue;
+        const BYTE* thunk = base + thunkRva;
+        if (memcmp(thunk, g_arm64EcExportThunk, sizeof(g_arm64EcExportThunk)) != 0)
+            continue;
+        LONG rel = *(const LONG*)(thunk + sizeof(g_arm64EcExportThunk));
+        DWORD targetRva = thunkRva + (DWORD)(sizeof(g_arm64EcExportThunk) + sizeof(LONG)) + (DWORD)rel;
+        if (targetRva != function->BeginAddress)
+            continue;
+
+        const char* exportName = (const char*)(base + nameRvas[i]);
+        SIZE_T length = 0;
+        while (length + 1 < nameChars && exportName[length] != '\0')
+        {
+            name[length] = (WCHAR)(BYTE)exportName[length];
+            length++;
+        }
+        name[length] = L'\0';
+        *displacement = pcRva - function->BeginAddress;
+        return TRUE;
+    }
+    return FALSE;
+}
+
+BOOL GetArm64EcExportName(UINT_PTR programCounter, LPWSTR name, SIZE_T nameChars, DWORD64* displacement)
+{
+    if (name == NULL || nameChars == 0 || displacement == NULL)
+        return FALSE;
+    // The module can be unloaded concurrently; treat any fault as "does not apply".
+    __try
+    {
+        return GetArm64EcExportNameUnsafe(programCounter, name, nameChars, displacement);
+    }
+    __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH)
+    {
+        return FALSE;
+    }
+}
+#endif // _M_X64
+
 #define MAX_PATCH_ENTRY_COUNT 128
 
 // PatchImport - Patches all future calls to an imported function, or references
