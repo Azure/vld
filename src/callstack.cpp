@@ -242,6 +242,11 @@ LPCWSTR CallStack::getFunctionName(SIZE_T programCounter, DWORD64& displacement6
             GetArm64EcExportName(programCounter, functionInfo->Name, functionInfo->MaxNameLen, &displacement64);
         }
 #endif
+        // ARM64EC code in ARM64X system DLLs (what x64 processes run on ARM64)
+        // has its symbols decorated with a leading '#'.
+        if (functionName[0] == L'#' && functionName[1] != L'\0') {
+            functionName++;
+        }
     }
     else {
         // GetFormattedMessage( GetLastError() );
