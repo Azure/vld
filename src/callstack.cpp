@@ -870,7 +870,8 @@ VOID SafeCallStack::getStackTrace (UINT32 maxdepth, const context_t& context)
     frame.AddrFrame.Mode      = AddrModeFlat;
     frame.Virtual             = TRUE;
 
-    CriticalSectionLocker<> cs(g_heapMapLock);
+    // Not under g_heapMapLock: a thread holding g_DbgHelp can be loading a DLL
+    // for dbghelp, waiting for a loader owner that waits for g_heapMapLock.
     CriticalSectionLocker<DbgHelp> locker(g_DbgHelp);
 
     // Walk the stack.
