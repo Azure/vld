@@ -920,6 +920,7 @@ set(VLD_CHAOS_TESTS
     chaos_many_leaks
     chaos_proc_ordinal
     chaos_noaccess_leak
+    chaos_aligned_new
 )
 
 function(set_chaos_output_dir TARGET_NAME)
