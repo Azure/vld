@@ -42,12 +42,15 @@ inline void SetPhase(const char* phase)
     Phase() = phase;
 }
 
-// Prints "FAIL: <message>" and terminates without running exit handlers.
+// Prints "FAIL: <message>" and terminates without running exit handlers. Uses
+// no CRT, whose locks the hung or crashed threads may hold.
 inline void Fail(const char* message, UINT exitCode = 1)
 {
-    char line[512];
-    _snprintf_s(line, _TRUNCATE, "FAIL: %s (phase: %s)\n", message, Phase());
-    Write(line);
+    Write("FAIL: ");
+    Write(message);
+    Write(" (phase: ");
+    Write(Phase());
+    Write(")\n");
     TerminateProcess(GetCurrentProcess(), exitCode);
 }
 
