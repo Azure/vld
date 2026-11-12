@@ -13,6 +13,7 @@
 namespace
 {
 const DWORD PHASE_MS = 2000;
+const DWORD PROGRESS_MS = 15000;
 volatile LONG g_stop = 0;
 volatile LONG g_leaked = 0;
 volatile LONG g_hookCalls = 0;
@@ -61,7 +62,11 @@ DWORD WINAPI Reporter(LPVOID)
     return 0;
 }
 
-void RunPhase(const char* phase)
+// Runs the phase for PHASE_MS, and then until *progress is nonzero: the hook
+// sees a report only after VLD has built all of it, and a report of many
+// leaks can take longer than PHASE_MS on a busy machine. Fails if there is
+// still no progress after PROGRESS_MS.
+void RunPhase(const char* phase, volatile LONG* progress)
 {
     chaos::SetPhase(phase);
     InterlockedExchange(&g_stop, 0);
@@ -72,6 +77,11 @@ void RunPhase(const char* phase)
         chaos::Check(threads[i] != NULL, "CreateThread failed");
     }
     Sleep(PHASE_MS);
+    ULONGLONG deadline = GetTickCount64() + PROGRESS_MS;
+    while (progress != NULL && InterlockedCompareExchange(progress, 0, 0) == 0 && GetTickCount64() < deadline)
+    {
+        Sleep(50);
+    }
     InterlockedExchange(&g_stop, 1);
     WaitForMultipleObjects(5, threads, TRUE, INFINITE);
     for (int i = 0; i < 5; i++)
@@ -88,10 +98,10 @@ int main()
     VLDMarkAllLeaksAsReported();
 
     VLDSetReportOptions(VLD_OPT_REPORT_TO_DEBUGGER, NULL);
-    RunPhase("reporting to the debugger while lockers allocate under HeapLock");
+    RunPhase("reporting to the debugger while lockers allocate under HeapLock", NULL);
 
     VLDSetReportHook(VLD_RPTHOOK_INSTALL, AllocatingHook);
-    RunPhase("an allocating report hook while lockers allocate under HeapLock");
+    RunPhase("an allocating report hook while lockers allocate under HeapLock", &g_hookCalls);
     chaos::Check(g_hookCalls > 0, "the report hook was never called");
 
     chaos::SetPhase("counting");
