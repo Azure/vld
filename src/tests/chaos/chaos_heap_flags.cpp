@@ -13,11 +13,15 @@ namespace
 {
 const DWORD RUN_MS = 2500;
 volatile LONG g_stop = 0;
+// Fixed-size heaps never get the low-fragmentation heap, whose blocks change
+// without the heap lock; walking one that other threads use can spin inside a
+// single HeapWalk call on Windows Server 2022.
+HANDLE g_heap = NULL;
 
 DWORD WINAPI Allocator(LPVOID p)
 {
     chaos::Random random((unsigned)(INT_PTR)p * 31 + 7);
-    HANDLE heap = GetProcessHeap();
+    HANDLE heap = g_heap;
     void* slots[16] = { 0 };
     while (!InterlockedCompareExchange(&g_stop, 0, 0))
     {
@@ -52,7 +56,7 @@ DWORD WINAPI Allocator(LPVOID p)
 
 DWORD WINAPI Inspector(LPVOID p)
 {
-    HANDLE heap = GetProcessHeap();
+    HANDLE heap = g_heap;
     bool walk = ((INT_PTR)p % 2) == 0;
     while (!InterlockedCompareExchange(&g_stop, 0, 0))
     {
@@ -60,8 +64,6 @@ DWORD WINAPI Inspector(LPVOID p)
         {
             if (HeapLock(heap))
             {
-                // Bounded: on Windows Server 2022 a walk of a heap whose LFH
-                // other threads keep changing can take tens of seconds.
                 PROCESS_HEAP_ENTRY entry = { 0 };
                 int entries = 0;
                 ULONGLONG deadline = GetTickCount64() + 100;
@@ -166,8 +168,11 @@ int main()
     chaos::Check(VLDGetLeaksCount() == base, "a freed zero-size block is still counted");
 
     chaos::SetPhase("heap inspection under allocation traffic");
+    g_heap = HeapCreate(0, 0, 32 * 1024 * 1024);
+    chaos::Check(g_heap != NULL, "HeapCreate of a fixed-size heap failed");
     chaos::RunThreads(7, Worker);
     chaos::Check(VLDGetLeaksCount() == base, "allocation traffic with heap inspection left leaks");
+    HeapDestroy(g_heap);
     chaos::Pass();
     return 0;
 }
