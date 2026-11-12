@@ -18,6 +18,38 @@ volatile LONG g_stop = 0;
 volatile LONG g_leaked = 0;
 
 typedef void* (*HelperMalloc_t)(size_t);
+volatile LONG g_loads = 0;
+volatile LONG g_unpatchedLoads = 0;
+
+// Counts the helper's imports, other than those of VLD itself, that VLD
+// patched: zero means its allocations bypass VLD. Recorded with every leak to
+// tell a missed block of an unpatched copy from one VLD skipped.
+LONG CountPatchedImports(HMODULE module)
+{
+    HMODULE vld = NULL;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        (LPCWSTR)&VLDReportLeaks, &vld);
+    char vldName[MAX_PATH] = { 0 };
+    GetModuleFileNameA(vld, vldName, MAX_PATH);
+    const char* vldBase = strrchr(vldName, '\\') != NULL ? strrchr(vldName, '\\') + 1 : vldName;
+    BYTE* base = (BYTE*)module;
+    IMAGE_NT_HEADERS* nt = (IMAGE_NT_HEADERS*)(base + ((IMAGE_DOS_HEADER*)base)->e_lfanew);
+    IMAGE_DATA_DIRECTORY dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    LONG patched = 0;
+    for (IMAGE_IMPORT_DESCRIPTOR* d = (IMAGE_IMPORT_DESCRIPTOR*)(base + dir.VirtualAddress); dir.VirtualAddress != 0 && d->Name != 0; d++)
+    {
+        if (_stricmp((const char*)(base + d->Name), vldBase) == 0)
+            continue;
+        for (IMAGE_THUNK_DATA* t = (IMAGE_THUNK_DATA*)(base + d->FirstThunk); t->u1.Function != 0; t++)
+        {
+            HMODULE target = NULL;
+            if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                    (LPCWSTR)t->u1.Function, &target) && target == vld)
+                patched++;
+        }
+    }
+    return patched;
+}
 
 int __cdecl SwallowHook(int, wchar_t*, int*)
 {
@@ -33,6 +65,12 @@ DWORD WINAPI Loader(LPVOID p)
         chaos::Check(helper != NULL, "LoadLibrary(chaos_helper_dll) failed");
         HelperMalloc_t helperMalloc = (HelperMalloc_t)GetProcAddress(helper, "HelperMalloc");
         chaos::Check(helperMalloc != NULL, "HelperMalloc not found");
+        // Tag: loader index, plus 100 if this copy of the helper is patched.
+        bool patched = CountPatchedImports(helper) > 0;
+        InterlockedIncrement(&g_loads);
+        if (!patched)
+            InterlockedIncrement(&g_unpatchedLoads);
+        LONG tag = (LONG)(INT_PTR)p + (patched ? 100 : 0);
         int count = 1 + random.Below(4);
         for (int i = 0; i < count; i++)
         {
@@ -44,7 +82,7 @@ DWORD WINAPI Loader(LPVOID p)
             }
             void* block = helperMalloc(16 + random.Below(200));
             chaos::Check(block != NULL, "HelperMalloc failed");
-            chaos::RecordLeak(block, (LONG)(INT_PTR)p);
+            chaos::RecordLeak(block, tag);
         }
         FreeLibrary(helper);
     }
@@ -99,6 +137,9 @@ int main()
     {
         VLDSetReportHook(VLD_RPTHOOK_REMOVE, SwallowHook);
         chaos::DescribeMissingLeaks();
+        char loads[96];
+        sprintf_s(loads, "%ld of %ld helper loads were not patched by VLD\n", g_unpatchedLoads, g_loads);
+        chaos::Write(loads);
         char message[96];
         sprintf_s(message, "leaked %ld blocks but VLD counts %u", g_leaked, counted);
         chaos::Fail(message);
