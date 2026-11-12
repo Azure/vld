@@ -1573,6 +1573,9 @@ VOID VisualLeakDetector::mapBlock (HANDLE heap, LPCVOID mem, SIZE_T size, bool d
     blockinfo->callStack = NULL;
     pblockInfo = blockinfo;
     blockinfo->threadId = threadId;
+    // 0 means "not mapped" to unmapMovedBlock.
+    if (m_requestCurr == 0)
+        m_requestCurr = 1;
     blockinfo->serialNumber = m_requestCurr++;
     blockinfo->size = size;
     blockinfo->reported = false;
@@ -1811,12 +1814,12 @@ VOID VisualLeakDetector::unmapHeap (HANDLE heap)
 //    None.
 //
 VOID VisualLeakDetector::remapBlock (HANDLE heap, LPCVOID mem, LPCVOID newmem, SIZE_T size,
-    bool debugcrtalloc, bool ucrt, DWORD threadId, blockinfo_t* &pblockInfo, const context_t &context)
+    bool debugcrtalloc, bool ucrt, DWORD threadId, blockinfo_t* &pblockInfo, SIZE_T serial, const context_t &context)
 {
     if (newmem != mem) {
         // The block was not reallocated in-place. Instead the old block was
         // freed and a new block allocated to satisfy the new size.
-        unmapBlock(heap, mem, context);
+        unmapMovedBlock(heap, mem, serial, context);
         mapBlock(heap, newmem, size, debugcrtalloc, ucrt, threadId, pblockInfo);
         return;
     }
@@ -1873,6 +1876,42 @@ VOID VisualLeakDetector::remapBlock (HANDLE heap, LPCVOID mem, LPCVOID newmem, S
     // Update the block's size.
     info->size = size;
     pblockInfo = info;
+}
+
+// getBlockSerial - Returns the serial number of the block mapped at the
+//   specified address, or 0 if no block is mapped there.
+//
+SIZE_T VisualLeakDetector::getBlockSerial (HANDLE heap, LPCVOID mem)
+{
+    if (NULL == mem)
+        return 0;
+
+    CriticalSectionLocker<> cs(g_heapMapLock);
+    HeapMap::Iterator heapit = m_heapMap->find(heap);
+    if (heapit == m_heapMap->end())
+        return 0;
+    BlockMap::Iterator blockit = (*heapit).second->blockMap.find(mem);
+    if (blockit == (*heapit).second->blockMap.end())
+        return 0;
+    return (*blockit).second->serialNumber;
+}
+
+// unmapMovedBlock - Unmaps the old address of a block that a reallocation
+//   moved. The heap frees the old block before VLD gets here, so another
+//   thread may already have been handed that address and mapped it; only the
+//   block that was mapped there before the reallocation is unmapped.
+//
+//  - serial (IN): Serial number returned by getBlockSerial before the
+//      reallocation.
+//
+VOID VisualLeakDetector::unmapMovedBlock (HANDLE heap, LPCVOID mem, SIZE_T serial, const context_t &context)
+{
+    if (serial == 0)
+        return;
+
+    CriticalSectionLocker<> cs(g_heapMapLock);
+    if (getBlockSerial(heap, mem) == serial)
+        unmapBlock(heap, mem, context);
 }
 
 // reportconfig - Generates a brief report summarizing Visual Leak Detector's
@@ -3715,6 +3754,11 @@ CaptureContext::~CaptureContext() {
     // ~VisualLeakDetector). Such allocations are never user leaks, so this
     // reports no different leak -- it only avoids the wedge-prone query.
     if (!g_vld.enabled() || g_DbgHelp.IsLockedByCurrentThread()) {
+        // Leak detection can be disabled by another thread after the inner
+        // hook recorded a move; the heap can hand the old address out again.
+        if (!g_DbgHelp.IsLockedByCurrentThread() && m_tls->blockWithoutGuard != NULL &&
+            m_tls->newBlockWithoutGuard != NULL && m_tls->newBlockWithoutGuard != m_tls->blockWithoutGuard)
+            g_vld.unmapMovedBlock(m_tls->heap, m_tls->blockWithoutGuard, m_tls->blockSerial, m_tls->context);
         Reset();
         return;
     }
@@ -3745,7 +3789,7 @@ CaptureContext::~CaptureContext() {
                 (m_tls->flags & VLD_TLS_DEBUGCRTALLOC) != 0,
                 (m_tls->flags & VLD_TLS_UCRT) != 0,
                 m_tls->threadId,
-                pblockInfo, m_tls->context);
+                pblockInfo, m_tls->blockSerial, m_tls->context);
         }
 
         pblockInfo->callStack.reset(callstack);
@@ -3753,18 +3797,19 @@ CaptureContext::~CaptureContext() {
     else if (excluded && m_tls->newBlockWithoutGuard != NULL && m_tls->newBlockWithoutGuard != m_tls->blockWithoutGuard) {
         // An excluded module moved a tracked block; the heap can hand the old
         // address out again.
-        g_vld.unmapBlock(m_tls->heap, m_tls->blockWithoutGuard, m_tls->context);
+        g_vld.unmapMovedBlock(m_tls->heap, m_tls->blockWithoutGuard, m_tls->blockSerial, m_tls->context);
     }
 
     // Reset thread local flags and variables for the next allocation.
     Reset();
 }
 
-void CaptureContext::Set(HANDLE heap, LPVOID mem, LPVOID newmem, SIZE_T size) {
+void CaptureContext::Set(HANDLE heap, LPVOID mem, LPVOID newmem, SIZE_T size, SIZE_T serial) {
     m_tls->heap = heap;
     m_tls->blockWithoutGuard = mem;
     m_tls->newBlockWithoutGuard = newmem;
     m_tls->size = size;
+    m_tls->blockSerial = serial;
 
     if ((m_tls->blockWithoutGuard) && (g_vld.m_options & VLD_OPT_TRACE_INTERNAL_FRAMES)) {
         // If VLD_OPT_TRACE_INTERNAL_FRAMES is specified then we capture the frame pointer upto the function that actually

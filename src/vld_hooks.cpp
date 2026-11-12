@@ -288,6 +288,7 @@ LPVOID VisualLeakDetector::_RtlReAllocateHeap (HANDLE heap, DWORD flags, LPVOID 
     PRINT_HOOKED_FUNCTION();
 
     // Reallocate the block.
+    SIZE_T serial = g_DbgHelp.IsLockedByCurrentThread() ? 0 : g_vld.getBlockSerial(heap, mem);
     LPVOID newmem = RtlReAllocateHeap(heap, flags, mem, size);
     if (newmem == NULL)
         return newmem;
@@ -296,7 +297,7 @@ LPVOID VisualLeakDetector::_RtlReAllocateHeap (HANDLE heap, DWORD flags, LPVOID 
             // The heap can hand the old address out again; forget it.
             CAPTURE_CONTEXT();
             context_.func = reinterpret_cast<UINT_PTR>(RtlReAllocateHeap);
-            g_vld.unmapBlock(heap, mem, context_);
+            g_vld.unmapMovedBlock(heap, mem, serial, context_);
         }
         return newmem;
     }
@@ -304,7 +305,7 @@ LPVOID VisualLeakDetector::_RtlReAllocateHeap (HANDLE heap, DWORD flags, LPVOID 
     if (!g_DbgHelp.IsLockedByCurrentThread()) { // skip dbghelp.dll calls
         CAPTURE_CONTEXT();
         CaptureContext cc(RtlReAllocateHeap, context_);
-        cc.Set(heap, mem, newmem, size);
+        cc.Set(heap, mem, newmem, size, serial);
     }
 
     return newmem;
@@ -316,6 +317,7 @@ LPVOID VisualLeakDetector::_HeapReAlloc (HANDLE heap, DWORD flags, LPVOID mem, S
     PRINT_HOOKED_FUNCTION();
 
     // Reallocate the block.
+    SIZE_T serial = g_DbgHelp.IsLockedByCurrentThread() ? 0 : g_vld.getBlockSerial(heap, mem);
 #if defined(_M_ARM64)
     LPVOID newmem;
     {
@@ -336,7 +338,7 @@ LPVOID VisualLeakDetector::_HeapReAlloc (HANDLE heap, DWORD flags, LPVOID mem, S
             // The heap can hand the old address out again; forget it.
             CAPTURE_CONTEXT();
             context_.func = reinterpret_cast<UINT_PTR>(HeapReAlloc);
-            g_vld.unmapBlock(heap, mem, context_);
+            g_vld.unmapMovedBlock(heap, mem, serial, context_);
         }
         return newmem;
     }
@@ -344,7 +346,7 @@ LPVOID VisualLeakDetector::_HeapReAlloc (HANDLE heap, DWORD flags, LPVOID mem, S
     if (!g_DbgHelp.IsLockedByCurrentThread()) { // skip dbghelp.dll calls
         CAPTURE_CONTEXT();
         CaptureContext cc(HeapReAlloc, context_);
-        cc.Set(heap, mem, newmem, size);
+        cc.Set(heap, mem, newmem, size, serial);
     }
 
     return newmem;

@@ -910,6 +910,7 @@ set(VLD_CHAOS_TESTS
     chaos_heap_flags
     chaos_exit_pressure
     chaos_report_options
+    chaos_realloc_reuse
 )
 
 function(set_chaos_output_dir TARGET_NAME)

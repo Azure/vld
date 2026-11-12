@@ -211,6 +211,7 @@ struct tls_t {
     LPVOID      blockWithoutGuard; // Store pointer to block.
     LPVOID      newBlockWithoutGuard;
     SIZE_T      size;
+    SIZE_T      blockSerial;      // Serial number mapped at blockWithoutGuard before a reallocation, 0 if none.
 };
 
 // Allocation state:
@@ -226,7 +227,7 @@ class CaptureContext {
 public:
     CaptureContext(void* func, context_t& context, BOOL debug = FALSE, BOOL ucrt = FALSE);
     ~CaptureContext();
-    __forceinline void Set(HANDLE heap, LPVOID mem, LPVOID newmem, SIZE_T size);
+    __forceinline void Set(HANDLE heap, LPVOID mem, LPVOID newmem, SIZE_T size, SIZE_T serial = 0);
 private:
     // Disallow certain operations
     CaptureContext();
@@ -347,7 +348,9 @@ private:
     VOID   mapBlock (HANDLE heap, LPCVOID mem, SIZE_T size, bool crtalloc, bool ucrt, DWORD threadId, blockinfo_t* &pblockInfo);
     VOID   mapHeap (HANDLE heap);
     VOID   remapBlock (HANDLE heap, LPCVOID mem, LPCVOID newmem, SIZE_T size,
-        bool crtalloc, bool ucrt, DWORD threadId, blockinfo_t* &pblockInfo, const context_t &context);
+        bool crtalloc, bool ucrt, DWORD threadId, blockinfo_t* &pblockInfo, SIZE_T serial, const context_t &context);
+    SIZE_T getBlockSerial (HANDLE heap, LPCVOID mem);
+    VOID   unmapMovedBlock (HANDLE heap, LPCVOID mem, SIZE_T serial, const context_t &context);
 public:
     VOID   PatchCurrentModule(HMODULE module);
 private:
