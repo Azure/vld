@@ -446,6 +446,11 @@ VisualLeakDetector::VisualLeakDetector ()
     m_curAlloc        = 0;
     m_maxAlloc        = 0;
     m_loadedModules   = new ModuleSet();
+    m_refreshDepth        = 0;
+    m_moduleEventsLost    = false;
+    m_moduleEvents        = NULL;
+    m_moduleEventCount    = 0;
+    m_moduleEventCapacity = 0;
     m_optionsLock.Initialize();
     m_modulesLock.Initialize();
     m_selfTestFile    = __FILE__;
@@ -810,6 +815,7 @@ VisualLeakDetector::~VisualLeakDetector ()
             delete m_deferredHeaps;
         }
         delete m_loadedModules;
+        delete [] m_moduleEvents;
         delete m_ignoreFunctions;
 
         {
@@ -2726,6 +2732,15 @@ VOID VisualLeakDetector::RefreshModules()
     ModuleSet* newmodules = new ModuleSet();
     newmodules->reserve(MODULE_SET_RESERVE);
     {
+        // The loader notification can register and unregister modules while
+        // the new set is built; record them to replay on it.
+        CriticalSectionLocker<> cs(m_modulesLock);
+        if (m_refreshDepth++ == 0) {
+            m_moduleEventCount = 0;
+            m_moduleEventsLost = false;
+        }
+    }
+    {
         // dbghelp is not thread safe; other threads resolve symbols under
         // g_DbgHelp.
         CriticalSectionLocker<DbgHelp> dbgLocker(g_DbgHelp);
@@ -2740,8 +2755,21 @@ VOID VisualLeakDetector::RefreshModules()
         attachToLoadedModules(newmodules);
     }
 
-    // Start using the new set of loaded modules.
+    // Start using the new set of loaded modules, once it has every load and
+    // unload since the refresh started: without them it can lack a module
+    // loaded meanwhile, or keep the entry of one unloaded meanwhile at the
+    // addresses of another, whose allocations would then be misclassified.
     CriticalSectionLocker<> cs(m_modulesLock);
+    for (size_t i = 0; i < m_moduleEventCount; i++)
+        applyModuleEvent(newmodules, m_moduleEvents[i]);
+    bool eventsLost = m_moduleEventsLost;
+    if (--m_refreshDepth == 0)
+        m_moduleEventCount = 0;
+    if (eventsLost) {
+        // The current set, which the notification keeps up to date, is better.
+        delete newmodules;
+        return;
+    }
     ModuleSet* oldmodules = m_loadedModules;
     m_loadedModules = newmodules;
 
@@ -2758,6 +2786,51 @@ VOID VisualLeakDetector::RefreshModules()
 
     // Free resources used by the old module list.
     delete oldmodules;
+}
+
+// recordModuleEvent - Records a module load or unload for RefreshModules to
+//   replay, if a refresh is in progress. Call with m_modulesLock held.
+VOID VisualLeakDetector::recordModuleEvent(bool loaded, const moduleinfo_t& info)
+{
+    if (m_refreshDepth == 0 || m_moduleEventsLost)
+        return;
+    if (m_moduleEventCount == m_moduleEventCapacity) {
+        size_t capacity = m_moduleEventCapacity == 0 ? 64 : m_moduleEventCapacity * 2;
+        moduleevent_t* events = new moduleevent_t[capacity];
+        if (events == NULL) {
+            m_moduleEventsLost = true;
+            return;
+        }
+        for (size_t i = 0; i < m_moduleEventCount; i++)
+            events[i] = m_moduleEvents[i];
+        delete [] m_moduleEvents;
+        m_moduleEvents = events;
+        m_moduleEventCapacity = capacity;
+    }
+    m_moduleEvents[m_moduleEventCount].loaded = loaded;
+    m_moduleEvents[m_moduleEventCount].info = info;
+    m_moduleEventCount++;
+}
+
+// applyModuleEvent - Applies a recorded load or unload to a module set: the
+//   entries overlapping the module go, and a loaded module is inserted. A load
+//   keeps the symbols state of an entry for the same address range.
+VOID VisualLeakDetector::applyModuleEvent(ModuleSet* modules, const moduleevent_t& event)
+{
+    UINT32 symbolsLoaded = 0;
+    while (true) {
+        ModuleSet::Iterator it = modules->find(event.info);
+        if (it == modules->end())
+            break;
+        if ((*it).addrLow == event.info.addrLow && (*it).addrHigh == event.info.addrHigh)
+            symbolsLoaded = (*it).flags & VLD_MODULE_SYMBOLSLOADED;
+        modules->erase(it);
+    }
+    if (event.loaded) {
+        moduleinfo_t info = event.info;
+        info.flags |= symbolsLoaded;
+        modules->insert(info);
+    }
 }
 
 VOID VisualLeakDetector::PatchCurrentModule(HMODULE module)
@@ -2914,6 +2987,7 @@ VOID VisualLeakDetector::RegisterLoadedModule(HMODULE module, PCWSTR fullPath, P
         m_loadedModules->erase(existing);
     }
     m_loadedModules->insert(moduleinfo);
+    recordModuleEvent(true, moduleinfo);
 }
 
 // UnregisterLoadedModule - Removes a module from m_loadedModules when the
@@ -2948,6 +3022,7 @@ VOID VisualLeakDetector::UnregisterLoadedModule(HMODULE module, ULONG sizeOfImag
             break;
         m_loadedModules->erase(it);
     }
+    recordModuleEvent(false, key);
     cs.Leave();
 
     // Cached symbols of the module could name code loaded at its addresses later.

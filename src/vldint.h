@@ -179,6 +179,13 @@ struct moduleinfo_t {
 // ModuleSets store information about modules loaded in the process.
 typedef Set<moduleinfo_t> ModuleSet;
 
+// A module load or unload seen by the loader notification while a refresh of
+// the module set is in progress; the refresh replays these on its new set.
+struct moduleevent_t {
+    bool         loaded;
+    moduleinfo_t info;
+};
+
 typedef Set<VLD_REPORT_HOOK> ReportHookSet;
 #define MAX_REPORT_HOOKS 64
 
@@ -344,6 +351,8 @@ private:
     ////////////////////////////////////////////////////////////////////////////////
     VOID   attachToLoadedModules (ModuleSet *newmodules);
     UINT32 getModuleState(ModuleSet::Iterator& it, UINT32 &moduleFlags);
+    VOID recordModuleEvent(bool loaded, const moduleinfo_t& info);
+    static VOID applyModuleEvent(ModuleSet* modules, const moduleevent_t& event);
     LPWSTR buildSymbolSearchPath();
     BOOL GetIniFilePath(LPTSTR lpPath, SIZE_T cchPath);
     VOID   configure ();
@@ -443,6 +452,13 @@ private:
     SIZE_T               m_maxDataDump;       // Maximum number of user-data bytes to dump for each leaked block.
     UINT32               m_maxTraceFrames;    // Maximum number of frames per stack trace for each leaked block.
     CriticalSection      m_modulesLock;       // Protects accesses to the "loaded modules" ModuleSet.
+    // Loads and unloads seen while RefreshModules builds a new module set,
+    // in order. Protected by m_modulesLock.
+    size_t               m_refreshDepth;
+    bool                 m_moduleEventsLost;
+    moduleevent_t       *m_moduleEvents;
+    size_t               m_moduleEventCount;
+    size_t               m_moduleEventCapacity;
     CriticalSection      m_optionsLock;       // Serializes access to the heap and block maps.
     UINT32               m_options;           // Configuration options.
     IgnoreFunctionsSet   *m_ignoreFunctions;   // Contains information about all the functions that needs to be ignored.
