@@ -10,6 +10,7 @@
 // leak counts rather than checking for zero.
 
 #include <gtest/gtest.h>
+#include <climits>
 #include <WinSock2.h>
 #include <WS2tcpip.h>
 #include "vld.h"
@@ -60,8 +61,11 @@ TEST_F(TestGetAddrInfoMissingFree, MissingFreeAddrInfoProducesMoreLeaks)
     }
     VLDMarkAllLeaksAsReported();
 
-    // Step 2: baseline - getaddrinfo WITH freeaddrinfo after DLLs loaded.
-    int leaks_with_free;
+    // Step 2: baseline - getaddrinfo WITH freeaddrinfo after DLLs loaded. The
+    // DNS client sometimes still allocates on this thread, so the baseline is
+    // the smallest of a few rounds.
+    int leaks_with_free = INT_MAX;
+    for (int round = 0; round < 3; round++)
     {
         struct addrinfo hints;
         struct addrinfo* result = NULL;
@@ -73,9 +77,11 @@ TEST_F(TestGetAddrInfoMissingFree, MissingFreeAddrInfoProducesMoreLeaks)
         ASSERT_EQ(0, rc);
         ASSERT_NE(static_cast<struct addrinfo*>(NULL), result);
         freeaddrinfo(result);
-        leaks_with_free = static_cast<int>(VLDGetThreadLeaksCount(GetCurrentThreadId()));
+        int leaks = static_cast<int>(VLDGetThreadLeaksCount(GetCurrentThreadId()));
+        if (leaks < leaks_with_free)
+            leaks_with_free = leaks;
+        VLDMarkAllLeaksAsReported();
     }
-    VLDMarkAllLeaksAsReported();
 
     // Step 3: test - getaddrinfo WITHOUT freeaddrinfo.
     int leaks_without_free;
