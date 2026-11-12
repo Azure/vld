@@ -2490,6 +2490,23 @@ static bool matchesProcName (HMODULE module, const patchentry_t* patchentry, LPC
     return exportOrdinal(module, procname) == (UINT_PTR)patchentry->importName;
 }
 
+// saveOriginal - Records the real address of a patched import, for VLD's
+//   replacement to call through to.
+//
+static void saveOriginal (patchentry_t* patchentry, FARPROC original)
+{
+    if (patchentry->original == NULL)
+        return;
+#if defined(_M_ARM64)
+    // A kernel32 export can be a fast-forward thunk through kernel32's own
+    // import slot, which VLD has already patched; calling through it would
+    // make the replacement call itself. PatchImport records the real address.
+    if (GetCallingModule((UINT_PTR)FindRealCode((LPVOID)original)) == GetCallingModule((UINT_PTR)&saveOriginal))
+        return;
+#endif
+    *patchentry->original = original;
+}
+
 // _GetProcAddress - Calls to GetProcAddress are patched through to this
 //   function. If the requested function is a function that has been patched
 //   through to one of VLD's handlers, then the address of VLD's handler
@@ -2528,8 +2545,7 @@ FARPROC VisualLeakDetector::_GetProcAddress (HMODULE module, LPCSTR procname)
                 // return the address of the replacement instead of the address of the
                 // actual import.
                 if (matchesProcName(module, patchentry, procname)) {
-                    if (patchentry->original != NULL)
-                        *patchentry->original = original;
+                    saveOriginal(patchentry, original);
                     return (FARPROC)patchentry->replacement;
                 }
                 patchentry++;
@@ -2586,8 +2602,7 @@ FARPROC VisualLeakDetector::_GetProcAddressForCaller(HMODULE module, LPCSTR proc
                 // return the address of the replacement instead of the address of the
                 // actual import.
                 if (matchesProcName(module, patchentry, procname)) {
-                    if (patchentry->original != NULL)
-                        *patchentry->original = original;
+                    saveOriginal(patchentry, original);
                     return (FARPROC)patchentry->replacement;
                 }
                 patchentry++;
