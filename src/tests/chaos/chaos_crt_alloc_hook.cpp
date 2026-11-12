@@ -7,10 +7,8 @@
 // NULL. VLD must count exactly the blocks that were allocated and leaked. In
 // a release CRT the hook is not called, and only the plain leaks count.
 
-#include "chaos_common.h"
+#include "chaos_ledger.h"
 #include <crtdbg.h>
-#include <stdlib.h>
-#include "vld.h"
 
 namespace
 {
@@ -23,6 +21,14 @@ __declspec(thread) int t_inHook = 0;
 __declspec(thread) void* t_moving = NULL;
 __declspec(thread) void* t_tracked = NULL;
 
+// Tags: 1 hook malloc, 2 grown raw block, 3 zeroed raw block, 4 moving block,
+// 5 worker malloc.
+void Leak(void* block, LONG tag)
+{
+    InterlockedIncrement(&g_leaked);
+    chaos::RecordLeak(block, tag);
+}
+
 int __cdecl AllocHook(int type, void*, size_t, int blockUse, long, const unsigned char*, int)
 {
     if (type != _HOOK_ALLOC || blockUse != _NORMAL_BLOCK || t_inHook)
@@ -33,7 +39,7 @@ int __cdecl AllocHook(int type, void*, size_t, int blockUse, long, const unsigne
     if (inner != NULL)
     {
         if (call % 11 == 0)
-            InterlockedIncrement(&g_leaked);
+            Leak(inner, 1);
         else
             free(inner);
     }
@@ -55,7 +61,7 @@ int __cdecl AllocHook(int type, void*, size_t, int blockUse, long, const unsigne
         if (grown != NULL)
         {
             if (call % 4 == 0)
-                InterlockedIncrement(&g_leaked);
+                Leak(grown, 2);
             else
                 HeapFree(heap, 0, grown);
         }
@@ -78,8 +84,9 @@ int __cdecl AllocHook(int type, void*, size_t, int blockUse, long, const unsigne
         // Zero-filled, which looks like the header of a freed CRT block.
         if (call % 4 == 2)
         {
-            if (HeapAlloc(heap, HEAP_ZERO_MEMORY, 64) != NULL)
-                InterlockedIncrement(&g_leaked);
+            void* zeroed = HeapAlloc(heap, HEAP_ZERO_MEMORY, 64);
+            if (zeroed != NULL)
+                Leak(zeroed, 3);
         }
         break;
     }
@@ -109,12 +116,12 @@ DWORD WINAPI Worker(LPVOID p)
                 block = moved;
         }
         if (random.Below(25) == 0)
-            InterlockedIncrement(&g_leaked);
+            Leak(block, 5);
         else
             free(block);
     }
     if (t_moving != NULL)
-        InterlockedIncrement(&g_leaked);
+        Leak(t_moving, 4);
     if (t_tracked != NULL)
         HeapFree(GetProcessHeap(), 0, t_tracked);
     return 0;
@@ -140,9 +147,14 @@ int main()
     if (counted != (SIZE_T)g_leaked)
     {
         char message[128];
+        chaos::DescribeMissingLeaks();
         sprintf_s(message, "leaked %ld blocks (%ld allocations vetoed) but VLD counts %zu", g_leaked, g_vetoed, counted);
         chaos::Fail(message);
     }
+
+    // Heap blocks allocated inside the hook are reported at their own address.
+    chaos::SetPhase("reporting");
+    chaos::Check(chaos::DescribeMissingLeaks() == 0, "the report misplaces leaked blocks");
     VLDMarkAllLeaksAsReported();
     chaos::Pass();
     return 0;
