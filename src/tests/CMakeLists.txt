@@ -911,6 +911,7 @@ set(VLD_CHAOS_TESTS
     chaos_exit_pressure
     chaos_report_options
     chaos_realloc_reuse
+    chaos_fake_crt_header
 )
 
 function(set_chaos_output_dir TARGET_NAME)

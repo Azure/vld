@@ -1995,6 +1995,22 @@ static bool readTrackedBlock (LPVOID dest, LPCVOID block, SIZE_T size)
     }
 }
 
+// hasCrtNoMansLand - Checks the no-man's land the debug CRT writes on both
+//   sides of a block's data. Uninitialized user data can look like a debug
+//   header, but is unlikely to also carry both guards.
+//
+static bool hasCrtNoMansLand (LPCVOID block, const unsigned char* gap, SIZE_T headerSize, SIZE_T dataSize)
+{
+    unsigned char trailer[GAPSIZE];
+    if (!readTrackedBlock(trailer, (const BYTE*)block + headerSize + dataSize, GAPSIZE))
+        return false;
+    for (int i = 0; i < GAPSIZE; i++) {
+        if (gap[i] != 0xFD || trailer[i] != 0xFD)
+            return false;
+    }
+    return true;
+}
+
 bool VisualLeakDetector::isDebugCrtAlloc( LPCVOID block, blockinfo_t* info )
 {
     // Autodetection allocations from statically linked CRT
@@ -2004,7 +2020,8 @@ bool VisualLeakDetector::isDebugCrtAlloc( LPCVOID block, blockinfo_t* info )
         if (info->size >= sizeof(crtheader) && readTrackedBlock(&crtheader, block, sizeof(crtheader))) {
             SIZE_T nSize = sizeof(crtdbgblockheader_t) + crtheader.size + GAPSIZE;
             int nValid = _CrtIsValidPointer(block, (unsigned int)info->size, TRUE);
-            if (_BLOCK_TYPE_IS_VALID(crtheader.use) && nValid && (nSize == info->size)) {
+            if (_BLOCK_TYPE_IS_VALID(crtheader.use) && nValid && (nSize == info->size) &&
+                hasCrtNoMansLand(block, crtheader.gap, sizeof(crtheader), crtheader.size)) {
                 info->debugCrtAlloc = true;
                 info->ucrt = false;
             }
@@ -2017,7 +2034,8 @@ bool VisualLeakDetector::isDebugCrtAlloc( LPCVOID block, blockinfo_t* info )
         if (info->size >= sizeof(crtheader) && readTrackedBlock(&crtheader, block, sizeof(crtheader))) {
             SIZE_T nSize = sizeof(crtdbgblockheaderucrt_t) + crtheader.size + GAPSIZE;
             int nValid = _CrtIsValidPointer(block, (unsigned int)info->size, TRUE);
-            if (_BLOCK_TYPE_IS_VALID(crtheader.use) && nValid && (nSize == info->size)) {
+            if (_BLOCK_TYPE_IS_VALID(crtheader.use) && nValid && (nSize == info->size) &&
+                hasCrtNoMansLand(block, crtheader.gap, sizeof(crtheader), crtheader.size)) {
                 info->debugCrtAlloc = true;
                 info->ucrt = true;
             }
