@@ -3491,18 +3491,14 @@ blockinfo_t* VisualLeakDetector::getAllocationBlockInfo(void* alloc)
 
 const wchar_t* VisualLeakDetector::GetAllocationResolveResults(void* alloc, BOOL showInternalFrames)
 {
-    LoaderLock ll;
-
     if (m_options & VLD_OPT_VLDOFF)
         return NULL;
 
-    CriticalSectionLocker<> cs(g_heapMapLock);
+    LeakSymbolsHeapMapLock cs(*this, true);
     blockinfo_t* info = getAllocationBlockInfo(alloc);
     if (info != NULL)
     {
-        int unresolvedFunctionsCount = info->callStack->resolve(showInternalFrames);
-        _ASSERT(unresolvedFunctionsCount == 0);
-        (void)unresolvedFunctionsCount; // Used only in debug assert
+        info->callStack->resolve(showInternalFrames);
         return info->callStack->getResolvedCallstack(showInternalFrames);
     }
     return NULL;
@@ -3564,14 +3560,12 @@ int VisualLeakDetector::resolveStacks(heapinfo_t* heapinfo)
 
 int VisualLeakDetector::ResolveCallstacks()
 {
-    LoaderLock ll;
-
     if (m_options & VLD_OPT_VLDOFF)
         return 0;
 
     int unresolvedFunctionsCount = 0;
     // Generate the Callstacks early
-    CriticalSectionLocker<> cs(g_heapMapLock);
+    LeakSymbolsHeapMapLock cs(*this, true);
     for (HeapMap::Iterator heapiter = m_heapMap->begin(); heapiter != m_heapMap->end(); ++heapiter)
     {
         HANDLE heap = (*heapiter).first;
