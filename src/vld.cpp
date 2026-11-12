@@ -2665,6 +2665,10 @@ VOID VisualLeakDetector::RefreshModules()
     ModuleSet* newmodules = new ModuleSet();
     newmodules->reserve(MODULE_SET_RESERVE);
     {
+        // dbghelp is not thread safe; other threads resolve symbols under
+        // g_DbgHelp.
+        CriticalSectionLocker<DbgHelp> dbgLocker(g_DbgHelp);
+
         // Duplicate code here in this method. Consider refactoring out to another method.
         // Create a new set of all loaded modules, including any newly loaded
         // modules.
