@@ -925,6 +925,7 @@ set(VLD_CHAOS_TESTS
     chaos_heaplock_report
     chaos_cotaskmem
     chaos_crt_alloc_hook
+    chaos_new_handler
 )
 
 function(set_chaos_output_dir TARGET_NAME)
