@@ -899,6 +899,7 @@ endif()
 set(VLD_CHAOS_TESTS
     chaos_heapdestroy_deadlock
     chaos_report_hook_race
+    chaos_long_frame
 )
 
 function(set_chaos_output_dir TARGET_NAME)
@@ -940,3 +941,13 @@ foreach(CHAOS_TEST ${VLD_CHAOS_TESTS})
         TIMEOUT 30
         FAIL_REGULAR_EXPRESSION "FAIL:|Visual Leak Detector detected [0-9]+ memory leak")
 endforeach()
+
+# A file name long enough that, with a long function name and source path,
+# a leak report line exceeds MAXREPORTLENGTH.
+add_vld_test(chaos_longname_dll
+    IS_DLL
+    SOURCES chaos/chaos_longname_dll_source_file_name_source_file_name_source_file_name_source_file_name_source_file_name_end.cpp
+)
+set_chaos_output_dir(chaos_longname_dll)
+set_target_properties(chaos_longname_dll PROPERTIES OUTPUT_NAME "chaos_longname_012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789end")
+add_dependencies(chaos_long_frame chaos_longname_dll)

@@ -323,7 +323,11 @@ DWORD CallStack::resolveFunction(SIZE_T programCounter, IMAGEHLP_LINEW64* source
                 moduleName, functionName, displacement);
         }
     }
-    DWORD NumChars = static_cast<DWORD>(result.size);
+    // format_to_n returns the untruncated size. A truncated line still ends
+    // with a newline so that the next frame starts a line of its own.
+    DWORD NumChars = static_cast<DWORD>(result.out - stack_line);
+    if (result.size > NumChars && NumChars > 0)
+        stack_line[NumChars - 1] = L'\n';
     stack_line[NumChars] = L'\0';
     return NumChars;
 }
