@@ -3389,7 +3389,7 @@ void VisualLeakDetector::SetModulesList(CONST WCHAR *modules, BOOL includeModule
     }
 
     CriticalSectionLocker<> cs(m_optionsLock);
-    wcsncpy_s(m_forcedModuleList, MAXMODULELISTLENGTH, modules, _TRUNCATE);
+    wcsncpy_s(m_forcedModuleList, MAXMODULELISTLENGTH, (modules != NULL) ? modules : L"", _TRUNCATE);
     _wcslwr_s(m_forcedModuleList, MAXMODULELISTLENGTH);
     if (includeModules)
         m_options |= VLD_OPT_MODULE_LIST_INCLUDE;

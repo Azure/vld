@@ -909,6 +909,7 @@ set(VLD_CHAOS_TESTS
     chaos_hook_heap_ops
     chaos_heap_flags
     chaos_exit_pressure
+    chaos_report_options
 )
 
 function(set_chaos_output_dir TARGET_NAME)
