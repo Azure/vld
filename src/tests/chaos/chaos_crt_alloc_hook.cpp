@@ -20,6 +20,7 @@ volatile LONG g_leaked = 0;
 volatile LONG g_vetoed = 0;
 volatile LONG g_calls = 0;
 __declspec(thread) int t_inHook = 0;
+__declspec(thread) void* t_moving = NULL;
 
 int __cdecl AllocHook(int type, void*, size_t, int blockUse, long, const unsigned char*, int)
 {
@@ -35,6 +36,10 @@ int __cdecl AllocHook(int type, void*, size_t, int blockUse, long, const unsigne
         else
             free(inner);
     }
+    // A block that the hook keeps moving; each thread leaks it at the end.
+    void* moved = realloc(t_moving, 16 + (call % 5) * 200);
+    if (moved != NULL)
+        t_moving = moved;
     t_inHook = 0;
     if (call % 7 == 0)
     {
@@ -63,6 +68,8 @@ DWORD WINAPI Worker(LPVOID p)
         else
             free(block);
     }
+    if (t_moving != NULL)
+        InterlockedIncrement(&g_leaked);
     return 0;
 }
 }
