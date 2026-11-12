@@ -21,6 +21,7 @@ volatile LONG g_vetoed = 0;
 volatile LONG g_calls = 0;
 __declspec(thread) int t_inHook = 0;
 __declspec(thread) void* t_moving = NULL;
+__declspec(thread) void* t_tracked = NULL;
 
 int __cdecl AllocHook(int type, void*, size_t, int blockUse, long, const unsigned char*, int)
 {
@@ -40,6 +41,48 @@ int __cdecl AllocHook(int type, void*, size_t, int blockUse, long, const unsigne
     void* moved = realloc(t_moving, 16 + (call % 5) * 200);
     if (moved != NULL)
         t_moving = moved;
+
+    // Raw heap blocks from inside the hook, while the CRT allocation that
+    // called it is in progress.
+    HANDLE heap = GetProcessHeap();
+    switch (call % 3)
+    {
+    case 0:
+    {
+        // Allocated, then moved.
+        void* raw = HeapAlloc(heap, 0, 32);
+        void* grown = raw != NULL ? HeapReAlloc(heap, 0, raw, 4096) : NULL;
+        if (grown != NULL)
+        {
+            if (call % 4 == 0)
+                InterlockedIncrement(&g_leaked);
+            else
+                HeapFree(heap, 0, grown);
+        }
+        else if (raw != NULL)
+        {
+            HeapFree(heap, 0, raw);
+        }
+        break;
+    }
+    case 1:
+        // A tracked block shrunk in place, then freed.
+        if (t_tracked != NULL)
+        {
+            HeapReAlloc(heap, HEAP_REALLOC_IN_PLACE_ONLY, t_tracked, 64);
+            HeapFree(heap, 0, t_tracked);
+            t_tracked = NULL;
+        }
+        break;
+    default:
+        // Zero-filled, which looks like the header of a freed CRT block.
+        if (call % 4 == 2)
+        {
+            if (HeapAlloc(heap, HEAP_ZERO_MEMORY, 64) != NULL)
+                InterlockedIncrement(&g_leaked);
+        }
+        break;
+    }
     t_inHook = 0;
     if (call % 7 == 0)
     {
@@ -54,6 +97,8 @@ DWORD WINAPI Worker(LPVOID p)
     chaos::Random random((unsigned)(INT_PTR)p * 71 + 3);
     for (int round = 0; round < ROUNDS; round++)
     {
+        if (t_tracked == NULL)
+            t_tracked = HeapAlloc(GetProcessHeap(), 0, 128);
         void* block = malloc(1 + random.Below(400));
         if (block == NULL)
             continue;
@@ -70,6 +115,8 @@ DWORD WINAPI Worker(LPVOID p)
     }
     if (t_moving != NULL)
         InterlockedIncrement(&g_leaked);
+    if (t_tracked != NULL)
+        HeapFree(GetProcessHeap(), 0, t_tracked);
     return 0;
 }
 }
