@@ -60,11 +60,18 @@ DWORD WINAPI Inspector(LPVOID p)
         {
             if (HeapLock(heap))
             {
+                // Bounded: on Windows Server 2022 a walk of a heap whose LFH
+                // other threads keep changing can take tens of seconds.
                 PROCESS_HEAP_ENTRY entry = { 0 };
                 int entries = 0;
+                ULONGLONG deadline = GetTickCount64() + 100;
                 while (HeapWalk(heap, &entry) && entries < 100000)
                 {
                     entries++;
+                    if (GetTickCount64() > deadline || InterlockedCompareExchange(&g_stop, 0, 0))
+                    {
+                        break;
+                    }
                 }
                 HeapUnlock(heap);
             }
