@@ -916,6 +916,7 @@ set(VLD_CHAOS_TESTS
     chaos_unload_report
     chaos_alloc_throw
     chaos_fibers
+    chaos_option_extremes
 )
 
 function(set_chaos_output_dir TARGET_NAME)
