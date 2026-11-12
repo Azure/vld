@@ -2441,6 +2441,23 @@ BOOL VisualLeakDetector::detachFromModule (PCWSTR /*modulepath*/, DWORD64 module
 //
 ////////////////////////////////////////////////////////////////////////////////
 
+// matchesProcName - Checks whether a GetProcAddress request names the import
+//   of a patch table entry. Either can be a name or an ordinal; a name and an
+//   ordinal match when they resolve to the same export.
+//
+//  - original (IN): Address the real GetProcAddress returned for procname.
+//
+static bool matchesProcName (HMODULE module, const patchentry_t* patchentry, LPCSTR procname, FARPROC original)
+{
+    bool entryIsOrdinal = HIWORD(patchentry->importName) == 0;
+    bool requestIsOrdinal = HIWORD(procname) == 0;
+    if (entryIsOrdinal && requestIsOrdinal)
+        return (UINT_PTR)patchentry->importName == (UINT_PTR)procname;
+    if (!entryIsOrdinal && !requestIsOrdinal)
+        return strcmp(patchentry->importName, procname) == 0;
+    return g_vld._RGetProcAddress(module, patchentry->importName) == original;
+}
+
 // _GetProcAddress - Calls to GetProcAddress are patched through to this
 //   function. If the requested function is a function that has been patched
 //   through to one of VLD's handlers, then the address of VLD's handler
@@ -2478,20 +2495,10 @@ FARPROC VisualLeakDetector::_GetProcAddress (HMODULE module, LPCSTR procname)
                 // imports name matches the entry's import name (or ordinal), then
                 // return the address of the replacement instead of the address of the
                 // actual import.
-                if (HIWORD(patchentry->importName) == 0) {
-                    // Import name is a function ordinal value.
-                    if ((UINT_PTR)patchentry->importName == (UINT_PTR)procname) {
-                        if (patchentry->original != NULL)
-                            *patchentry->original = original;
-                        return (FARPROC)patchentry->replacement;
-                    }
-                } else {
-                    // Import name is a function name value.
-                    if (strcmp(patchentry->importName, procname) == 0) {
-                        if (patchentry->original != NULL)
-                            *patchentry->original = original;
-                        return (FARPROC)patchentry->replacement;
-                    }
+                if (matchesProcName(module, patchentry, procname, original)) {
+                    if (patchentry->original != NULL)
+                        *patchentry->original = original;
+                    return (FARPROC)patchentry->replacement;
                 }
                 patchentry++;
             }
@@ -2546,20 +2553,10 @@ FARPROC VisualLeakDetector::_GetProcAddressForCaller(HMODULE module, LPCSTR proc
                 // imports name matches the entry's import name (or ordinal), then
                 // return the address of the replacement instead of the address of the
                 // actual import.
-                if (HIWORD(patchentry->importName) == 0) {
-                    // Import name is a function ordinal value.
-                    if ((UINT_PTR)patchentry->importName == (UINT_PTR)procname) {
-                        if (patchentry->original != NULL)
-                            *patchentry->original = original;
-                        return (FARPROC)patchentry->replacement;
-                    }
-                } else {
-                    // Import name is a function name value.
-                    if (strcmp(patchentry->importName, procname) == 0) {
-                        if (patchentry->original != NULL)
-                            *patchentry->original = original;
-                        return (FARPROC)patchentry->replacement;
-                    }
+                if (matchesProcName(module, patchentry, procname, original)) {
+                    if (patchentry->original != NULL)
+                        *patchentry->original = original;
+                    return (FARPROC)patchentry->replacement;
                 }
                 patchentry++;
             }

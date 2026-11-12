@@ -918,6 +918,7 @@ set(VLD_CHAOS_TESTS
     chaos_fibers
     chaos_option_extremes
     chaos_many_leaks
+    chaos_proc_ordinal
 )
 
 function(set_chaos_output_dir TARGET_NAME)
