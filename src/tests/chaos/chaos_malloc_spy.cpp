@@ -23,6 +23,8 @@ volatile LONG g_leaked = 0;
 volatile LONG g_spied = 0;
 __declspec(thread) bool t_worker = false;
 __declspec(thread) bool t_inSpy = false;
+__declspec(thread) SIZE_T t_reallocSize = 0;
+__declspec(thread) bool t_reallocAddsHeader = false;
 
 // Tags: 1 spy malloc, 2 spy heap block, 3 spy new, 4 worker COM block.
 void Leak(void* block, LONG tag)
@@ -95,14 +97,18 @@ public:
     STDMETHODIMP_(SIZE_T) PreRealloc(void* request, SIZE_T size, void** newRequest, BOOL spied)
     {
         *newRequest = Behind(request, spied);
-        if (size == 0 || (request != NULL && !spied))
-            return size;
-        return size + HEADER;
+        // COM treats the result as spied even if the block was not, so a block
+        // without a header gets one and its data moves behind it.
+        t_reallocSize = size;
+        t_reallocAddsHeader = request != NULL && !spied;
+        return size == 0 ? 0 : size + HEADER;
     }
-    STDMETHODIMP_(void*) PostRealloc(void* actual, BOOL spied)
+    STDMETHODIMP_(void*) PostRealloc(void* actual, BOOL)
     {
-        if (actual == NULL || !spied)
-            return actual;
+        if (actual == NULL)
+            return NULL;
+        if (t_reallocAddsHeader)
+            memmove((BYTE*)actual + HEADER, actual, t_reallocSize);
         AllocateInsideSpy();
         return (BYTE*)actual + HEADER;
     }
@@ -151,7 +157,14 @@ int main()
     SIZE_T base = VLDGetLeaksCount();
 
     chaos::SetPhase("COM task memory through an allocating malloc spy");
+    BYTE* early = (BYTE*)CoTaskMemAlloc(64);
+    chaos::Check(early != NULL, "CoTaskMemAlloc failed");
+    memset(early, 0x3C, 64);
     chaos::Check(SUCCEEDED(CoRegisterMallocSpy(&g_spy)), "CoRegisterMallocSpy failed");
+    // A block from before the spy is reallocated and freed through it.
+    early = (BYTE*)CoTaskMemRealloc(early, 128);
+    chaos::Check(early != NULL && early[0] == 0x3C && early[63] == 0x3C, "reallocating a block from before the spy lost its data");
+    CoTaskMemFree(early);
     chaos::RunThreads(THREADS, Worker);
     // Revoking waits for the spied blocks, and some are leaked.
     CoRevokeMallocSpy();
