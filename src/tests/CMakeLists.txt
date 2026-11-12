@@ -921,6 +921,7 @@ set(VLD_CHAOS_TESTS
     chaos_proc_ordinal
     chaos_noaccess_leak
     chaos_aligned_new
+    chaos_heaplock
 )
 
 function(set_chaos_output_dir TARGET_NAME)
