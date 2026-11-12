@@ -77,6 +77,14 @@ public:
 		m_critSect.Enter();
 	}
 
+	// Takes over a lock the caller has already entered.
+	struct Adopt {};
+	CriticalSectionLocker(T& cs, Adopt)
+		: m_leave(false)
+		, m_critSect(cs)
+	{
+	}
+
 	~CriticalSectionLocker()
 	{
 		LeaveLock();

@@ -32,6 +32,8 @@
 #include <windows.h>
 #include "utility.h"
 
+template <typename Tk> class Set;
+
 #define CALLSTACK_CHUNK_SIZE    32	// Number of frame slots in each CallStack chunk.
 #define MAX_SYMBOL_NAME_LENGTH  256 // Maximum symbol name length that we will allow. Longer names will be truncated.
 #define MAX_SYMBOL_NAME_SIZE    ((MAX_SYMBOL_NAME_LENGTH * sizeof(WCHAR)) - 1)
@@ -94,12 +96,27 @@ public:
     virtual DWORD getHashValue() const = 0;
     virtual VOID getStackTrace (UINT32 maxdepth, const context_t& context) = 0;
     bool isLeakSuppressed();
+    // False once the stack is resolved or known to be a CRT startup stack.
+    bool needsSymbols() const;
+
+    // Symbols of call stack frames are looked up by dbghelp only outside
+    // g_heapMapLock, into a cache; see the definitions.
+    static VOID cacheSymbols (const Set<UINT_PTR>& programCounters);
+    static bool areSymbolsCached (const Set<UINT_PTR>& programCounters);
+    static VOID clearSymbolCache ();
 
     BOOL operator == (const CallStack &other) const;
     UINT_PTR operator [] (UINT32 index) const;
     VOID push_back (const UINT_PTR programcounter);
 
 protected:
+    // Pushes the frames above context.fp, as RtlCaptureStackBackTrace sees
+    // them, and returns the back trace hash.
+    ULONG captureBackTrace (UINT32 maxdepth, const context_t& context);
+
+    // Enters g_DbgHelp unless that may deadlock; see the definition.
+    static bool enterDbgHelp ();
+
     // Protected data.
     UINT32 m_status;                       // Status flags:
 #define CALLSTACK_STATUS_INCOMPLETE    0x1 //   If set, the stack trace stored in this CallStack appears to be incomplete.
@@ -128,8 +145,12 @@ protected:
     bool isInternalModule( const PWSTR filename ) const;
     UINT isCrtStartupFunction( LPCWSTR functionName ) const;
     bool isIgnoreFunction(LPCWSTR functionName) const;
-    LPCWSTR getFunctionName(SIZE_T programCounter, DWORD64& displacement64,
-        SYMBOL_INFO* functionInfo, CriticalSectionLocker<DbgHelp>& locker) const;
+    static LPCWSTR getFunctionName(SIZE_T programCounter, DWORD64& displacement64,
+        SYMBOL_INFO* functionInfo);
+    static LPCWSTR getFunctionName(SIZE_T programCounter, DWORD64& displacement64,
+        SYMBOL_INFO* functionInfo, CriticalSectionLocker<DbgHelp>& locker);
+    static BOOL getLine(SIZE_T programCounter, DWORD& displacement, IMAGEHLP_LINEW64* sourceInfo,
+        LPWSTR fileName, DWORD fileNameSize);
     DWORD resolveFunction(SIZE_T programCounter, IMAGEHLP_LINEW64* sourceInfo, DWORD displacement,
         LPCWSTR functionName, LPWSTR stack_line, DWORD stackLineSize) const;
 

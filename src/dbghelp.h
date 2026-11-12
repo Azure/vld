@@ -18,6 +18,10 @@ public:
     {
         m_lock.Enter();
     }
+    bool TryEnter()
+    {
+        return m_lock.TryEnter();
+    }
     void Leave()
     {
         m_lock.Leave();

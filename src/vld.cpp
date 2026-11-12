@@ -53,6 +53,7 @@ HANDLE           g_currentThread;  // Pseudo-handle for the current thread.
 HANDLE           g_processHeap;    // Handle to the process's heap (COM allocations come from here).
 CriticalSection  g_heapMapLock;    // Serializes access to the heap and block maps.
 CriticalSection  g_leakQueryLock;  // Serializes leak counting and reporting (see LeakSymbolsHeapMapLock).
+extern CriticalSection g_symbolCacheLock;
 CriticalSection  g_reportHooksLock; // Serializes access to g_pReportHooks.
 ReportHookSet*   g_pReportHooks;
 DbgHelp g_DbgHelp;
@@ -425,6 +426,7 @@ VisualLeakDetector::VisualLeakDetector ()
 
     g_heapMapLock.Initialize();
     g_leakQueryLock.Initialize();
+    g_symbolCacheLock.Initialize();
     g_reportHooksLock.Initialize();
     g_vldHeap         = HeapCreate(0x0, 0, 0);
     g_vldHeapLock.Initialize();
@@ -844,6 +846,7 @@ VisualLeakDetector::~VisualLeakDetector ()
         delete g_pReportHooks;
         g_pReportHooks = NULL;
     }
+    CallStack::clearSymbolCache();
     HeapDestroy(g_vldHeap);
 
     m_optionsLock.Delete();
@@ -851,6 +854,7 @@ VisualLeakDetector::~VisualLeakDetector ()
     m_tlsLock.Delete();
     g_heapMapLock.Delete();
     g_leakQueryLock.Delete();
+    g_symbolCacheLock.Delete();
     g_reportHooksLock.Delete();
     g_vldHeapLock.Delete();
 
@@ -2699,6 +2703,17 @@ VOID VisualLeakDetector::RefreshModules()
     ModuleSet* oldmodules = m_loadedModules;
     m_loadedModules = newmodules;
 
+    // Cached symbols of an unloaded module could name code loaded at its
+    // addresses later.
+    for (ModuleSet::Iterator it = oldmodules->begin(); it != oldmodules->end(); ++it) {
+        ModuleSet::Iterator found = newmodules->find(*it);
+        if (found == newmodules->end() || (*found).addrLow != (*it).addrLow ||
+            (*found).addrHigh != (*it).addrHigh || (*found).path != (*it).path) {
+            CallStack::clearSymbolCache();
+            break;
+        }
+    }
+
     // Free resources used by the old module list.
     delete oldmodules;
 }
@@ -2976,20 +2991,21 @@ bool VisualLeakDetector::isFunctionIgnored(LPCWSTR functionName)
 }
 
 // Leak counting and reporting resolve call stacks while holding g_heapMapLock,
-// which every allocation takes. dbghelp loads a module's symbols on first use
-// and that load can need the loader (a symbol server path loads symsrv,
-// wininet and their dependencies), while a thread in DLL_THREAD_ATTACH holds
-// the loader lock and waits for g_heapMapLock when it allocates: a deadlock.
-// So the symbols of every module in the unreported leaks' call stacks are
-// loaded first, holding neither g_heapMapLock nor the loader lock (with the
-// loader lock held, LoadLibrary waits for threads that are initializing and
-// need that lock), and the locked pass only does in-memory lookups.
+// which every allocation takes, so they do not call dbghelp then: dbghelp
+// allocates from the process heap, which an application thread can hold
+// (HeapLock) while it allocates and waits for g_heapMapLock, and it loads a
+// module's symbols on first use, which can need the loader (a symbol server
+// path loads symsrv, wininet and their dependencies) while a thread in
+// DLL_THREAD_ATTACH holds the loader lock and waits for g_heapMapLock. So the
+// symbols of every frame of the unreported leaks are cached first, holding
+// neither g_heapMapLock nor the loader lock (with the loader lock held,
+// LoadLibrary waits for threads that are initializing and need that lock),
+// and the locked pass only reads the cache (CallStack::cacheSymbols).
 
-// collectLeakPages - Collects the code pages of the unreported leaks' call
-//   stacks; one address per page is enough to name every module. Call with
-//   g_heapMapLock held.
+// collectLeakFrames - Collects the program counters of the unreported leaks'
+//   call stacks. Call with g_heapMapLock held.
 //
-//  - pages (OUT): The code pages.
+//  - frames (OUT): The program counters.
 //
 //  - threadId (IN): Only leaks allocated by this thread, or all leaks if -1.
 //
@@ -2999,7 +3015,7 @@ bool VisualLeakDetector::isFunctionIgnored(LPCWSTR functionName)
 //
 //    None.
 //
-VOID VisualLeakDetector::collectLeakPages (Set<UINT_PTR>& pages, DWORD threadId, HANDLE heap)
+VOID VisualLeakDetector::collectLeakFrames (Set<UINT_PTR>& frames, DWORD threadId, HANDLE heap)
 {
     for (HeapMap::Iterator heapit = m_heapMap->begin(); heapit != m_heapMap->end(); ++heapit) {
         if (heap != NULL && (*heapit).first != heap)
@@ -3007,73 +3023,15 @@ VOID VisualLeakDetector::collectLeakPages (Set<UINT_PTR>& pages, DWORD threadId,
         BlockMap* blockmap = &(*heapit).second->blockMap;
         for (BlockMap::Iterator blockit = blockmap->begin(); blockit != blockmap->end(); ++blockit) {
             blockinfo_t* info = (*blockit).second;
-            if (info->reported || info->callStack == NULL)
+            if (info->reported || info->callStack == NULL || !info->callStack->needsSymbols())
                 continue;
             if (threadId != ((DWORD)-1) && info->threadId != threadId)
                 continue;
             for (UINT32 frame = 0; frame < info->callStack->size(); frame++)
-                pages.insert((*info->callStack)[frame] & ~(UINT_PTR)0xFFF);
+                frames.insert((*info->callStack)[frame]);
         }
     }
 }
-
-// areModuleSymbolsLoaded - Checks, without loading anything, that dbghelp is
-//   done with the deferred symbol load of the module of every page.
-//
-//  - pages (IN): Code pages from collectLeakPages.
-//
-//  Return Value:
-//
-//    TRUE if no module still has deferred symbols.
-//
-BOOL VisualLeakDetector::areModuleSymbolsLoaded (const Set<UINT_PTR>& pages)
-{
-    Set<HMODULE> modules;
-    for (Set<UINT_PTR>::Iterator it = pages.begin(); it != pages.end(); ++it) {
-        HMODULE module = GetCallingModule(*it);
-        if (module == NULL || modules.find(module) != modules.end())
-            continue;
-        modules.insert(module);
-        IMAGEHLP_MODULEW64 moduleInfo = { 0 };
-        moduleInfo.SizeOfStruct = sizeof(moduleInfo);
-        CriticalSectionLocker<DbgHelp> locker(g_DbgHelp);
-        if (g_DbgHelp.SymGetModuleInfoW64(g_currentProcess, (DWORD64)module, &moduleInfo, locker) &&
-            moduleInfo.SymType == SymDeferred)
-            return FALSE;
-    }
-    return TRUE;
-}
-
-// loadModuleSymbols - Makes dbghelp load the symbols of the module of every
-//   page. Call without g_heapMapLock or the loader lock held.
-//
-//  - pages (IN): Code pages from collectLeakPages.
-//
-//  Return Value:
-//
-//    None.
-//
-VOID VisualLeakDetector::loadModuleSymbols (const Set<UINT_PTR>& pages)
-{
-    Set<HMODULE> modules;
-    BYTE symbolBuffer[sizeof(SYMBOL_INFOW) + MAX_SYMBOL_NAME_SIZE] = { 0 };
-    SYMBOL_INFOW* symbol = (SYMBOL_INFOW*)symbolBuffer;
-    for (Set<UINT_PTR>::Iterator it = pages.begin(); it != pages.end(); ++it) {
-        HMODULE module = GetCallingModule(*it);
-        if (module == NULL || modules.find(module) != modules.end())
-            continue;
-        modules.insert(module);
-        symbol->SizeOfStruct = sizeof(SYMBOL_INFOW);
-        symbol->MaxNameLen = MAX_SYMBOL_NAME_LENGTH;
-        DWORD64 displacement;
-        CriticalSectionLocker<DbgHelp> locker(g_DbgHelp);
-        g_DbgHelp.SymFromAddrW(g_currentProcess, *it, &displacement, symbol, locker);
-    }
-}
-
-// The thread that holds g_heapMapLock through LeakSymbolsHeapMapLock; dbghelp
-// must not load symbols on it (see CallStack::isSymbolLoadPending).
-static volatile LONG g_noSymbolLoadThreadId = 0;
 
 // While a thread walks the heap and block maps under g_heapMapLock, code it
 // runs can free or reallocate tracked blocks or destroy heaps on the same
@@ -3147,19 +3105,13 @@ VOID VisualLeakDetector::endBlockWalk ()
     }
 }
 
-extern "C" bool VldSymbolLoadForbidden(void)
-{
-    return static_cast<DWORD>(InterlockedCompareExchange(&g_noSymbolLoadThreadId, 0, 0)) == GetCurrentThreadId();
-}
-
-// Holds g_heapMapLock, entered once the symbols of every module in the
-// unreported leaks' call stacks are loaded. Leaks allocated while the symbols
-// load can bring new modules, so the check repeats under the lock; whatever is
-// still deferred after that is not loaded under the lock but shown as an
-// address. g_leakQueryLock keeps a second caller from holding g_heapMapLock
-// while it waits for g_DbgHelp, which a loading thread holds. A query from a
-// thread that already owns g_heapMapLock (e.g. a report hook) loads nothing
-// and takes no lock.
+// Holds g_heapMapLock, entered once the symbols of every frame of the
+// unreported leaks are cached. Leaks allocated while the symbols are looked up
+// bring new frames, so the check repeats under the lock; whatever is still
+// missing after that is shown as an address. g_leakQueryLock keeps a second
+// caller from holding g_heapMapLock while it waits for g_DbgHelp, which a
+// caching thread holds. A query from a thread that already owns
+// g_heapMapLock (e.g. a report hook) caches nothing and takes no lock.
 class LeakSymbolsHeapMapLock
 {
 public:
@@ -3178,23 +3130,20 @@ public:
                 g_heapMapLock.Enter();
                 if (!loadSymbols)
                     break;
-                Set<UINT_PTR> pages;
-                vld.collectLeakPages(pages, threadId, heap);
-                if (attempt == maxAttempts || VisualLeakDetector::areModuleSymbolsLoaded(pages))
+                Set<UINT_PTR> frames;
+                vld.collectLeakFrames(frames, threadId, heap);
+                if (attempt == maxAttempts || CallStack::areSymbolsCached(frames))
                     break;
                 g_heapMapLock.Leave();
-                VisualLeakDetector::loadModuleSymbols(pages);
+                CallStack::cacheSymbols(frames);
             }
         }
-        m_previousNoSymbolLoadThreadId =
-            InterlockedExchange(&g_noSymbolLoadThreadId, static_cast<LONG>(GetCurrentThreadId()));
         m_vld.beginBlockWalk();
     }
 
     ~LeakSymbolsHeapMapLock()
     {
         m_vld.endBlockWalk();
-        InterlockedExchange(&g_noSymbolLoadThreadId, m_previousNoSymbolLoadThreadId);
         if (!m_nested) {
             g_heapMapLock.Leave();
             g_leakQueryLock.Leave();
@@ -3204,7 +3153,6 @@ public:
 private:
     VisualLeakDetector& m_vld;
     const bool m_nested;
-    LONG m_previousNoSymbolLoadThreadId;
     LeakSymbolsHeapMapLock(const LeakSymbolsHeapMapLock&);
     LeakSymbolsHeapMapLock& operator=(const LeakSymbolsHeapMapLock&);
 };
