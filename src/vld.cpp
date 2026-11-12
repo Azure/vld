@@ -1936,16 +1936,35 @@ VOID VisualLeakDetector::reportConfig ()
     }
 }
 
+// readTrackedBlock - Copies bytes of a tracked block. A reallocation frees the
+//   old block before VLD remaps it, so a walk under g_heapMapLock can meet a
+//   block whose memory is already gone.
+//
+//  Return Value:
+//
+//    false if the block can no longer be read.
+//
+static bool readTrackedBlock (LPVOID dest, LPCVOID block, SIZE_T size)
+{
+    __try {
+        memcpy(dest, block, size);
+        return true;
+    }
+    __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        return false;
+    }
+}
+
 bool VisualLeakDetector::isDebugCrtAlloc( LPCVOID block, blockinfo_t* info )
 {
     // Autodetection allocations from statically linked CRT
     if (!info->debugCrtAlloc) {
         // Check if block is large enough to contain CRT debug header
-        if (info->size >= sizeof(crtdbgblockheader_t)) {
-            crtdbgblockheader_t* crtheader = (crtdbgblockheader_t*)block;
-            SIZE_T nSize = sizeof(crtdbgblockheader_t) + crtheader->size + GAPSIZE;
+        crtdbgblockheader_t crtheader;
+        if (info->size >= sizeof(crtheader) && readTrackedBlock(&crtheader, block, sizeof(crtheader))) {
+            SIZE_T nSize = sizeof(crtdbgblockheader_t) + crtheader.size + GAPSIZE;
             int nValid = _CrtIsValidPointer(block, (unsigned int)info->size, TRUE);
-            if (_BLOCK_TYPE_IS_VALID(crtheader->use) && nValid && (nSize == info->size)) {
+            if (_BLOCK_TYPE_IS_VALID(crtheader.use) && nValid && (nSize == info->size)) {
                 info->debugCrtAlloc = true;
                 info->ucrt = false;
             }
@@ -1954,11 +1973,11 @@ bool VisualLeakDetector::isDebugCrtAlloc( LPCVOID block, blockinfo_t* info )
 
     if (!info->debugCrtAlloc) {
         // Check if block is large enough to contain UCRT debug header
-        if (info->size >= sizeof(crtdbgblockheaderucrt_t)) {
-            crtdbgblockheaderucrt_t* crtheader = (crtdbgblockheaderucrt_t*)block;
-            SIZE_T nSize = sizeof(crtdbgblockheaderucrt_t) + crtheader->size + GAPSIZE;
+        crtdbgblockheaderucrt_t crtheader;
+        if (info->size >= sizeof(crtheader) && readTrackedBlock(&crtheader, block, sizeof(crtheader))) {
+            SIZE_T nSize = sizeof(crtdbgblockheaderucrt_t) + crtheader.size + GAPSIZE;
             int nValid = _CrtIsValidPointer(block, (unsigned int)info->size, TRUE);
-            if (_BLOCK_TYPE_IS_VALID(crtheader->use) && nValid && (nSize == info->size)) {
+            if (_BLOCK_TYPE_IS_VALID(crtheader.use) && nValid && (nSize == info->size)) {
                 info->debugCrtAlloc = true;
                 info->ucrt = true;
             }
@@ -2023,15 +2042,16 @@ SIZE_T VisualLeakDetector::getLeaksCount (heapinfo_t* heapinfo, DWORD threadId)
 
 int VisualLeakDetector::getCrtBlockUse(LPCVOID block, bool ucrt)
 {
+    // A block that can no longer be read is being freed.
     if (!ucrt)
     {
-        crtdbgblockheader_t* crtheader = (crtdbgblockheader_t*)block;
-        return crtheader->use;
+        crtdbgblockheader_t crtheader;
+        return readTrackedBlock(&crtheader, block, sizeof(crtheader)) ? crtheader.use : CRT_USE_FREE;
     }
     else
     {
-        crtdbgblockheaderucrt_t* crtheader = (crtdbgblockheaderucrt_t*)block;
-        return crtheader->use;
+        crtdbgblockheaderucrt_t crtheader;
+        return readTrackedBlock(&crtheader, block, sizeof(crtheader)) ? crtheader.use : CRT_USE_FREE;
     }
 }
 
@@ -2039,13 +2059,13 @@ size_t VisualLeakDetector::getCrtBlockSize(LPCVOID block, bool ucrt)
 {
     if (!ucrt)
     {
-        crtdbgblockheader_t* crtheader = (crtdbgblockheader_t*)block;
-        return crtheader->size;
+        crtdbgblockheader_t crtheader;
+        return readTrackedBlock(&crtheader, block, sizeof(crtheader)) ? crtheader.size : 0;
     }
     else
     {
-        crtdbgblockheaderucrt_t* crtheader = (crtdbgblockheaderucrt_t*)block;
-        return crtheader->size;
+        crtdbgblockheaderucrt_t crtheader;
+        return readTrackedBlock(&crtheader, block, sizeof(crtheader)) ? crtheader.size : 0;
     }
 }
 
@@ -2103,16 +2123,24 @@ SIZE_T VisualLeakDetector::reportLeaks (heapinfo_t* heapinfo, bool &firstLeak, S
         }
 
         // A report hook may free the block, so read it before the first Report.
+        // A block that can no longer be read is being freed.
 #ifdef _DEBUG
         SIZE_T crtRequest = 0;
-        if (info->debugCrtAlloc)
-            crtRequest = ((crtdbgblockheader_t*)block)->request;
+        if (info->debugCrtAlloc) {
+            crtdbgblockheader_t crtheader;
+            if (!readTrackedBlock(&crtheader, block, sizeof(crtheader)))
+                continue;
+            crtRequest = crtheader.request;
+        }
 #endif
         SIZE_T dumpSize = (m_maxDataDump < size) ? m_maxDataDump : size;
         LPBYTE dumpData = NULL;
         if (dumpSize != 0) {
             dumpData = new BYTE[dumpSize];
-            memcpy(dumpData, address, dumpSize);
+            if (!readTrackedBlock(dumpData, address, dumpSize)) {
+                delete [] dumpData;
+                continue;
+            }
         }
 
         // It looks like a real memory leak.
@@ -3608,14 +3636,12 @@ int VisualLeakDetector::resolveStacks(heapinfo_t* heapinfo)
         if (isDebugCrtAlloc(block, info)) {
             // This block is allocated to a CRT heap, so the block has a CRT
             // memory block header prepended to it.
-            crtdbgblockheader_t* crtheader = (crtdbgblockheader_t*)block;
-            if (!crtheader)
-                continue;
+            int blockUse = getCrtBlockUse(block, info->ucrt);
 
             // Leaks identified as CRT_USE_IGNORE should not be ignored here otherwise
             // DynamicLoader/Thread test will randomly fail with less leaks being reported.
-            if (CRT_USE_TYPE(crtheader->use) == CRT_USE_FREE ||
-                CRT_USE_TYPE(crtheader->use) == CRT_USE_INTERNAL)
+            if (CRT_USE_TYPE(blockUse) == CRT_USE_FREE ||
+                CRT_USE_TYPE(blockUse) == CRT_USE_INTERNAL)
             {
                 // This block is marked as being used internally by the CRT.
                 // The CRT will free the block after VLD is destroyed.
