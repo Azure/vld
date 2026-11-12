@@ -901,6 +901,8 @@ set(VLD_CHAOS_TESTS
     chaos_report_hook_race
     chaos_long_frame
     chaos_hook_reenter
+    chaos_crt_matrix
+    chaos_heap_churn
     chaos_api_storm
 )
 
