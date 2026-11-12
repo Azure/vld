@@ -912,6 +912,7 @@ set(VLD_CHAOS_TESTS
     chaos_report_options
     chaos_realloc_reuse
     chaos_fake_crt_header
+    chaos_crt_odd_apis
 )
 
 function(set_chaos_output_dir TARGET_NAME)
