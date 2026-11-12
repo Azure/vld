@@ -1924,41 +1924,6 @@ SIZE_T VisualLeakDetector::getLeaksCount (heapinfo_t* heapinfo, DWORD threadId)
     return memoryleaks;
 }
 
-// reportleaks - Generates a memory leak report for the specified heap.
-//
-//  - heap (IN): Handle to the heap for which to generate a memory leak
-//      report.
-//
-//  Return Value:
-//
-//    None.
-//
-SIZE_T VisualLeakDetector::reportHeapLeaks (HANDLE heap)
-{
-    assert(heap != NULL);
-
-    // Find the heap's information (blockmap, etc).
-    CriticalSectionLocker<> cs(g_heapMapLock);
-    HeapMap::Iterator heapit = m_heapMap->find(heap);
-    if (heapit == m_heapMap->end()) {
-        // Nothing is allocated from this heap. No leaks.
-        return 0;
-    }
-
-    Set<blockinfo_t*> aggregatedLeaks;
-    heapinfo_t* heapinfo = (*heapit).second;
-    // Generate a memory leak report for heap.
-    bool firstLeak = true;
-    SIZE_T leaks_count = reportLeaks(heapinfo, firstLeak, aggregatedLeaks);
-
-    // Show a summary.
-    if (leaks_count != 0) {
-        Report(L"Visual Leak Detector detected %Iu memory leak%s in heap " ADDRESSFORMAT L"\n",
-            leaks_count, (leaks_count > 1) ? L"s" : L"", heap);
-     }
-    return leaks_count;
-}
-
 int VisualLeakDetector::getCrtBlockUse(LPCVOID block, bool ucrt)
 {
     if (!ucrt)
@@ -2774,13 +2739,17 @@ bool VisualLeakDetector::isFunctionIgnored(LPCWSTR functionName)
 //
 //  - threadId (IN): Only leaks allocated by this thread, or all leaks if -1.
 //
+//  - heap (IN): Only leaks in this heap, or in all heaps if NULL.
+//
 //  Return Value:
 //
 //    None.
 //
-VOID VisualLeakDetector::collectLeakPages (Set<UINT_PTR>& pages, DWORD threadId)
+VOID VisualLeakDetector::collectLeakPages (Set<UINT_PTR>& pages, DWORD threadId, HANDLE heap)
 {
     for (HeapMap::Iterator heapit = m_heapMap->begin(); heapit != m_heapMap->end(); ++heapit) {
+        if (heap != NULL && (*heapit).first != heap)
+            continue;
         BlockMap* blockmap = &(*heapit).second->blockMap;
         for (BlockMap::Iterator blockit = blockmap->begin(); blockit != blockmap->end(); ++blockit) {
             blockinfo_t* info = (*blockit).second;
@@ -2868,7 +2837,7 @@ extern "C" bool VldSymbolLoadForbidden(void)
 class LeakSymbolsHeapMapLock
 {
 public:
-    LeakSymbolsHeapMapLock(VisualLeakDetector& vld, bool loadSymbols, DWORD threadId = (DWORD)-1)
+    LeakSymbolsHeapMapLock(VisualLeakDetector& vld, bool loadSymbols, DWORD threadId = (DWORD)-1, HANDLE heap = NULL)
         : m_nested(g_heapMapLock.IsOwnedByCurrentThread())
     {
         if (!m_nested) {
@@ -2884,7 +2853,7 @@ public:
                 if (!loadSymbols)
                     break;
                 Set<UINT_PTR> pages;
-                vld.collectLeakPages(pages, threadId);
+                vld.collectLeakPages(pages, threadId, heap);
                 if (attempt == maxAttempts || VisualLeakDetector::areModuleSymbolsLoaded(pages))
                     break;
                 g_heapMapLock.Leave();
@@ -2989,6 +2958,41 @@ SIZE_T VisualLeakDetector::ReportThreadLeaks( DWORD threadId )
         leaksCount += reportLeaks(heapinfo, firstLeak, aggregatedLeaks, threadId);
     }
     return leaksCount;
+}
+
+// reportleaks - Generates a memory leak report for the specified heap.
+//
+//  - heap (IN): Handle to the heap for which to generate a memory leak
+//      report.
+//
+//  Return Value:
+//
+//    None.
+//
+SIZE_T VisualLeakDetector::reportHeapLeaks (HANDLE heap)
+{
+    assert(heap != NULL);
+
+    // Find the heap's information (blockmap, etc).
+    LeakSymbolsHeapMapLock cs(*this, true, (DWORD)-1, heap);
+    HeapMap::Iterator heapit = m_heapMap->find(heap);
+    if (heapit == m_heapMap->end()) {
+        // Nothing is allocated from this heap. No leaks.
+        return 0;
+    }
+
+    Set<blockinfo_t*> aggregatedLeaks;
+    heapinfo_t* heapinfo = (*heapit).second;
+    // Generate a memory leak report for heap.
+    bool firstLeak = true;
+    SIZE_T leaks_count = reportLeaks(heapinfo, firstLeak, aggregatedLeaks);
+
+    // Show a summary.
+    if (leaks_count != 0) {
+        Report(L"Visual Leak Detector detected %Iu memory leak%s in heap " ADDRESSFORMAT L"\n",
+            leaks_count, (leaks_count > 1) ? L"s" : L"", heap);
+     }
+    return leaks_count;
 }
 
 VOID VisualLeakDetector::MarkAllLeaksAsReported( )

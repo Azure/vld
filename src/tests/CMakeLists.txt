@@ -887,3 +887,55 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_modules_getaddrinfo_test/ignore_mod
         COMMENT "Copying getaddrinfo_missing_free_test vld.ini, VLD DLL, and dbghelp.dll"
     )
 endif()
+
+# ============================================================================
+# Chaos tests
+#
+# Stress and race tests that try to make VLD hang, crash or misreport. Each
+# test prints "FAIL: ..." (a watchdog turns hangs into failures) and must exit
+# with code 0 and no leaks in VLD's exit report. They share one output
+# directory, vld.ini and the chaos_helper_dll helper.
+# ============================================================================
+set(VLD_CHAOS_TESTS
+    chaos_heapdestroy_deadlock
+)
+
+function(set_chaos_output_dir TARGET_NAME)
+    set_target_properties(${TARGET_NAME} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/chaos"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin/Debug/chaos"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin/Release/chaos"
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/bin/RelWithDebInfo/chaos"
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/bin/MinSizeRel/chaos"
+    )
+endfunction()
+
+add_vld_test(chaos_helper_dll
+    IS_DLL
+    SOURCES chaos/chaos_helper_dll.cpp
+)
+set_chaos_output_dir(chaos_helper_dll)
+add_custom_command(TARGET chaos_helper_dll POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/chaos/vld.ini"
+        "$<TARGET_FILE_DIR:chaos_helper_dll>/vld.ini"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:vld>"
+        "$<TARGET_FILE_DIR:chaos_helper_dll>/$<TARGET_FILE_NAME:vld>"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/setup/dbghelp/${DBGHELP_ARCH}/dbghelp.dll"
+        "$<TARGET_FILE_DIR:chaos_helper_dll>/dbghelp.dll"
+    COMMENT "Copying chaos vld.ini, VLD DLL, and dbghelp.dll"
+)
+
+foreach(CHAOS_TEST ${VLD_CHAOS_TESTS})
+    add_vld_test(${CHAOS_TEST}
+        SOURCES chaos/${CHAOS_TEST}.cpp
+        HEADERS chaos/chaos_common.h
+    )
+    add_dependencies(${CHAOS_TEST} chaos_helper_dll)
+    set_chaos_output_dir(${CHAOS_TEST})
+    set_tests_properties(${CHAOS_TEST} PROPERTIES
+        TIMEOUT 30
+        FAIL_REGULAR_EXPRESSION "FAIL:|Visual Leak Detector detected [0-9]+ memory leak")
+endforeach()

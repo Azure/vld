@@ -338,7 +338,7 @@ private:
     static int    getCrtBlockUse (LPCVOID block, bool ucrt);
     static size_t getCrtBlockSize(LPCVOID block, bool ucrt);
     SIZE_T getLeaksCount (heapinfo_t* heapinfo, DWORD threadId = (DWORD)-1);
-    VOID   collectLeakPages (Set<UINT_PTR>& pages, DWORD threadId);
+    VOID   collectLeakPages (Set<UINT_PTR>& pages, DWORD threadId, HANDLE heap = NULL);
     static BOOL areModuleSymbolsLoaded (const Set<UINT_PTR>& pages);
     static VOID loadModuleSymbols (const Set<UINT_PTR>& pages);
     friend class LeakSymbolsHeapMapLock;
