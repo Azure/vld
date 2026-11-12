@@ -8,8 +8,10 @@
 #pragma once
 
 #include <windows.h>
+#include <shellapi.h>
 #include <stdio.h>
 #include <string.h>
+#include <wchar.h>
 
 namespace chaos
 {
@@ -54,10 +56,119 @@ inline void Fail(const char* message, UINT exitCode = 1)
     TerminateProcess(GetCurrentProcess(), exitCode);
 }
 
+// With CHAOS_DUMP_DIR set, StartWatchdog starts a copy of the test as a dumper
+// that waits for a hang and writes a minidump of the test into that directory,
+// from outside the hung process.
+inline HANDLE& DumpRequest()
+{
+    static HANDLE request = NULL;
+    return request;
+}
+
+inline HANDLE& DumpWritten()
+{
+    static HANDLE written = NULL;
+    return written;
+}
+
+inline void DumpEventName(wchar_t* name, size_t size, const wchar_t* kind, DWORD pid)
+{
+    swprintf_s(name, size, L"Local\\chaos_%s_%lu", kind, pid);
+}
+
+// MiniDumpWriteDump, loaded at run time; the MINIDUMP_TYPE values are those of
+// MiniDumpWithFullMemory, MiniDumpWithHandleData, MiniDumpWithUnloadedModules
+// and MiniDumpWithThreadInfo.
+typedef BOOL (WINAPI *MiniDumpWriteDump_t)(HANDLE, DWORD, HANDLE, DWORD, PVOID, PVOID, PVOID);
+const DWORD CHAOS_MINIDUMP_TYPE = 0x2 | 0x4 | 0x20 | 0x1000;
+
+// Runs the dumper and exits if this process was started as one.
+inline void RunDumperIfRequested()
+{
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (argv == NULL || argc != 3 || wcscmp(argv[1], L"--chaos-dumper") != 0)
+    {
+        return;
+    }
+    DWORD pid = wcstoul(argv[2], NULL, 10);
+    wchar_t name[64];
+    DumpEventName(name, _countof(name), L"hang", pid);
+    HANDLE request = OpenEventW(SYNCHRONIZE, FALSE, name);
+    DumpEventName(name, _countof(name), L"dumped", pid);
+    HANDLE written = OpenEventW(EVENT_MODIFY_STATE, FALSE, name);
+    HANDLE test = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_DUP_HANDLE, FALSE, pid);
+    if (request == NULL || written == NULL || test == NULL)
+    {
+        ExitProcess(1);
+    }
+    HANDLE waits[2] = { request, test };
+    if (WaitForMultipleObjects(2, waits, FALSE, INFINITE) == WAIT_OBJECT_0)
+    {
+        wchar_t dir[MAX_PATH];
+        wchar_t exe[MAX_PATH];
+        wchar_t path[MAX_PATH * 2];
+        DWORD length = GetEnvironmentVariableW(L"CHAOS_DUMP_DIR", dir, _countof(dir));
+        GetModuleFileNameW(NULL, exe, _countof(exe));
+        const wchar_t* base = wcsrchr(exe, L'\\');
+        base = base ? base + 1 : exe;
+        HMODULE dbghelp = LoadLibraryW(L"dbghelp.dll");
+        MiniDumpWriteDump_t writeDump = dbghelp ? (MiniDumpWriteDump_t)GetProcAddress(dbghelp, "MiniDumpWriteDump") : NULL;
+        if (length > 0 && length < _countof(dir) && writeDump != NULL)
+        {
+            CreateDirectoryW(dir, NULL);
+            swprintf_s(path, L"%s\\%s.%lu.dmp", dir, base, pid);
+            HANDLE file = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+            if (file != INVALID_HANDLE_VALUE)
+            {
+                writeDump(test, pid, file, CHAOS_MINIDUMP_TYPE, NULL, NULL, NULL);
+                CloseHandle(file);
+            }
+        }
+        SetEvent(written);
+    }
+    ExitProcess(0);
+}
+
+inline void StartDumper()
+{
+    wchar_t dir[MAX_PATH];
+    if (GetEnvironmentVariableW(L"CHAOS_DUMP_DIR", dir, _countof(dir)) == 0)
+    {
+        return;
+    }
+    DWORD pid = GetCurrentProcessId();
+    wchar_t name[64];
+    DumpEventName(name, _countof(name), L"hang", pid);
+    HANDLE request = CreateEventW(NULL, TRUE, FALSE, name);
+    DumpEventName(name, _countof(name), L"dumped", pid);
+    HANDLE written = CreateEventW(NULL, TRUE, FALSE, name);
+    wchar_t exe[MAX_PATH];
+    wchar_t commandLine[MAX_PATH + 64];
+    GetModuleFileNameW(NULL, exe, _countof(exe));
+    swprintf_s(commandLine, L"\"%s\" --chaos-dumper %lu", exe, pid);
+    STARTUPINFOW startup = { sizeof(startup) };
+    PROCESS_INFORMATION process = { 0 };
+    if (request == NULL || written == NULL ||
+        !CreateProcessW(exe, commandLine, NULL, NULL, FALSE, DETACHED_PROCESS, NULL, NULL, &startup, &process))
+    {
+        return;
+    }
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    DumpWritten() = written;
+    DumpRequest() = request;
+}
+
 inline DWORD WINAPI WatchdogThread(LPVOID)
 {
     if (WaitForSingleObject(WatchdogDone(), (DWORD)WatchdogMs()) == WAIT_TIMEOUT)
     {
+        // Allocates nothing: the hung threads may hold the heap or loader lock.
+        if (DumpRequest() != NULL && SetEvent(DumpRequest()))
+        {
+            WaitForSingleObject(DumpWritten(), 120000);
+        }
         Fail("HANG detected by the watchdog", 3);
     }
     return 0;
@@ -65,7 +176,9 @@ inline DWORD WINAPI WatchdogThread(LPVOID)
 
 inline void StartWatchdog(DWORD ms)
 {
+    RunDumperIfRequested();
     WatchdogMs() = (LONG)ms;
+    StartDumper();
     WatchdogDone() = CreateEventW(NULL, TRUE, FALSE, NULL);
     HANDLE thread = CreateThread(NULL, 0, WatchdogThread, NULL, 0, NULL);
     if (WatchdogDone() == NULL || thread == NULL)
