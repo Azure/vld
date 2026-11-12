@@ -237,8 +237,10 @@ private:
     CaptureContext& operator=(const CaptureContext&);
 private:
     BOOL IsExcludedModule();
+    BOOL IsExcludedModule(UINT_PTR fp);
     BOOL IsCrtModuleWithNoReporting(HMODULE hModule);
     BOOL ShouldReportLeaksForModule(HMODULE hModule);
+    void Commit(BOOL excluded);
     void Reset();
 private:
     tls_t *m_tls;

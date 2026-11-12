@@ -1690,6 +1690,15 @@ VOID VisualLeakDetector::unmapBlock (HANDLE heap, LPCVOID mem, const context_t &
     if (NULL == mem)
         return;
 
+    // A block allocated by an allocation nested in another one is mapped only
+    // when the outer one records its own block (CaptureContext::Set); a free
+    // before that leaves nothing to map.
+    tls_t* tls = getTls();
+    if (tls->blockWithoutGuard == mem && tls->heap == heap && tls->newBlockWithoutGuard == NULL) {
+        tls->blockWithoutGuard = NULL;
+        tls->size = 0;
+    }
+
     // Find this heap's block map.
     CriticalSectionLocker<HeapMapLock> cs(g_heapMapLock);
     HeapMap::Iterator heapit = m_heapMap->find(heap);
@@ -3798,6 +3807,15 @@ CaptureContext::~CaptureContext() {
 #endif
 
     BOOL excluded = IsExcludedModule();
+    Commit(excluded);
+
+    // Reset thread local flags and variables for the next allocation.
+    Reset();
+}
+
+// Commit - Maps the block that the hooks recorded in the thread's state, under
+//   the call stack of the first call that entered VLD.
+void CaptureContext::Commit(BOOL excluded) {
     if ((m_tls->blockWithoutGuard) && (!excluded)) {
         blockinfo_t* pblockInfo = NULL;
         CallStack* callstack = CallStack::Create();
@@ -3832,12 +3850,16 @@ CaptureContext::~CaptureContext() {
         // address out again.
         g_vld.unmapMovedBlock(m_tls->heap, m_tls->blockWithoutGuard, m_tls->blockSerial, m_tls->context);
     }
-
-    // Reset thread local flags and variables for the next allocation.
-    Reset();
 }
 
 void CaptureContext::Set(HANDLE heap, LPVOID mem, LPVOID newmem, SIZE_T size, SIZE_T serial) {
+    // A block recorded earlier in this allocation belongs to an allocation
+    // nested in it (a CRT allocation hook, or an allocator that allocates),
+    // which has returned: map it before it is overwritten.
+    if (m_tls->blockWithoutGuard != NULL && mem != NULL &&
+        (m_tls->heap != heap || m_tls->blockWithoutGuard != mem || m_tls->newBlockWithoutGuard != newmem)) {
+        Commit(IsExcludedModule(m_tls->context.fp));
+    }
     m_tls->heap = heap;
     m_tls->blockWithoutGuard = mem;
     m_tls->newBlockWithoutGuard = newmem;
@@ -3892,7 +3914,11 @@ BOOL CaptureContext::ShouldReportLeaksForModule(HMODULE hModule) {
 }
 
 BOOL CaptureContext::IsExcludedModule() {
-    HMODULE hModule = GetCallingModule(m_context.fp);
+    return IsExcludedModule(m_context.fp);
+}
+
+BOOL CaptureContext::IsExcludedModule(UINT_PTR fp) {
+    HMODULE hModule = GetCallingModule(fp);
     if (hModule == g_vld.m_dbghlpBase)
         return TRUE;
 
