@@ -185,7 +185,8 @@ typedef Set<VLD_REPORT_HOOK> ReportHookSet;
 struct functioninfo_t {
     BOOL operator < (const struct functioninfo_t& other) const {
 
-        if (lstrcmpW(name, other.name) < 0) {
+        // Ordinal: lstrcmpW may allocate NLS data while VLD counts leaks.
+        if (wcscmp(name, other.name) < 0) {
             return TRUE;
         } else {
             return FALSE;
