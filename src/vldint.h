@@ -381,7 +381,7 @@ private:
     static bool isFunctionIgnored(LPCWSTR functionName);
     blockinfo_t* findAllocedBlock(LPCVOID, __out HANDLE& heap);
     blockinfo_t* getAllocationBlockInfo(void* alloc);
-    void setupReporting();
+    void setReportDestination(LPCWSTR path, UINT32 options);
     void checkInternalMemoryLeaks();
     bool waitForAllVLDThreads();
 
@@ -445,7 +445,6 @@ private:
     static patchentry_t  m_ntdllImportPatch [];
     static patchentry_t  m_ole32Patch [];
     static moduleentry_t m_patchTable [58];   // Table of imports patched for attaching VLD to other modules.
-    FILE                *m_reportFile;        // File where the memory leak report may be sent to.
     WCHAR                m_reportFilePath [MAX_PATH]; // Full path and name of file to send memory leak report to.
     const char          *m_selfTestFile;      // Filename where the memory leak self-test block is leaked.
     int                  m_selfTestLine;      // Line number where the memory leak self-test block is leaked.

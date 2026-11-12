@@ -43,6 +43,7 @@ extern "C" bool VldArm64InTeardown(void);
 // Global variables.
 static BOOL         s_reportDelay = FALSE;     // If TRUE, we sleep for a bit after calling OutputDebugString to give the debugger time to catch up.
 static FILE        *s_reportFile = NULL;       // Pointer to the file, if any, to send the memory leak report to.
+static SRWLOCK      s_reportFileLock = SRWLOCK_INIT; // Shared while writing to s_reportFile; exclusive to replace it.
 static BOOL         s_reportToDebugger = TRUE; // If TRUE, a copy of the memory leak report will be sent to the debugger for display.
 static BOOL         s_reportToStdOut = TRUE;   // If TRUE, a copy of the memory leak report will be sent to standard output.
 static encoding_e   s_reportEncoding = ascii;  // Output encoding of the memory leak report.
@@ -1250,10 +1251,12 @@ VOID Print (LPWSTR messagew)
     if (!CallReportHook(0, messagew, &hook_retval))
     {
         if (s_reportEncoding == unicode) {
+            AcquireSRWLockShared(&s_reportFileLock);
             if (s_reportFile != NULL) {
                 // Send the report to the previously specified file.
                 fwrite(messagew, sizeof(WCHAR), wcslen(messagew), s_reportFile);
             }
+            ReleaseSRWLockShared(&s_reportFileLock);
 
             if ( s_reportToStdOut )
                 fputws(messagew, stdout);
@@ -1270,10 +1273,12 @@ VOID Print (LPWSTR messagew)
             }
             messagea[MAXMESSAGELENGTH] = '\0';
 
+            AcquireSRWLockShared(&s_reportFileLock);
             if (s_reportFile != NULL) {
                 // Send the report to the previously specified file.
                 fwrite(messagea, sizeof(CHAR), strlen(messagea), s_reportFile);
             }
+            ReleaseSRWLockShared(&s_reportFileLock);
 
             if ( s_reportToStdOut )
                 fputs(messagea, stdout);
@@ -1493,50 +1498,38 @@ VOID RestoreModule (HMODULE importmodule, moduleentry_t patchtable [], UINT tabl
     }
 }
 
-// SetReportEncoding - Sets the output encoding of report messages to either
-//   ASCII (the default) or Unicode.
+// SwapReportFile - Sets the file, if any, to which report messages are sent,
+//   its encoding, and whether they are copied to the debugger and stdout.
+//   Waits for writes to the previous file to finish, so the caller can close
+//   it. Writes happen under s_reportFileLock, so they must not allocate: the
+//   allocation could wait for a lock held by a thread that waits here.
 //
-//  - encoding (IN): Specifies either "ascii" or "unicode".
+//  - file (IN): Pointer to an open file, or NULL.
 //
-//  Return Value:
+//  - encoding (IN): The file's encoding, "ascii" or "unicode". Ignored if file
+//      is NULL.
 //
-//    None.
-//
-VOID SetReportEncoding (encoding_e encoding)
-{
-    switch (encoding) {
-    case ascii:
-    case unicode:
-        s_reportEncoding = encoding;
-        break;
-
-    default:
-        assert(FALSE);
-    }
-}
-
-// SetReportFile - Sets a destination file to which all report messages should
-//   be sent. If this function is not called to set a destination file, then
-//   report messages will be sent to the debugger instead of to a file.
-//
-//  - file (IN): Pointer to an open file, to which future report messages should
-//      be sent.
-//
-//  - copydebugger (IN): If true, in addition to sending report messages to
-//      the specified file, a copy of each message will also be sent to the
+//  - copydebugger (IN): If true, a copy of each message is also sent to the
 //      debugger.
 //
+//  - tostdout (IN): If true, a copy of each message is also sent to stdout.
+//
 //  Return Value:
 //
-//    None.
+//    The previous file, or NULL.
 //
-VOID SetReportFile (FILE *file, BOOL copydebugger, BOOL tostdout)
+FILE* SwapReportFile (FILE *file, encoding_e encoding, BOOL copydebugger, BOOL tostdout)
 {
+    AcquireSRWLockExclusive(&s_reportFileLock);
+    FILE* previous = s_reportFile;
     s_reportFile = file;
+    if (file != NULL)
+        s_reportEncoding = encoding;
     s_reportToDebugger = copydebugger;
     s_reportToStdOut = tostdout;
+    ReleaseSRWLockExclusive(&s_reportFileLock);
+    return previous;
 }
-
 // AppendString - Appends the specified source string to the specified destination
 //   string. Allocates additional space so that the destination string "grows"
 //   as new strings are appended to it. This is accomplished by deleting the

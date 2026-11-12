@@ -328,7 +328,6 @@ VisualLeakDetector::VisualLeakDetector ()
     m_maxDataDump    = 0xffffffff;
     m_maxTraceFrames = 0xffffffff;
     m_options        = 0x0;
-    m_reportFile     = NULL;
     wcsncpy_s(m_reportFilePath, MAX_PATH, VLD_DEFAULT_REPORT_FILE_NAME, _TRUNCATE);
     m_status         = 0x0;
     m_symsrvMissing  = FALSE;
@@ -471,7 +470,7 @@ VisualLeakDetector::VisualLeakDetector ()
         m_status |= VLD_STATUS_NEVER_ENABLED;
     }
     if (m_options & VLD_OPT_REPORT_TO_FILE) {
-        setupReporting();
+        setReportDestination(m_reportFilePath, m_options);
     }
     if (m_options & VLD_OPT_SLOW_DEBUGGER_DUMP) {
         // Insert a slight delay between messages sent to the debugger for
@@ -859,8 +858,9 @@ VisualLeakDetector::~VisualLeakDetector ()
         TlsFree(m_tlsIndex);
     }
 
-    if (m_reportFile != NULL) {
-        fclose(m_reportFile);
+    FILE* reportFile = SwapReportFile(NULL, ascii, FALSE, FALSE);
+    if (reportFile != NULL) {
+        fclose(reportFile);
     }
 
     // Decrement the library reference count.
@@ -3429,34 +3429,34 @@ void VisualLeakDetector::SetReportOptions(UINT32 option_mask, CONST WCHAR *filen
         return;
     }
 
-    CriticalSectionLocker<> cs(m_optionsLock);
-    m_options &= ~(VLD_OPT_REPORT_TO_DEBUGGER | VLD_OPT_REPORT_TO_FILE |
-        VLD_OPT_REPORT_TO_STDOUT | VLD_OPT_UNICODE_REPORT); // clear used bits
-
-    m_options |= option_mask & VLD_OPT_REPORT_TO_DEBUGGER;
-    if ( (option_mask & VLD_OPT_REPORT_TO_FILE) && ( filename != NULL ))
+    WCHAR path[MAX_PATH];
+    UINT32 options;
     {
-        wcsncpy_s(m_reportFilePath, MAX_PATH, filename, _TRUNCATE);
-        m_options |= option_mask & VLD_OPT_REPORT_TO_FILE;
-    }
-    m_options |= option_mask & VLD_OPT_REPORT_TO_STDOUT;
-    m_options |= option_mask & VLD_OPT_UNICODE_REPORT;
+        CriticalSectionLocker<> cs(m_optionsLock);
+        m_options &= ~(VLD_OPT_REPORT_TO_DEBUGGER | VLD_OPT_REPORT_TO_FILE |
+            VLD_OPT_REPORT_TO_STDOUT | VLD_OPT_UNICODE_REPORT); // clear used bits
 
-    if ((m_options & VLD_OPT_UNICODE_REPORT) && !(m_options & VLD_OPT_REPORT_TO_FILE)) {
-        // If Unicode report encoding is enabled, then the report needs to be
-        // sent to a file because the debugger will not display Unicode
-        // characters, it will display question marks in their place instead.
-        m_options |= VLD_OPT_REPORT_TO_FILE;
-        m_status |= VLD_STATUS_FORCE_REPORT_TO_FILE;
+        m_options |= option_mask & VLD_OPT_REPORT_TO_DEBUGGER;
+        if ( (option_mask & VLD_OPT_REPORT_TO_FILE) && ( filename != NULL ))
+        {
+            wcsncpy_s(m_reportFilePath, MAX_PATH, filename, _TRUNCATE);
+            m_options |= option_mask & VLD_OPT_REPORT_TO_FILE;
+        }
+        m_options |= option_mask & VLD_OPT_REPORT_TO_STDOUT;
+        m_options |= option_mask & VLD_OPT_UNICODE_REPORT;
+
+        if ((m_options & VLD_OPT_UNICODE_REPORT) && !(m_options & VLD_OPT_REPORT_TO_FILE)) {
+            // If Unicode report encoding is enabled, then the report needs to be
+            // sent to a file because the debugger will not display Unicode
+            // characters, it will display question marks in their place instead.
+            m_options |= VLD_OPT_REPORT_TO_FILE;
+            m_status |= VLD_STATUS_FORCE_REPORT_TO_FILE;
+        }
+        wcsncpy_s(path, MAX_PATH, m_reportFilePath, _TRUNCATE);
+        options = m_options;
     }
 
-    if (m_options & VLD_OPT_REPORT_TO_FILE) {
-        setupReporting();
-    }
-    else if ( m_reportFile ) { //Close the previous report file if needed.
-        fclose(m_reportFile);
-        m_reportFile = NULL;
-    }
+    setReportDestination((options & VLD_OPT_REPORT_TO_FILE) ? path : NULL, options);
 }
 
 int VisualLeakDetector::SetReportHook(int mode, VLD_REPORT_HOOK pfnNewHook)
@@ -3490,50 +3490,52 @@ int VisualLeakDetector::SetReportHook(int mode, VLD_REPORT_HOOK pfnNewHook)
     return -1;
 }
 
-void VisualLeakDetector::setupReporting()
+// setReportDestination - Sends the report to the file at path, or to no file
+//   if path is NULL, and to the debugger and stdout as the options say. Files
+//   are opened and closed with no VLD lock held: that allocates and frees
+//   through VLD's hooks, and allocation hooks take m_optionsLock.
+//
+//  - path (IN): The report file, or NULL.
+//
+//  - options (IN): The VLD_OPT_REPORT_* and VLD_OPT_UNICODE_REPORT options.
+//
+//  Return Value:
+//
+//    None.
+//
+VOID VisualLeakDetector::setReportDestination(LPCWSTR path, UINT32 options)
 {
-    WCHAR      bom = BOM; // Unicode byte-order mark.
+    BOOL toDebugger = (options & VLD_OPT_REPORT_TO_DEBUGGER) != 0;
+    BOOL toStdout = (options & VLD_OPT_REPORT_TO_STDOUT) != 0;
+    bool isUnicode = (options & VLD_OPT_UNICODE_REPORT) != 0;
 
-    //Close the previous report file if needed.
-    if (m_reportFile) {
-        fclose(m_reportFile);
-        m_reportFile = NULL;
-    }
+    // Close the current file first; it can be the one to open again.
+    FILE* previous = SwapReportFile(NULL, ascii, toDebugger, toStdout);
+    if (previous != NULL)
+        fclose(previous);
+    if (path == NULL)
+        return;
 
-    // Reporting to file enabled.
-    if (m_options & VLD_OPT_UNICODE_REPORT) {
-        // Unicode data encoding has been enabled. Write the byte-order
-        // mark before anything else gets written to the file. Open the
-        // file for binary writing.
-        if (_wfopen_s(&m_reportFile, m_reportFilePath, L"wb") == EINVAL) {
-            // Couldn't open the file.
-            m_reportFile = NULL;
-        }
-        else if (m_reportFile) {
-            fwrite(&bom, sizeof(WCHAR), 1, m_reportFile);
-            SetReportEncoding(unicode);
-        }
-    }
-    else {
-        // Open the file in text mode for ASCII output.
-        if (_wfopen_s(&m_reportFile, m_reportFilePath, L"w") == EINVAL) {
-            // Couldn't open the file.
-            m_reportFile = NULL;
-        }
-        else if (m_reportFile) {
-            SetReportEncoding(ascii);
-        }
-    }
-    if (m_reportFile == NULL) {
+    // Unicode data encoding writes the byte-order mark before anything else,
+    // to a file opened for binary writing.
+    FILE* file = NULL;
+    if (_wfopen_s(&file, path, isUnicode ? L"wb" : L"w") != 0 || file == NULL) {
         Report(L"WARNING: Visual Leak Detector: Couldn't open report file for writing: %s\n"
-            L"  The report will be sent to the debugger instead.\n", m_reportFilePath);
+            L"  The report will be sent to the debugger instead.\n", path);
+        return;
     }
-    else {
-        // Set the "report" function to write to the file.
-        SetReportFile(m_reportFile, m_options & VLD_OPT_REPORT_TO_DEBUGGER, m_options & VLD_OPT_REPORT_TO_STDOUT);
+    // Allocate the buffer now: writes to the report file must not allocate
+    // (see SwapReportFile).
+    setvbuf(file, NULL, _IOFBF, 4096);
+    if (isUnicode) {
+        WCHAR bom = BOM;
+        fwrite(&bom, sizeof(WCHAR), 1, file);
     }
+    // Another thread may have set a file meanwhile.
+    previous = SwapReportFile(file, isUnicode ? unicode : ascii, toDebugger, toStdout);
+    if (previous != NULL)
+        fclose(previous);
 }
-
 blockinfo_t* VisualLeakDetector::getAllocationBlockInfo(void* alloc)
 {
     // should be called under g_heapMapLock

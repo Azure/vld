@@ -191,8 +191,7 @@ VOID Report (LPCWSTR format, ...);
 #endif
 VOID RestoreImport (HMODULE importmodule, moduleentry_t* module);
 VOID RestoreModule (HMODULE importmodule, moduleentry_t patchtable [], UINT tablesize);
-VOID SetReportEncoding (encoding_e encoding);
-VOID SetReportFile (FILE *file, BOOL copydebugger, BOOL copytostdout);
+FILE* SwapReportFile (FILE *file, encoding_e encoding, BOOL copydebugger, BOOL copytostdout);
 LPWSTR AppendString (LPWSTR dest, LPCWSTR source);
 BOOL StrToBool (LPCWSTR s);
 void ConvertModulePathToAscii( LPCWSTR modulename, LPSTR * modulenamea );
