@@ -3,12 +3,17 @@
 //
 // The heap frees the old block inside the real realloc, before VLD forgets
 // the old address, so another thread can be handed that address first. Movers
-// reallocate same-size blocks that VLD does not track, or tracked ones while
-// VLD is disabled for the thread, to a larger size so they move; leakers keep
-// every block they allocate. Each leaker's count must match exactly.
+// reallocate blocks that VLD does not track, or tracked ones while VLD is
+// disabled for the thread, through every reallocation API to a larger size
+// so they move; leakers keep every block they allocate. Each leaker's count
+// must match exactly.
 
 #include "chaos_common.h"
 #include "vld.h"
+#include <objbase.h>
+#include <malloc.h>
+
+#pragma comment(lib, "ole32.lib")
 
 namespace
 {
@@ -28,23 +33,59 @@ struct Leaker
 };
 Leaker g_leakers[LEAKERS];
 
+enum Api { CRT_REALLOC, CRT_RECALLOC, HEAP_REALLOC, COTASKMEM_REALLOC, API_COUNT };
+
+void* Allocate(Api api)
+{
+    switch (api)
+    {
+    case CRT_REALLOC: return malloc(SIZE);
+    case CRT_RECALLOC: return calloc(1, SIZE);
+    case HEAP_REALLOC: return HeapAlloc(GetProcessHeap(), 0, SIZE);
+    default: return CoTaskMemAlloc(SIZE);
+    }
+}
+
+void* Reallocate(Api api, void* block, size_t size)
+{
+    switch (api)
+    {
+    case CRT_REALLOC: return realloc(block, size);
+    case CRT_RECALLOC: return _recalloc(block, 1, size);
+    case HEAP_REALLOC: return HeapReAlloc(GetProcessHeap(), 0, block, size);
+    default: return CoTaskMemRealloc(block, size);
+    }
+}
+
+void Free(Api api, void* block)
+{
+    switch (api)
+    {
+    case CRT_REALLOC:
+    case CRT_RECALLOC: free(block); break;
+    case HEAP_REALLOC: HeapFree(GetProcessHeap(), 0, block); break;
+    default: CoTaskMemFree(block); break;
+    }
+}
+
 DWORD WINAPI Mover(LPVOID p)
 {
     chaos::Random random((unsigned)(INT_PTR)p * 31 + 7);
     while (!InterlockedCompareExchange(&g_stop, 0, 0))
     {
+        Api api = (Api)random.Below(API_COUNT);
         bool untracked = random.Below(2) == 0;
         if (untracked)
             VLDDisable();
-        void* block = malloc(SIZE);
+        void* block = Allocate(api);
         if (untracked)
             VLDRestore();
         else
             VLDDisable();
-        block = realloc(block, 4096 + random.Below(4096));
+        void* moved = Reallocate(api, block, 4096 + random.Below(4096));
         if (!untracked)
             VLDRestore();
-        free(block);
+        Free(api, moved != NULL ? moved : block);
     }
     return 0;
 }
