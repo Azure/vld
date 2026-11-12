@@ -2877,9 +2877,6 @@ VOID VisualLeakDetector::loadModuleSymbols (const Set<UINT_PTR>& pages)
 // must not load symbols on it (see CallStack::isSymbolLoadPending).
 static volatile LONG g_noSymbolLoadThreadId = 0;
 
-extern "C" bool VldSymbolLoadForbidden(void)
-{
-    return static_cast<DWORD>(InterlockedCompareExchange(&g_noSymbolLoadThreadId, 0, 0)) == GetCurrentThreadId();
 // While a thread walks the heap and block maps under g_heapMapLock, code it
 // runs can free or reallocate tracked blocks or destroy heaps on the same
 // thread: report hooks and dbghelp callbacks. Erasing map entries would break
@@ -2930,6 +2927,9 @@ VOID VisualLeakDetector::endBlockWalk ()
     }
 }
 
+extern "C" bool VldSymbolLoadForbidden(void)
+{
+    return static_cast<DWORD>(InterlockedCompareExchange(&g_noSymbolLoadThreadId, 0, 0)) == GetCurrentThreadId();
 }
 
 // Holds g_heapMapLock, entered once the symbols of every module in the
@@ -2968,24 +2968,24 @@ public:
         }
         m_previousNoSymbolLoadThreadId =
             InterlockedExchange(&g_noSymbolLoadThreadId, static_cast<LONG>(GetCurrentThreadId()));
+        m_vld.beginBlockWalk();
     }
 
     ~LeakSymbolsHeapMapLock()
-        m_vld.beginBlockWalk();
     {
+        m_vld.endBlockWalk();
         InterlockedExchange(&g_noSymbolLoadThreadId, m_previousNoSymbolLoadThreadId);
         if (!m_nested) {
             g_heapMapLock.Leave();
-        m_vld.endBlockWalk();
             g_leakQueryLock.Leave();
         }
     }
 
 private:
+    VisualLeakDetector& m_vld;
     const bool m_nested;
     LONG m_previousNoSymbolLoadThreadId;
     LeakSymbolsHeapMapLock(const LeakSymbolsHeapMapLock&);
-    VisualLeakDetector& m_vld;
     LeakSymbolsHeapMapLock& operator=(const LeakSymbolsHeapMapLock&);
 };
 
