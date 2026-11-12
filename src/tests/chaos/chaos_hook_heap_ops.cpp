@@ -1,7 +1,7 @@
 // chaos_hook_heap_ops.cpp - a report hook that reallocates, destroys and
-// creates heaps and reports again while VLD walks its maps.
+// creates heaps and reports again while VLD reports.
 //
-// The hook runs with g_heapMapLock held in the middle of the walk. It moves a
+// The hook runs right after VLD walks its maps for the report. It moves a
 // tracked block with realloc, destroys a private heap that still holds
 // blocks, creates a new heap right away (which sometimes gets the destroyed
 // heap's handle) and allocates from it, and nests a second report.

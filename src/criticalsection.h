@@ -43,6 +43,12 @@ public:
 		return (DWORD)(ULONG_PTR)m_critRegion.OwningThread == GetCurrentThreadId();
 	}
 
+	// True if the next Leave releases the section.
+	bool IsOwnedOnceByCurrentThread()
+	{
+		return IsOwnedByCurrentThread() && m_critRegion.RecursionCount == 1;
+	}
+
 	// try enter the section
 	bool TryEnter()
 	{

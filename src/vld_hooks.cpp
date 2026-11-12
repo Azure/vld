@@ -39,7 +39,7 @@
 #include "loaderlock.h"
 
 extern HANDLE           g_currentProcess;
-extern CriticalSection  g_heapMapLock;
+extern HeapMapLock  g_heapMapLock;
 extern DbgHelp g_DbgHelp;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -65,7 +65,7 @@ HANDLE VisualLeakDetector::_GetProcessHeap()
     // Get the process heap.
     HANDLE heap = m_GetProcessHeap();
 
-    CriticalSectionLocker<> cs(g_heapMapLock);
+    CriticalSectionLocker<HeapMapLock> cs(g_heapMapLock);
     HeapMap::Iterator heapit = g_vld.m_heapMap->find(heap);
     if (heapit == g_vld.m_heapMap->end())
     {
@@ -96,7 +96,7 @@ HANDLE VisualLeakDetector::_HeapCreate (DWORD options, SIZE_T initsize, SIZE_T m
     // Create the heap.
     HANDLE heap = m_HeapCreate(options, initsize, maxsize);
 
-    CriticalSectionLocker<> cs(g_heapMapLock);
+    CriticalSectionLocker<HeapMapLock> cs(g_heapMapLock);
 
     // Map the created heap handle to a new block map.
     g_vld.mapHeap(heap);

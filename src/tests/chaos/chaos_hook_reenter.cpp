@@ -1,11 +1,10 @@
 // chaos_hook_reenter.cpp - a report hook that allocates, frees and queries VLD
-// while VLD is walking its block maps to print the report.
+// while VLD reports.
 //
-// Report hooks run on the reporting thread with g_heapMapLock held, in the
-// middle of the walk over a heap's blocks. A hook that formats a string
-// allocates and frees (inserting into and erasing from the map being
-// walked); one that frees a tracked block erases another entry. Neither may
-// crash VLD or corrupt its counts.
+// Report hooks run on the reporting thread right after VLD walks its block
+// maps for the report. A hook that formats a string allocates and frees; one
+// that frees a tracked block erases a map entry. Neither may crash VLD or
+// corrupt its counts.
 
 #include "chaos_common.h"
 #include <string>

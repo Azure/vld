@@ -39,7 +39,7 @@
 // Imported global variables.
 extern HANDLE             g_currentProcess;
 extern HANDLE             g_currentThread;
-extern CriticalSection    g_heapMapLock;
+extern HeapMapLock    g_heapMapLock;
 extern VisualLeakDetector g_vld;
 extern DbgHelp g_DbgHelp;
 

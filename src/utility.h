@@ -32,6 +32,7 @@ Applications should never include this header."
 #include <cstdio>
 #include <windows.h>
 #include <intrin.h>
+#include "criticalsection.h"
 
 #ifdef _WIN64
 #define ADDRESSFORMAT       L"0x%.16X"   // Format string for 64-bit addresses
@@ -181,6 +182,35 @@ BOOL PatchImport (HMODULE importmodule, moduleentry_t *module);
 BOOL PatchModule (HMODULE importmodule, moduleentry_t patchtable [], UINT tablesize);
 VOID Print (LPWSTR message);
 VOID Report (LPCWSTR format, ...);
+
+// Report output that a thread produces while it owns g_heapMapLock; see Print.
+struct deferredreport_t;
+deferredreport_t* TakeDeferredReport ();
+VOID PrintDeferredReport (deferredreport_t* report);
+
+// The lock of VLD's heap and block maps, which every allocation hook takes.
+// Printing can allocate from the process heap (report hooks, the CRT,
+// OutputDebugStringW), which an application thread can hold with HeapLock
+// while its allocation waits for this lock. So output produced under the lock
+// is queued and printed once the outermost hold is released.
+class HeapMapLock
+{
+public:
+    void Initialize () { m_lock.Initialize(); }
+    void Delete () { m_lock.Delete(); }
+    void Enter () { m_lock.Enter(); }
+    bool IsOwnedByCurrentThread () { return m_lock.IsOwnedByCurrentThread(); }
+    void Leave ()
+    {
+        deferredreport_t* report = m_lock.IsOwnedOnceByCurrentThread() ? TakeDeferredReport() : NULL;
+        m_lock.Leave();
+        if (report != NULL)
+            PrintDeferredReport(report);
+    }
+
+private:
+    CriticalSection m_lock;
+};
 #ifndef NDEBUG
 #define DbgPrint(x)     Print(x)
 #define DbgReport(...)  Report(__VA_ARGS__)

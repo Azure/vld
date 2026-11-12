@@ -34,6 +34,7 @@
 // Imported Global Variables
 extern ReportHookSet*   g_pReportHooks;
 extern CriticalSection  g_reportHooksLock;
+extern HeapMapLock      g_heapMapLock;
 extern VisualLeakDetector g_vld;
 extern ImageDirectoryEntries g_Ide;
 #if defined(_M_ARM64)
@@ -1242,11 +1243,8 @@ int CallReportHook(int reportType, LPWSTR message, int* hook_retval)
 //
 //    None.
 //
-VOID Print (LPWSTR messagew)
+static VOID PrintNow (LPWSTR messagew)
 {
-    if (NULL == messagew)
-        return;
-
     int hook_retval=0;
     if (!CallReportHook(0, messagew, &hook_retval))
     {
@@ -1293,6 +1291,81 @@ VOID Print (LPWSTR messagew)
     if (s_reportToDebugger && (s_reportDelay)) {
         Sleep(10); // Workaround the Visual Studio 6 bug where debug strings are sometimes lost if they're sent too fast.
     }
+}
+
+// Messages queued by Print, each followed by its terminating null. Accessed
+// only by the thread that owns g_heapMapLock.
+struct deferredreport_t {
+    WCHAR* text;
+    size_t length;
+    size_t capacity;
+};
+static deferredreport_t* s_deferredReport = NULL;
+
+static VOID DeferPrint (LPCWSTR messagew)
+{
+    size_t length = wcslen(messagew) + 1;
+    deferredreport_t* report = s_deferredReport;
+    if (report == NULL) {
+        report = new deferredreport_t;
+        report->text = NULL;
+        report->length = 0;
+        report->capacity = 0;
+        s_deferredReport = report;
+    }
+    if (report->length + length > report->capacity) {
+        size_t capacity = max(report->capacity * 2, report->length + length + 4096);
+        WCHAR* text = new WCHAR[capacity];
+        if (report->length > 0)
+            memcpy(text, report->text, report->length * sizeof(WCHAR));
+        delete [] report->text;
+        report->text = text;
+        report->capacity = capacity;
+    }
+    memcpy(report->text + report->length, messagew, length * sizeof(WCHAR));
+    report->length += length;
+}
+
+// TakeDeferredReport - Takes the queued messages. Call with g_heapMapLock held.
+deferredreport_t* TakeDeferredReport ()
+{
+    deferredreport_t* report = s_deferredReport;
+    s_deferredReport = NULL;
+    return report;
+}
+
+// PrintDeferredReport - Prints and frees messages from TakeDeferredReport.
+//   Call without g_heapMapLock held.
+VOID PrintDeferredReport (deferredreport_t* report)
+{
+    for (size_t offset = 0; offset < report->length; ) {
+        LPWSTR messagew = report->text + offset;
+        offset += wcslen(messagew) + 1;
+        Print(messagew);
+    }
+    delete [] report->text;
+    delete report;
+}
+
+// Print - Sends a message to the report hooks, the debugger, stdout and/or the
+//   report file. A thread that owns g_heapMapLock queues it instead, to be
+//   printed when it releases the lock (see HeapMapLock).
+//
+//  - messagew (IN): The message.
+//
+//  Return Value:
+//
+//    None.
+//
+VOID Print (LPWSTR messagew)
+{
+    if (NULL == messagew)
+        return;
+    if (g_heapMapLock.IsOwnedByCurrentThread()) {
+        DeferPrint(messagew);
+        return;
+    }
+    PrintNow(messagew);
 }
 
 // Report - Sends a printf-style formatted message to the debugger for display
