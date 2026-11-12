@@ -2478,10 +2478,13 @@ NTSTATUS VisualLeakDetector::_LdrUnloadDll(IN PVOID BaseAddress)
 
 VOID VisualLeakDetector::RefreshModules()
 {
-    LoaderLock ll;
-
     if (m_options & VLD_OPT_VLDOFF)
         return;
+
+    // g_DbgHelp before the loader lock: a thread holding g_DbgHelp can be
+    // loading a DLL for dbghelp, waiting for the thread that owns the loader.
+    CriticalSectionLocker<DbgHelp> dbgLocker(g_DbgHelp);
+    LoaderLock ll;
 
     ModuleSet* newmodules = new ModuleSet();
     newmodules->reserve(MODULE_SET_RESERVE);
