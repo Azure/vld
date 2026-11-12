@@ -1422,11 +1422,14 @@ BOOL VisualLeakDetector::enabled ()
 //  - element (IN): BlockMap Iterator referencing the block of which to search
 //      for duplicates.
 //
+//  - threadId (IN): Only blocks allocated by this thread count, or all blocks
+//      if (DWORD)-1.
+//
 //  Return Value:
 //
 //    Returns the number of duplicate blocks erased from the block map.
 //
-SIZE_T VisualLeakDetector::eraseDuplicates (const BlockMap::Iterator &element, Set<blockinfo_t*> &aggregatedLeaks)
+SIZE_T VisualLeakDetector::eraseDuplicates (const BlockMap::Iterator &element, Set<blockinfo_t*> &aggregatedLeaks, DWORD threadId)
 {
     blockinfo_t *elementinfo = (*element).second;
 
@@ -1446,7 +1449,9 @@ SIZE_T VisualLeakDetector::eraseDuplicates (const BlockMap::Iterator &element, S
                 continue;
             }
             blockinfo_t *info = (*blockit).second;
-            if (info->callStack == NULL)
+            if (info->callStack == NULL || info->reported)
+                continue;
+            if (threadId != ((DWORD)-1) && info->threadId != threadId)
                 continue;
             Set<blockinfo_t*>::Iterator it = aggregatedLeaks.find(info);
             if (it != aggregatedLeaks.end())
@@ -2079,7 +2084,7 @@ SIZE_T VisualLeakDetector::reportLeaks (heapinfo_t* heapinfo, bool &firstLeak, S
         if (m_options & VLD_OPT_AGGREGATE_DUPLICATES) {
             // Aggregate all other leaks which are duplicates of this one
             // under this same heading, to cut down on clutter.
-            SIZE_T erased = eraseDuplicates(blockit, aggregatedLeaks);
+            SIZE_T erased = eraseDuplicates(blockit, aggregatedLeaks, threadId);
 
             // add only the number that were erased, since the 'one left over'
             // is already recorded as a leak

@@ -335,7 +335,7 @@ private:
     BOOL GetIniFilePath(LPTSTR lpPath, SIZE_T cchPath);
     VOID   configure ();
     BOOL   enabled ();
-    SIZE_T eraseDuplicates (const BlockMap::Iterator &element, Set<blockinfo_t*> &aggregatedLeak);
+    SIZE_T eraseDuplicates (const BlockMap::Iterator &element, Set<blockinfo_t*> &aggregatedLeak, DWORD threadId);
     tls_t* getTls ();
     VOID   mapBlock (HANDLE heap, LPCVOID mem, SIZE_T size, bool crtalloc, bool ucrt, DWORD threadId, blockinfo_t* &pblockInfo);
     VOID   mapHeap (HANDLE heap);
