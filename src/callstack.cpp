@@ -66,8 +66,10 @@ struct cachedsymbol_t {
 };
 typedef Map<UINT_PTR, cachedsymbol_t*> SymbolCache;
 static SymbolCache* g_symbolCache = NULL;
-// Guards g_symbolCache. Held only for map operations and copies, never while
-// another lock is taken.
+// Counts clears, so that symbols looked up before a clear are not cached.
+static ULONG g_symbolCacheGeneration = 0;
+// Guards g_symbolCache and g_symbolCacheGeneration. Held only for map
+// operations and copies, never while another lock is taken.
 CriticalSection g_symbolCacheLock;
 
 static WCHAR* duplicateString(LPCWSTR source)
@@ -97,10 +99,12 @@ VOID CallStack::cacheSymbols (const Set<UINT_PTR>& programCounters)
     BYTE symbolBuffer[sizeof(SYMBOL_INFO) + MAX_SYMBOL_NAME_SIZE];
     for (Set<UINT_PTR>::Iterator it = programCounters.begin(); it != programCounters.end(); ++it) {
         UINT_PTR programCounter = *it;
+        ULONG generation;
         {
             CriticalSectionLocker<> cs(g_symbolCacheLock);
             if (g_symbolCache != NULL && g_symbolCache->find(programCounter) != g_symbolCache->end())
                 continue;
+            generation = g_symbolCacheGeneration;
         }
 
         cachedsymbol_t* symbol = new cachedsymbol_t;
@@ -125,11 +129,13 @@ VOID CallStack::cacheSymbols (const Set<UINT_PTR>& programCounters)
         }
 
         CriticalSectionLocker<> cs(g_symbolCacheLock);
-        if (g_symbolCache == NULL)
-            g_symbolCache = new SymbolCache;
-        if (g_symbolCache->find(programCounter) == g_symbolCache->end()) {
-            g_symbolCache->insert(programCounter, symbol);
-            continue;
+        if (generation == g_symbolCacheGeneration) {
+            if (g_symbolCache == NULL)
+                g_symbolCache = new SymbolCache;
+            if (g_symbolCache->find(programCounter) == g_symbolCache->end()) {
+                g_symbolCache->insert(programCounter, symbol);
+                continue;
+            }
         }
         cs.Leave();
         delete [] symbol->functionName;
@@ -170,6 +176,7 @@ VOID CallStack::clearSymbolCache ()
         CriticalSectionLocker<> cs(g_symbolCacheLock);
         cache = g_symbolCache;
         g_symbolCache = NULL;
+        g_symbolCacheGeneration++;
     }
     if (cache == NULL)
         return;
@@ -1001,6 +1008,9 @@ static const ULONGLONG DBGHELP_WAIT_MS = 100;
 //
 bool CallStack::enterDbgHelp ()
 {
+    // StackWalk64 can allocate from the process heap.
+    if (g_heapMapLock.IsOwnedByCurrentThread())
+        return false;
     tls_t* tls = g_vld.getTls();
     bool entered = g_DbgHelp.TryEnter();
     if (!entered && (tls->flags & VLD_TLS_DBGHELP_TIMEDOUT) == 0) {

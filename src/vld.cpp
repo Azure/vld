@@ -834,6 +834,7 @@ VisualLeakDetector::~VisualLeakDetector ()
         }
         delete reportHooks;
 
+        CallStack::clearSymbolCache();
         checkInternalMemoryLeaks();
     }
     else {
@@ -2906,6 +2907,10 @@ VOID VisualLeakDetector::UnregisterLoadedModule(HMODULE module, ULONG sizeOfImag
             break;
         m_loadedModules->erase(it);
     }
+    cs.Leave();
+
+    // Cached symbols of the module could name code loaded at its addresses later.
+    CallStack::clearSymbolCache();
 }
 
 // Find the information for the module that initiated this reallocation.
