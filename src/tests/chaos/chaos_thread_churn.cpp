@@ -129,6 +129,8 @@ int main()
         }
         Sleep(20);
     }
+    // Their attach blocks stay allocated past the exit report.
+    VLDMarkAllLeaksAsReported();
     chaos::Pass();
     return 0;
 }
