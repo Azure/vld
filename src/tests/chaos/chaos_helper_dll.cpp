@@ -12,6 +12,7 @@ static volatile LONG g_armed = 0;
 static volatile LONG g_inThreadAttachAlloc = 0;
 static HANDLE g_inThreadAttach = NULL;
 static volatile LONG g_threadChurn = 0;
+static volatile LONG g_threadChurnLive = 0;
 static DWORD g_tlsIndex = TLS_OUT_OF_INDEXES;
 
 #pragma optimize("", off)
@@ -51,6 +52,12 @@ extern "C" __declspec(dllexport) void SetThreadChurn(LONG enabled)
     InterlockedExchange(&g_threadChurn, enabled);
 }
 
+// Blocks allocated in thread attach whose threads have not detached yet.
+extern "C" __declspec(dllexport) LONG ThreadChurnLiveBlocks()
+{
+    return InterlockedCompareExchange(&g_threadChurnLive, 0, 0);
+}
+
 BOOL APIENTRY DllMain(HMODULE, DWORD reason, LPVOID)
 {
     switch (reason)
@@ -75,13 +82,23 @@ BOOL APIENTRY DllMain(HMODULE, DWORD reason, LPVOID)
         }
         if (InterlockedCompareExchange(&g_threadChurn, 0, 0) != 0 && g_tlsIndex != TLS_OUT_OF_INDEXES)
         {
-            TlsSetValue(g_tlsIndex, malloc(48));
+            void* block = malloc(48);
+            if (block != NULL)
+            {
+                InterlockedIncrement(&g_threadChurnLive);
+            }
+            TlsSetValue(g_tlsIndex, block);
         }
         break;
     case DLL_THREAD_DETACH:
         if (g_tlsIndex != TLS_OUT_OF_INDEXES)
         {
-            free(TlsGetValue(g_tlsIndex));
+            void* block = TlsGetValue(g_tlsIndex);
+            if (block != NULL)
+            {
+                free(block);
+                InterlockedDecrement(&g_threadChurnLive);
+            }
             TlsSetValue(g_tlsIndex, NULL);
         }
         break;
