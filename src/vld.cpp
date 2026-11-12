@@ -2081,6 +2081,14 @@ bool VisualLeakDetector::isDebugCrtAlloc( LPCVOID block, blockinfo_t* info )
         }
     }
 
+    // A guessed block without a consistent header is a heap block that was
+    // allocated while a CRT allocation was in progress. A block that cannot
+    // be read is being freed, which getCrtBlockUse reports for CRT blocks.
+    if (info->debugCrtAlloc && info->crtGuessed) {
+        BYTE first;
+        if (readTrackedBlock(&first, block, sizeof(first)) && !hasCrtHeader(block, info->size, info->ucrt))
+            return false;
+    }
     return info->debugCrtAlloc;
 }
 
