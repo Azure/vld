@@ -42,6 +42,8 @@ class TestGetAddrInfoMissingFree : public ::testing::Test
 //      loaded, this should produce 0 new leaks.
 //   3. Test: call getaddrinfo WITHOUT freeaddrinfo. VLD should track the
 //      unreleased addrinfo allocation, producing more leaks than baseline.
+// Only this thread's leaks count: the DNS client allocates on threads of its
+// own at any time.
 TEST_F(TestGetAddrInfoMissingFree, MissingFreeAddrInfoProducesMoreLeaks)
 {
     // Step 1: warm up - trigger system DLL loading and mark those leaks.
@@ -71,7 +73,7 @@ TEST_F(TestGetAddrInfoMissingFree, MissingFreeAddrInfoProducesMoreLeaks)
         ASSERT_EQ(0, rc);
         ASSERT_NE(static_cast<struct addrinfo*>(NULL), result);
         freeaddrinfo(result);
-        leaks_with_free = static_cast<int>(VLDGetLeaksCount());
+        leaks_with_free = static_cast<int>(VLDGetThreadLeaksCount(GetCurrentThreadId()));
     }
     VLDMarkAllLeaksAsReported();
 
@@ -88,7 +90,7 @@ TEST_F(TestGetAddrInfoMissingFree, MissingFreeAddrInfoProducesMoreLeaks)
         ASSERT_EQ(0, rc);
         ASSERT_NE(static_cast<struct addrinfo*>(NULL), leaked_result);
         // Intentionally NOT calling freeaddrinfo(leaked_result).
-        leaks_without_free = static_cast<int>(VLDGetLeaksCount());
+        leaks_without_free = static_cast<int>(VLDGetThreadLeaksCount(GetCurrentThreadId()));
     }
 
     EXPECT_GT(leaks_without_free, leaks_with_free)
