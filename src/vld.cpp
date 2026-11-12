@@ -1691,12 +1691,18 @@ VOID VisualLeakDetector::unmapBlock (HANDLE heap, LPCVOID mem, const context_t &
         return;
 
     // A block allocated by an allocation nested in another one is mapped only
-    // when the outer one records its own block (CaptureContext::Set); a free
-    // before that leaves nothing to map.
+    // when the outer one records its own block (CaptureContext::Set); freeing
+    // it before that leaves nothing to map, except the old address of a
+    // recorded move, which is gone too.
     tls_t* tls = getTls();
-    if (tls->blockWithoutGuard == mem && tls->heap == heap && tls->newBlockWithoutGuard == NULL) {
+    if (tls->blockWithoutGuard != NULL && tls->heap == heap &&
+        (tls->newBlockWithoutGuard != NULL ? tls->newBlockWithoutGuard : tls->blockWithoutGuard) == mem) {
+        if (tls->newBlockWithoutGuard != NULL && tls->newBlockWithoutGuard != tls->blockWithoutGuard)
+            unmapMovedBlock(heap, tls->blockWithoutGuard, tls->blockSerial, context);
         tls->blockWithoutGuard = NULL;
+        tls->newBlockWithoutGuard = NULL;
         tls->size = 0;
+        tls->blockSerial = 0;
     }
 
     // Find this heap's block map.
@@ -2025,6 +2031,23 @@ static bool hasCrtNoMansLand (LPCVOID block, const unsigned char* gap, SIZE_T he
             return false;
     }
     return true;
+}
+
+// hasCrtHeader - Checks that a heap block of the given size holds a debug CRT
+//   block: a header whose data size accounts for the whole block, and the
+//   no-man's land on both sides of the data.
+bool VisualLeakDetector::hasCrtHeader (LPCVOID block, SIZE_T size, bool ucrt)
+{
+    if (!ucrt) {
+        crtdbgblockheader_t crtheader;
+        return size >= sizeof(crtheader) && readTrackedBlock(&crtheader, block, sizeof(crtheader)) &&
+            sizeof(crtheader) + crtheader.size + GAPSIZE == size &&
+            hasCrtNoMansLand(block, crtheader.gap, sizeof(crtheader), crtheader.size);
+    }
+    crtdbgblockheaderucrt_t crtheader;
+    return size >= sizeof(crtheader) && readTrackedBlock(&crtheader, block, sizeof(crtheader)) &&
+        sizeof(crtheader) + crtheader.size + GAPSIZE == size &&
+        hasCrtNoMansLand(block, crtheader.gap, sizeof(crtheader), crtheader.size);
 }
 
 bool VisualLeakDetector::isDebugCrtAlloc( LPCVOID block, blockinfo_t* info )
@@ -3807,15 +3830,18 @@ CaptureContext::~CaptureContext() {
 #endif
 
     BOOL excluded = IsExcludedModule();
-    Commit(excluded);
+    Commit(excluded, false);
 
     // Reset thread local flags and variables for the next allocation.
     Reset();
 }
 
 // Commit - Maps the block that the hooks recorded in the thread's state, under
-//   the call stack of the first call that entered VLD.
-void CaptureContext::Commit(BOOL excluded) {
+//   the call stack of the first call that entered VLD. The thread's CRT flags
+//   come from the first call, and need not describe a block allocated by an
+//   allocation nested in it (or by a CRT hook after the CRT vetoed its own
+//   allocation), so a block without a debug CRT header only guesses them.
+void CaptureContext::Commit(BOOL excluded, bool nested) {
     if ((m_tls->blockWithoutGuard) && (!excluded)) {
         blockinfo_t* pblockInfo = NULL;
         CallStack* callstack = CallStack::Create();
@@ -3844,6 +3870,10 @@ void CaptureContext::Commit(BOOL excluded) {
         }
 
         pblockInfo->callStack.reset(callstack);
+        if (pblockInfo->debugCrtAlloc &&
+            (nested || !g_vld.hasCrtHeader(m_tls->newBlockWithoutGuard != NULL ? m_tls->newBlockWithoutGuard : m_tls->blockWithoutGuard,
+                m_tls->size, pblockInfo->ucrt)))
+            pblockInfo->crtGuessed = true;
     }
     else if (excluded && m_tls->newBlockWithoutGuard != NULL && m_tls->newBlockWithoutGuard != m_tls->blockWithoutGuard) {
         // An excluded module moved a tracked block; the heap can hand the old
@@ -3853,12 +3883,23 @@ void CaptureContext::Commit(BOOL excluded) {
 }
 
 void CaptureContext::Set(HANDLE heap, LPVOID mem, LPVOID newmem, SIZE_T size, SIZE_T serial) {
-    // A block recorded earlier in this allocation belongs to an allocation
-    // nested in it (a CRT allocation hook, or an allocator that allocates),
-    // which has returned: map it before it is overwritten.
     if (m_tls->blockWithoutGuard != NULL && mem != NULL &&
         (m_tls->heap != heap || m_tls->blockWithoutGuard != mem || m_tls->newBlockWithoutGuard != newmem)) {
-        Commit(IsExcludedModule(m_tls->context.fp));
+        LPVOID pending = m_tls->newBlockWithoutGuard != NULL ? m_tls->newBlockWithoutGuard : m_tls->blockWithoutGuard;
+        if (newmem != NULL && heap == m_tls->heap && mem == pending) {
+            // A reallocation of the block recorded but not mapped yet moves
+            // that block; the address it leaves was never mapped.
+            if (m_tls->newBlockWithoutGuard != NULL)
+                m_tls->newBlockWithoutGuard = newmem;
+            else
+                m_tls->blockWithoutGuard = newmem;
+            m_tls->size = size;
+            return;
+        }
+        // The block recorded earlier belongs to an allocation nested in this
+        // one (a CRT allocation hook, or an allocator that allocates), which
+        // has returned: map it before it is overwritten.
+        Commit(IsExcludedModule(m_tls->context.fp), true);
     }
     m_tls->heap = heap;
     m_tls->blockWithoutGuard = mem;

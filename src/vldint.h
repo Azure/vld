@@ -240,7 +240,7 @@ private:
     BOOL IsExcludedModule(UINT_PTR fp);
     BOOL IsCrtModuleWithNoReporting(HMODULE hModule);
     BOOL ShouldReportLeaksForModule(HMODULE hModule);
-    void Commit(BOOL excluded);
+    void Commit(BOOL excluded, bool nested);
     void Reset();
 private:
     tls_t *m_tls;
@@ -360,6 +360,7 @@ public:
 private:
     VOID   reportConfig ();
     static bool   isDebugCrtAlloc(LPCVOID block, blockinfo_t* info);
+    static bool   hasCrtHeader (LPCVOID block, SIZE_T size, bool ucrt);
     SIZE_T reportHeapLeaks (HANDLE heap);
     static int    getCrtBlockUse (LPCVOID block, bool ucrt, bool guessed);
     static size_t getCrtBlockSize(LPCVOID block, bool ucrt);
