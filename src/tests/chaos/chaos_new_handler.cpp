@@ -20,12 +20,14 @@ volatile LONG g_leaked = 0;
 volatile LONG g_handled = 0;
 volatile LONG g_thrown = 0;
 __declspec(thread) int t_retries = 0;
+__declspec(thread) bool t_worker = false;
+__declspec(thread) bool t_inHandler = false;
 
 // More than the address space, but small enough that the CRT tries the heap.
 #ifdef _WIN64
-const size_t HUGE_SIZE = (size_t)1 << 50;
+volatile size_t g_hugeSize = (size_t)1 << 50;
 #else
-const size_t HUGE_SIZE = 0x7FFF0000;
+volatile size_t g_hugeSize = 0xFFF00000;
 #endif
 
 // Tags: 1 handler malloc, 2 handler new[], 3 handler heap block, 4 worker
@@ -38,6 +40,10 @@ void Leak(void* block, LONG tag)
 
 int __cdecl NewHandler(size_t)
 {
+    // The handler's own allocations can fail and call it again.
+    if (!t_worker || t_inHandler)
+        return 0;
+    t_inHandler = true;
     LONG call = InterlockedIncrement(&g_handled);
     void* block = malloc(40);
     if (block != NULL)
@@ -64,6 +70,7 @@ int __cdecl NewHandler(size_t)
         else
             HeapFree(heap, 0, raw);
     }
+    t_inHandler = false;
     if (++t_retries >= 2)
         return 0;
     return 1;
@@ -72,6 +79,7 @@ int __cdecl NewHandler(size_t)
 DWORD WINAPI Worker(LPVOID p)
 {
     chaos::Random random((unsigned)(INT_PTR)p * 37 + 13);
+    t_worker = true;
     for (int round = 0; round < ROUNDS; round++)
     {
         // The handler asks for one retry per failing allocation; operator new
@@ -82,7 +90,7 @@ DWORD WINAPI Worker(LPVOID p)
         case 0:
             try
             {
-                char* never = new char[HUGE_SIZE];
+                char* never = new char[g_hugeSize];
                 chaos::Fail("a huge operator new succeeded");
                 delete[] never;
             }
@@ -92,7 +100,7 @@ DWORD WINAPI Worker(LPVOID p)
             }
             break;
         case 1:
-            chaos::Check(malloc(HUGE_SIZE) == NULL, "a huge malloc succeeded");
+            chaos::Check(malloc(g_hugeSize) == NULL, "a huge malloc succeeded");
             break;
         case 2:
         {
