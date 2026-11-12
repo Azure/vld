@@ -33,6 +33,7 @@
 
 // Imported Global Variables
 extern ReportHookSet*   g_pReportHooks;
+extern CriticalSection  g_reportHooksLock;
 extern VisualLeakDetector g_vld;
 extern ImageDirectoryEntries g_Ide;
 #if defined(_M_ARM64)
@@ -1193,11 +1194,27 @@ BOOL PatchModule (HMODULE importmodule, moduleentry_t patchtable [], UINT tables
 
 int CallReportHook(int reportType, LPWSTR message, int* hook_retval)
 {
+    // Called outside the lock: other threads, or the hook itself, may install
+    // or remove hooks meanwhile.
+    VLD_REPORT_HOOK hooks[MAX_REPORT_HOOKS];
+    size_t count = 0;
+    // Messages printed before VLD creates the hook set (and its lock) or after
+    // it is gone have no hooks.
     if (g_pReportHooks == NULL)
         return 0;
-    for (ReportHookSet::Iterator it = g_pReportHooks->begin(); it != g_pReportHooks->end(); ++it)
     {
-        int result = (*it)(reportType, message, hook_retval);
+        CriticalSectionLocker<> cs(g_reportHooksLock);
+        if (g_pReportHooks == NULL)
+            return 0;
+        for (ReportHookSet::Iterator it = g_pReportHooks->begin();
+            it != g_pReportHooks->end() && count < MAX_REPORT_HOOKS; ++it)
+        {
+            hooks[count++] = *it;
+        }
+    }
+    for (size_t i = 0; i < count; i++)
+    {
+        int result = hooks[i](reportType, message, hook_retval);
         if (result) // handled
             return result;
     }

@@ -161,6 +161,7 @@ struct moduleinfo_t {
 typedef Set<moduleinfo_t> ModuleSet;
 
 typedef Set<VLD_REPORT_HOOK> ReportHookSet;
+#define MAX_REPORT_HOOKS 64
 
 struct functioninfo_t {
     BOOL operator < (const struct functioninfo_t& other) const {

@@ -898,6 +898,7 @@ endif()
 # ============================================================================
 set(VLD_CHAOS_TESTS
     chaos_heapdestroy_deadlock
+    chaos_report_hook_race
 )
 
 function(set_chaos_output_dir TARGET_NAME)

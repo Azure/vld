@@ -53,6 +53,7 @@ HANDLE           g_currentThread;  // Pseudo-handle for the current thread.
 HANDLE           g_processHeap;    // Handle to the process's heap (COM allocations come from here).
 CriticalSection  g_heapMapLock;    // Serializes access to the heap and block maps.
 CriticalSection  g_leakQueryLock;  // Serializes leak counting and reporting (see LeakSymbolsHeapMapLock).
+CriticalSection  g_reportHooksLock; // Serializes access to g_pReportHooks.
 ReportHookSet*   g_pReportHooks;
 DbgHelp g_DbgHelp;
 ImageDirectoryEntries g_Ide;
@@ -424,6 +425,7 @@ VisualLeakDetector::VisualLeakDetector ()
 
     g_heapMapLock.Initialize();
     g_leakQueryLock.Initialize();
+    g_reportHooksLock.Initialize();
     g_vldHeap         = HeapCreate(0x0, 0, 0);
     g_vldHeapLock.Initialize();
     g_pReportHooks    = new ReportHookSet;
@@ -812,8 +814,13 @@ VisualLeakDetector::~VisualLeakDetector ()
         }
         Report(L"Visual Leak Detector is now exiting.\n");
 
-        delete g_pReportHooks;
-        g_pReportHooks = NULL;
+        ReportHookSet* reportHooks;
+        {
+            CriticalSectionLocker<> cs(g_reportHooksLock);
+            reportHooks = g_pReportHooks;
+            g_pReportHooks = NULL;
+        }
+        delete reportHooks;
 
         checkInternalMemoryLeaks();
     }
@@ -831,6 +838,7 @@ VisualLeakDetector::~VisualLeakDetector ()
     m_tlsLock.Delete();
     g_heapMapLock.Delete();
     g_leakQueryLock.Delete();
+    g_reportHooksLock.Delete();
     g_vldHeapLock.Delete();
 
     if (m_tlsIndex != TLS_OUT_OF_INDEXES) {
@@ -3280,9 +3288,20 @@ int VisualLeakDetector::SetReportHook(int mode, VLD_REPORT_HOOK pfnNewHook)
         // VLD has been turned off.
         return -1;
     }
-    CriticalSectionLocker<> cs(m_optionsLock);
+    CriticalSectionLocker<> cs(g_reportHooksLock);
+    if (g_pReportHooks == NULL) {
+        return -1;
+    }
     if (mode == VLD_RPTHOOK_INSTALL)
     {
+        // CallReportHook copies the hooks into a fixed-size array.
+        size_t count = 0;
+        for (ReportHookSet::Iterator it = g_pReportHooks->begin(); it != g_pReportHooks->end(); ++it) {
+            count++;
+        }
+        if (count >= MAX_REPORT_HOOKS && g_pReportHooks->find(pfnNewHook) == g_pReportHooks->end()) {
+            return -1;
+        }
         ReportHookSet::Iterator it = g_pReportHooks->insert(pfnNewHook);
         return (it != g_pReportHooks->end()) ? 0 : -1;
     }
