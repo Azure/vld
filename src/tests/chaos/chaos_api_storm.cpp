@@ -108,7 +108,7 @@ int main()
     SIZE_T base = VLDGetLeaksCount();
 
     chaos::SetPhase("API storm with allocation traffic");
-    chaos::RunThreads(10, Worker);
+    chaos::RunThreads(10, Worker, &g_stop, RUN_MS + 2000);
 
     chaos::SetPhase("tracking after the storm");
     VLDGlobalEnable();

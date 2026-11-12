@@ -106,7 +106,7 @@ int main()
 
     chaos::SetPhase("thread churn with allocating thread attach/detach, DLL loads and leak counts");
     setThreadChurn(1);
-    chaos::RunThreads(8, Worker);
+    chaos::RunThreads(8, Worker, &g_stop, RUN_MS + 2000);
     setThreadChurn(0);
 
     // Threads still alive that attached during the churn (thread pool and

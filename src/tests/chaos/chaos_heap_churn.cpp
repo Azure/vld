@@ -82,7 +82,7 @@ int main()
     VLDSetReportHook(VLD_RPTHOOK_INSTALL, SwallowReport);
 
     chaos::SetPhase("heap create/alloc/destroy churn with leak counts");
-    chaos::RunThreads(9, Worker);
+    chaos::RunThreads(9, Worker, &g_stop, RUN_MS + 2000);
 
     VLDSetReportHook(VLD_RPTHOOK_REMOVE, SwallowReport);
     chaos::SetPhase("final count");

@@ -84,7 +84,7 @@ int main()
     }
 
     chaos::SetPhase("hook install/remove racing VLDReportLeaks");
-    chaos::RunThreads(6, Worker);
+    chaos::RunThreads(6, Worker, &g_stop, RUN_MS + 2000);
 
     chaos::SetPhase("cleanup");
     for (int i = 0; i < 4; i++)

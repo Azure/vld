@@ -170,7 +170,7 @@ int main()
     chaos::SetPhase("heap inspection under allocation traffic");
     g_heap = HeapCreate(0, 0, 32 * 1024 * 1024);
     chaos::Check(g_heap != NULL, "HeapCreate of a fixed-size heap failed");
-    chaos::RunThreads(7, Worker);
+    chaos::RunThreads(7, Worker, &g_stop, RUN_MS + 2000);
     chaos::Check(VLDGetLeaksCount() == base, "allocation traffic with heap inspection left leaks");
     HeapDestroy(g_heap);
     chaos::Pass();

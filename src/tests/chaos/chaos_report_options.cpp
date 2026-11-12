@@ -135,7 +135,7 @@ int main()
     VLDSetReportHook(VLD_RPTHOOK_REMOVE, SwitchingHook);
 
     chaos::SetPhase("switching the destination while threads report");
-    chaos::RunThreads(6, Worker);
+    chaos::RunThreads(6, Worker, &g_stop, RUN_MS + 2000);
 
     chaos::SetPhase("cleanup");
     VLDSetReportOptions(VLD_OPT_REPORT_TO_STDOUT, NULL);

@@ -216,20 +216,63 @@ struct Random
     unsigned int Below(unsigned int n) { return Next() % n; }
 };
 
-inline void RunThreads(int count, LPTHREAD_START_ROUTINE routine)
+struct RunThreadsStart
+{
+    LPTHREAD_START_ROUTINE routine;
+    volatile LONG started;
+    HANDLE go;
+};
+
+struct RunThreadsArg
+{
+    RunThreadsStart* start;
+    INT_PTR index;
+};
+
+inline DWORD WINAPI RunThreadsTrampoline(LPVOID p)
+{
+    RunThreadsArg* arg = (RunThreadsArg*)p;
+    InterlockedIncrement(&arg->start->started);
+    WaitForSingleObject(arg->start->go, INFINITE);
+    return arg->start->routine((LPVOID)arg->index);
+}
+
+inline void RunThreads(int count, LPTHREAD_START_ROUTINE routine, volatile LONG* stop = NULL, DWORD stopAfterMs = INFINITE)
 {
     HANDLE threads[64];
+    RunThreadsArg args[64];
     Check(count <= 64, "too many threads");
+    RunThreadsStart start = { routine, 0, CreateEventW(NULL, TRUE, FALSE, NULL) };
+    Check(start.go != NULL, "CreateEvent failed");
     for (int i = 0; i < count; i++)
     {
-        threads[i] = CreateThread(NULL, 0, routine, (LPVOID)(INT_PTR)i, 0, NULL);
+        args[i].start = &start;
+        args[i].index = i;
+        threads[i] = CreateThread(NULL, 0, RunThreadsTrampoline, &args[i], 0, NULL);
         Check(threads[i] != NULL, "CreateThread failed");
+    }
+    // Starting a thread takes the loader lock, which a worker calling
+    // VLDRefreshModules in a loop can keep for itself; so no worker runs until
+    // all have started.
+    while (InterlockedCompareExchange(&start.started, 0, 0) < count)
+    {
+        Sleep(1);
+    }
+    SetEvent(start.go);
+    // Backstop for a worker that stops the others but cannot get to it; that
+    // worker not having stopped the run by then is a failure.
+    bool stopperLate = false;
+    if (WaitForMultipleObjects(count, threads, TRUE, stopAfterMs) == WAIT_TIMEOUT && stop != NULL)
+    {
+        stopperLate = InterlockedExchange(stop, 1) == 0;
     }
     WaitForMultipleObjects(count, threads, TRUE, INFINITE);
     for (int i = 0; i < count; i++)
     {
         CloseHandle(threads[i]);
     }
+    CloseHandle(start.go);
+    Check(!stopperLate, "the stopping worker did not stop the run in time");
 }
 
 inline void Pass()
