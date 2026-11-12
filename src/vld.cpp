@@ -2448,13 +2448,36 @@ BOOL VisualLeakDetector::detachFromModule (PCWSTR /*modulepath*/, DWORD64 module
 //
 ////////////////////////////////////////////////////////////////////////////////
 
+// exportOrdinal - Returns the ordinal of a module's export named name, or 0.
+//   Reads the export table directly: GetProcAddress can be hooked by VLD
+//   itself, through kernelbase on ARM64.
+//
+static UINT_PTR exportOrdinal (HMODULE module, LPCSTR name)
+{
+    __try {
+        BYTE* base = (BYTE*)module;
+        IMAGE_NT_HEADERS* nt = (IMAGE_NT_HEADERS*)(base + ((IMAGE_DOS_HEADER*)base)->e_lfanew);
+        IMAGE_DATA_DIRECTORY dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+        if (dir.VirtualAddress == 0)
+            return 0;
+        IMAGE_EXPORT_DIRECTORY* exports = (IMAGE_EXPORT_DIRECTORY*)(base + dir.VirtualAddress);
+        DWORD* names = (DWORD*)(base + exports->AddressOfNames);
+        WORD* ordinals = (WORD*)(base + exports->AddressOfNameOrdinals);
+        for (DWORD i = 0; i < exports->NumberOfNames; i++) {
+            if (strcmp((LPCSTR)(base + names[i]), name) == 0)
+                return exports->Base + ordinals[i];
+        }
+    }
+    __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+    }
+    return 0;
+}
+
 // matchesProcName - Checks whether a GetProcAddress request names the import
 //   of a patch table entry. Either can be a name or an ordinal; a name and an
-//   ordinal match when they resolve to the same export.
+//   ordinal match when the name is exported with that ordinal.
 //
-//  - original (IN): Address the real GetProcAddress returned for procname.
-//
-static bool matchesProcName (HMODULE module, const patchentry_t* patchentry, LPCSTR procname, FARPROC original)
+static bool matchesProcName (HMODULE module, const patchentry_t* patchentry, LPCSTR procname)
 {
     bool entryIsOrdinal = HIWORD(patchentry->importName) == 0;
     bool requestIsOrdinal = HIWORD(procname) == 0;
@@ -2462,7 +2485,9 @@ static bool matchesProcName (HMODULE module, const patchentry_t* patchentry, LPC
         return (UINT_PTR)patchentry->importName == (UINT_PTR)procname;
     if (!entryIsOrdinal && !requestIsOrdinal)
         return strcmp(patchentry->importName, procname) == 0;
-    return g_vld._RGetProcAddress(module, patchentry->importName) == original;
+    if (requestIsOrdinal)
+        return exportOrdinal(module, patchentry->importName) == (UINT_PTR)procname;
+    return exportOrdinal(module, procname) == (UINT_PTR)patchentry->importName;
 }
 
 // _GetProcAddress - Calls to GetProcAddress are patched through to this
@@ -2502,7 +2527,7 @@ FARPROC VisualLeakDetector::_GetProcAddress (HMODULE module, LPCSTR procname)
                 // imports name matches the entry's import name (or ordinal), then
                 // return the address of the replacement instead of the address of the
                 // actual import.
-                if (matchesProcName(module, patchentry, procname, original)) {
+                if (matchesProcName(module, patchentry, procname)) {
                     if (patchentry->original != NULL)
                         *patchentry->original = original;
                     return (FARPROC)patchentry->replacement;
@@ -2560,7 +2585,7 @@ FARPROC VisualLeakDetector::_GetProcAddressForCaller(HMODULE module, LPCSTR proc
                 // imports name matches the entry's import name (or ordinal), then
                 // return the address of the replacement instead of the address of the
                 // actual import.
-                if (matchesProcName(module, patchentry, procname, original)) {
+                if (matchesProcName(module, patchentry, procname)) {
                     if (patchentry->original != NULL)
                         *patchentry->original = original;
                     return (FARPROC)patchentry->replacement;
