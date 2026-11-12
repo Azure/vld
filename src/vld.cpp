@@ -2209,8 +2209,9 @@ SIZE_T VisualLeakDetector::reportLeaks (heapinfo_t* heapinfo, bool &firstLeak, S
         if (dumpSize != 0) {
             dumpData = new BYTE[dumpSize];
             if (!readTrackedBlock(dumpData, address, dumpSize)) {
+                // A live block can have pages the application made inaccessible.
                 delete [] dumpData;
-                continue;
+                dumpData = NULL;
             }
         }
 
@@ -2251,7 +2252,10 @@ SIZE_T VisualLeakDetector::reportLeaks (heapinfo_t* heapinfo, bool &firstLeak, S
             info->callStack->dump(m_options & VLD_OPT_TRACE_INTERNAL_FRAMES);
 
         // Dump the data in the user data section of the memory block.
-        if (m_maxDataDump != 0) {
+        if (m_maxDataDump != 0 && dumpData == NULL && dumpSize != 0) {
+            Report(L"  Data: (not readable)\n");
+        }
+        else if (m_maxDataDump != 0) {
             Report(L"  Data:\n");
             if (m_options & VLD_OPT_UNICODE_REPORT) {
                 DumpMemoryW(dumpData, dumpSize);
