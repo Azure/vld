@@ -116,6 +116,7 @@ struct blockinfo_t {
     bool       reported;
     bool       debugCrtAlloc;
     bool       ucrt;
+    bool       crtGuessed;     // debugCrtAlloc was guessed from the block's first bytes.
 };
 
 // BlockMaps map memory blocks (via their addresses) to blockinfo_t structures.
@@ -357,7 +358,7 @@ private:
     VOID   reportConfig ();
     static bool   isDebugCrtAlloc(LPCVOID block, blockinfo_t* info);
     SIZE_T reportHeapLeaks (HANDLE heap);
-    static int    getCrtBlockUse (LPCVOID block, bool ucrt);
+    static int    getCrtBlockUse (LPCVOID block, bool ucrt, bool guessed);
     static size_t getCrtBlockSize(LPCVOID block, bool ucrt);
     SIZE_T getLeaksCount (heapinfo_t* heapinfo, DWORD threadId = (DWORD)-1);
     VOID   collectLeakPages (Set<UINT_PTR>& pages, DWORD threadId, HANDLE heap = NULL);

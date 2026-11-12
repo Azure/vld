@@ -1581,6 +1581,7 @@ VOID VisualLeakDetector::mapBlock (HANDLE heap, LPCVOID mem, SIZE_T size, bool d
     blockinfo->size = size;
     blockinfo->reported = false;
     blockinfo->debugCrtAlloc = debugcrtalloc;
+    blockinfo->crtGuessed = false;
     blockinfo->ucrt = ucrt;
 
     if (SIZE_MAX - m_totalAlloc > size)
@@ -2023,6 +2024,7 @@ bool VisualLeakDetector::isDebugCrtAlloc( LPCVOID block, blockinfo_t* info )
             int nValid = _CrtIsValidPointer(block, (unsigned int)info->size, TRUE);
             if (_BLOCK_TYPE_IS_VALID(crtheader.use) && nValid && (nSize == info->size)) {
                 info->debugCrtAlloc = true;
+                info->crtGuessed = true;
                 info->ucrt = false;
             }
         }
@@ -2036,6 +2038,7 @@ bool VisualLeakDetector::isDebugCrtAlloc( LPCVOID block, blockinfo_t* info )
             int nValid = _CrtIsValidPointer(block, (unsigned int)info->size, TRUE);
             if (_BLOCK_TYPE_IS_VALID(crtheader.use) && nValid && (nSize == info->size)) {
                 info->debugCrtAlloc = true;
+                info->crtGuessed = true;
                 info->ucrt = true;
             }
         }
@@ -2073,7 +2076,7 @@ SIZE_T VisualLeakDetector::getLeaksCount (heapinfo_t* heapinfo, DWORD threadId)
         if (isDebugCrtAlloc(block, info)) {
             // This block is allocated to a CRT heap, so the block has a CRT
             // memory block header pretended to it.
-            int blockUse = getCrtBlockUse(block, info->ucrt);
+            int blockUse = getCrtBlockUse(block, info->ucrt, info->crtGuessed);
             // Leaks identified as CRT_USE_IGNORE should not be ignored here otherwise
             // DynamicLoader/Thread test will randomly fail with less leaks being reported.
             if (CRT_USE_TYPE(blockUse) == CRT_USE_FREE ||
@@ -2097,7 +2100,7 @@ SIZE_T VisualLeakDetector::getLeaksCount (heapinfo_t* heapinfo, DWORD threadId)
     return memoryleaks;
 }
 
-int VisualLeakDetector::getCrtBlockUse(LPCVOID block, bool ucrt)
+int VisualLeakDetector::getCrtBlockUse(LPCVOID block, bool ucrt, bool guessed)
 {
     // A block that can no longer be read is being freed.
     int use;
@@ -2107,7 +2110,7 @@ int VisualLeakDetector::getCrtBlockUse(LPCVOID block, bool ucrt)
         if (!readTrackedBlock(&crtheader, block, sizeof(crtheader)))
             return CRT_USE_FREE;
         use = crtheader.use;
-        if (CRT_USE_TYPE(use) == CRT_USE_FREE || CRT_USE_TYPE(use) == CRT_USE_INTERNAL) {
+        if (guessed && (CRT_USE_TYPE(use) == CRT_USE_FREE || CRT_USE_TYPE(use) == CRT_USE_INTERNAL)) {
             if (!hasCrtNoMansLand(block, crtheader.gap, sizeof(crtheader), crtheader.size))
                 use = CRT_USE_NORMAL;
         }
@@ -2118,7 +2121,7 @@ int VisualLeakDetector::getCrtBlockUse(LPCVOID block, bool ucrt)
         if (!readTrackedBlock(&crtheader, block, sizeof(crtheader)))
             return CRT_USE_FREE;
         use = crtheader.use;
-        if (CRT_USE_TYPE(use) == CRT_USE_FREE || CRT_USE_TYPE(use) == CRT_USE_INTERNAL) {
+        if (guessed && (CRT_USE_TYPE(use) == CRT_USE_FREE || CRT_USE_TYPE(use) == CRT_USE_INTERNAL)) {
             if (!hasCrtNoMansLand(block, crtheader.gap, sizeof(crtheader), crtheader.size))
                 use = CRT_USE_NORMAL;
         }
@@ -2167,7 +2170,7 @@ SIZE_T VisualLeakDetector::reportLeaks (heapinfo_t* heapinfo, bool &firstLeak, S
         if (isDebugCrtAlloc( block, info )) {
             // This block is allocated to a CRT heap, so the block has a CRT
             // memory block header pretended to it.
-            int blockUse = getCrtBlockUse( block, info->ucrt );
+            int blockUse = getCrtBlockUse( block, info->ucrt, info->crtGuessed );
             // Leaks identified as CRT_USE_IGNORE should not be ignored here otherwise
             // DynamicLoader/Thread test will randomly fail with less leaks being reported.
             if (CRT_USE_TYPE(blockUse) == CRT_USE_FREE ||
@@ -3705,7 +3708,7 @@ int VisualLeakDetector::resolveStacks(heapinfo_t* heapinfo)
         if (isDebugCrtAlloc(block, info)) {
             // This block is allocated to a CRT heap, so the block has a CRT
             // memory block header prepended to it.
-            int blockUse = getCrtBlockUse(block, info->ucrt);
+            int blockUse = getCrtBlockUse(block, info->ucrt, info->crtGuessed);
 
             // Leaks identified as CRT_USE_IGNORE should not be ignored here otherwise
             // DynamicLoader/Thread test will randomly fail with less leaks being reported.
