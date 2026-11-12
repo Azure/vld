@@ -49,6 +49,16 @@ static encoding_e   s_reportEncoding = ascii;  // Output encoding of the memory 
 
 #define IS_ORDINAL(name) (((UINT_PTR)name & 0xFFFF) == ((UINT_PTR)name))
 
+// Formats one dump byte as "XX " without the CRT's printf (see Report).
+static void FormatHexByte(BYTE byte, WCHAR* out)
+{
+    static const WCHAR digits[] = L"0123456789ABCDEF";
+    out[0] = digits[byte >> 4];
+    out[1] = digits[byte & 0xF];
+    out[2] = L' ';
+    out[3] = L'\0';
+}
+
 #if defined(_M_ARM64)
 // On ARM64, kernel32's heap exports (HeapCreate/HeapAlloc/HeapReAlloc/HeapFree/
 // HeapDestroy) are fast-forward dispatch thunks: their target slot is resolved
@@ -130,8 +140,7 @@ VOID DumpMemoryA (LPCVOID address, SIZE_T size)
         SIZE_T ascIndex = wordIndex + wordIndex / 8;         // 1 character per byte, plus a 1-character space after every 8 bytes.
         if (byteIndex < size) {
             BYTE byte = ((PBYTE)address)[byteIndex];
-            _snwprintf_s(formatBuf, BYTEFORMATBUFFERLENGTH, _TRUNCATE, L"%.2X ", byte);
-            formatBuf[3] = '\0';
+            FormatHexByte(byte, formatBuf);
             wcsncpy_s(hexDump + hexIndex, HEXDUMPLINELENGTH - hexIndex, formatBuf, 4);
             if (isgraph(byte)) {
                 ascDump[ascIndex] = (WCHAR)byte;
@@ -199,8 +208,7 @@ VOID DumpMemoryW (LPCVOID address, SIZE_T size)
         SIZE_T uniIndex = ((byteIndex / 2) % 8) + ((byteIndex / 2) % 8) / 8; // 1 character every other byte, plus a 1-character space after every 8 bytes.
         if (byteIndex < size) {
             BYTE byte = ((PBYTE)address)[byteIndex];
-            _snwprintf_s(formatBuf, BYTEFORMATBUFFERLENGTH, _TRUNCATE, L"%.2X ", byte);
-            formatBuf[BYTEFORMATBUFFERLENGTH - 1] = '\0';
+            FormatHexByte(byte, formatBuf);
             wcsncpy_s(hexDump + hexIndex, HEXDUMPLINELENGTH - hexIndex, formatBuf, 4);
             if (((byteIndex % 2) == 0) && ((byteIndex + 1) < dumpLen)) {
                 // On every even byte, print one character.
@@ -1018,7 +1026,7 @@ BOOL PatchImport (HMODULE importmodule, moduleentry_t *patchModule)
         {
             // we only process MAX_PATCH_ENTRY_COUNT, if we exceed it crash
             // if this abort is ever hit, it means that MAX_PATCH_ENTRY_COUNT should be bumped up
-            Report(L"MAX_PATCH_ENTRY_COUNT is set to %zu, but has been exceeded, MAX_PATCH_ENTRY_COUNT needs to be increased.\n", MAX_PATCH_ENTRY_COUNT);
+            Report(L"MAX_PATCH_ENTRY_COUNT is set to %Iu, but has been exceeded, MAX_PATCH_ENTRY_COUNT needs to be increased.\n", MAX_PATCH_ENTRY_COUNT);
             abort();
             break;
         }
@@ -1297,13 +1305,25 @@ VOID Print (LPWSTR messagew)
 //
 //    None.
 //
+// VLD formats report lines while holding g_heapMapLock. The CRT's printf frees
+// a work buffer when done, and the debug CRT's free takes the CRT heap lock,
+// which VLD's own CRT holds while its heap calls go through VLD's hooks (and
+// so wait for g_heapMapLock). ntdll's formatter uses no heap and no locks.
+typedef int (__cdecl *VsnwprintfFunc)(wchar_t*, size_t, const wchar_t*, va_list);
+static const VsnwprintfFunc s_ntdllVsnwprintf =
+    (VsnwprintfFunc)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "_vsnwprintf");
+
 VOID Report (LPCWSTR format, ...)
 {
     va_list args;
     WCHAR   messagew [MAXREPORTLENGTH + 1];
 
     va_start(args, format);
-    int result = _vsnwprintf_s(messagew, MAXREPORTLENGTH + 1, _TRUNCATE, format, args);
+    int result;
+    if (s_ntdllVsnwprintf != NULL)
+        result = s_ntdllVsnwprintf(messagew, MAXREPORTLENGTH, format, args);
+    else
+        result = _vsnwprintf_s(messagew, MAXREPORTLENGTH + 1, _TRUNCATE, format, args);
     va_end(args);
     messagew[MAXREPORTLENGTH] = L'\0';
 
