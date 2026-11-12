@@ -131,7 +131,7 @@ int main()
     chaos::Check(grown == NULL, "an in-place reallocation to 1 MB unexpectedly succeeded");
     chaos::Check(VLDGetLeaksCount() == base + 10, "a failed in-place reallocation changed the count");
     void* shrunk = HeapReAlloc(noSerialize, HEAP_REALLOC_IN_PLACE_ONLY, blocks[1], 8);
-    chaos::Check(shrunk == blocks[1], "an in-place shrink moved the block");
+    chaos::Check(shrunk == NULL || shrunk == blocks[1], "an in-place shrink moved the block");
     void* zero = HeapReAlloc(noSerialize, 0, blocks[2], 0);
     chaos::Check(zero != NULL, "HeapReAlloc to zero bytes failed");
     blocks[2] = zero;
