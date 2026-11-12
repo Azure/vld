@@ -926,6 +926,7 @@ set(VLD_CHAOS_TESTS
     chaos_cotaskmem
     chaos_crt_alloc_hook
     chaos_new_handler
+    chaos_malloc_spy
 )
 
 function(set_chaos_output_dir TARGET_NAME)
