@@ -2211,8 +2211,9 @@ SIZE_T VisualLeakDetector::reportLeaks (heapinfo_t* heapinfo, bool &firstLeak, S
 
         LPCVOID address = block;
         SIZE_T size = info->size;
+        const bool crtBlock = isDebugCrtAlloc(block, info);
 
-        if (isDebugCrtAlloc( block, info )) {
+        if (crtBlock) {
             // This block is allocated to a CRT heap, so the block has a CRT
             // memory block header pretended to it.
             int blockUse = getCrtBlockUse( block, info->ucrt, info->crtGuessed );
@@ -2245,7 +2246,7 @@ SIZE_T VisualLeakDetector::reportLeaks (heapinfo_t* heapinfo, bool &firstLeak, S
         // A block that can no longer be read is being freed.
 #ifdef _DEBUG
         SIZE_T crtRequest = 0;
-        if (info->debugCrtAlloc) {
+        if (crtBlock) {
             crtdbgblockheader_t crtheader;
             if (!readTrackedBlock(&crtheader, block, sizeof(crtheader)))
                 continue;
@@ -2271,7 +2272,7 @@ SIZE_T VisualLeakDetector::reportLeaks (heapinfo_t* heapinfo, bool &firstLeak, S
         SIZE_T blockLeaksCount = 1;
         Report(L"---------- Block %Iu at " ADDRESSFORMAT L": %Iu bytes ----------\n", info->serialNumber, address, size);
 #ifdef _DEBUG
-        if (info->debugCrtAlloc)
+        if (crtBlock)
             Report(L"  CRT Alloc ID: %Iu\n", crtRequest);
 #endif
         assert(info->callStack);
