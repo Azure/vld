@@ -3894,6 +3894,8 @@ void CaptureContext::Set(HANDLE heap, LPVOID mem, LPVOID newmem, SIZE_T size, SI
             else
                 m_tls->blockWithoutGuard = newmem;
             m_tls->size = size;
+            if (g_vld.m_options & VLD_OPT_TRACE_INTERNAL_FRAMES)
+                m_tls->context = m_context;
             return;
         }
         // The block recorded earlier belongs to an allocation nested in this
