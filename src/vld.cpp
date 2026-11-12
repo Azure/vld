@@ -1540,6 +1540,7 @@ tls_t* VisualLeakDetector::getTls ()
         tls->oldFlags = 0x0;
         tls->threadId = threadId;
         tls->blockWithoutGuard = NULL;
+        tls->blockSerial = 0;
         TlsSetValue(m_tlsIndex, tls);
     }
 
