@@ -120,12 +120,25 @@ inline int DescribeMissingLeaks()
     {
         for (LONG i = 0; i < recorded; i++)
         {
+            // Exact first, then the nearest report before the block, so that a
+            // block cannot take the report of a neighbor just before it.
+            LONG best = -1;
+            ULONG_PTR bestOffset = 65;
             for (LONG j = 0; j < reported && !matched[i]; j++)
             {
                 ULONG_PTR offset = (ULONG_PTR)Ledger()[i].block - (ULONG_PTR)ReportedBlocks()[j];
-                if (!used[j] && (pass == 0 ? offset == 0 : offset <= 64))
-                    used[j] = matched[i] = true;
+                if (used[j])
+                    continue;
+                if (pass == 0 ? offset == 0 : offset < bestOffset)
+                {
+                    best = j;
+                    bestOffset = offset;
+                    if (pass == 0)
+                        break;
+                }
             }
+            if (best >= 0)
+                used[best] = matched[i] = true;
         }
     }
     int missing = 0;
