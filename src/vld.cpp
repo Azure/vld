@@ -1996,8 +1996,9 @@ static bool readTrackedBlock (LPVOID dest, LPCVOID block, SIZE_T size)
 }
 
 // hasCrtNoMansLand - Checks the no-man's land the debug CRT writes on both
-//   sides of a block's data. Uninitialized user data can look like a debug
-//   header, but is unlikely to also carry both guards.
+//   sides of a block's data. Uninitialized user data can look like the debug
+//   header of a freed or CRT-internal block, but is unlikely to also carry
+//   both guards; such a block must not be skipped as a leak.
 //
 static bool hasCrtNoMansLand (LPCVOID block, const unsigned char* gap, SIZE_T headerSize, SIZE_T dataSize)
 {
@@ -2020,8 +2021,7 @@ bool VisualLeakDetector::isDebugCrtAlloc( LPCVOID block, blockinfo_t* info )
         if (info->size >= sizeof(crtheader) && readTrackedBlock(&crtheader, block, sizeof(crtheader))) {
             SIZE_T nSize = sizeof(crtdbgblockheader_t) + crtheader.size + GAPSIZE;
             int nValid = _CrtIsValidPointer(block, (unsigned int)info->size, TRUE);
-            if (_BLOCK_TYPE_IS_VALID(crtheader.use) && nValid && (nSize == info->size) &&
-                hasCrtNoMansLand(block, crtheader.gap, sizeof(crtheader), crtheader.size)) {
+            if (_BLOCK_TYPE_IS_VALID(crtheader.use) && nValid && (nSize == info->size)) {
                 info->debugCrtAlloc = true;
                 info->ucrt = false;
             }
@@ -2034,8 +2034,7 @@ bool VisualLeakDetector::isDebugCrtAlloc( LPCVOID block, blockinfo_t* info )
         if (info->size >= sizeof(crtheader) && readTrackedBlock(&crtheader, block, sizeof(crtheader))) {
             SIZE_T nSize = sizeof(crtdbgblockheaderucrt_t) + crtheader.size + GAPSIZE;
             int nValid = _CrtIsValidPointer(block, (unsigned int)info->size, TRUE);
-            if (_BLOCK_TYPE_IS_VALID(crtheader.use) && nValid && (nSize == info->size) &&
-                hasCrtNoMansLand(block, crtheader.gap, sizeof(crtheader), crtheader.size)) {
+            if (_BLOCK_TYPE_IS_VALID(crtheader.use) && nValid && (nSize == info->size)) {
                 info->debugCrtAlloc = true;
                 info->ucrt = true;
             }
@@ -2101,16 +2100,30 @@ SIZE_T VisualLeakDetector::getLeaksCount (heapinfo_t* heapinfo, DWORD threadId)
 int VisualLeakDetector::getCrtBlockUse(LPCVOID block, bool ucrt)
 {
     // A block that can no longer be read is being freed.
+    int use;
     if (!ucrt)
     {
         crtdbgblockheader_t crtheader;
-        return readTrackedBlock(&crtheader, block, sizeof(crtheader)) ? crtheader.use : CRT_USE_FREE;
+        if (!readTrackedBlock(&crtheader, block, sizeof(crtheader)))
+            return CRT_USE_FREE;
+        use = crtheader.use;
+        if (CRT_USE_TYPE(use) == CRT_USE_FREE || CRT_USE_TYPE(use) == CRT_USE_INTERNAL) {
+            if (!hasCrtNoMansLand(block, crtheader.gap, sizeof(crtheader), crtheader.size))
+                use = CRT_USE_NORMAL;
+        }
     }
     else
     {
         crtdbgblockheaderucrt_t crtheader;
-        return readTrackedBlock(&crtheader, block, sizeof(crtheader)) ? crtheader.use : CRT_USE_FREE;
+        if (!readTrackedBlock(&crtheader, block, sizeof(crtheader)))
+            return CRT_USE_FREE;
+        use = crtheader.use;
+        if (CRT_USE_TYPE(use) == CRT_USE_FREE || CRT_USE_TYPE(use) == CRT_USE_INTERNAL) {
+            if (!hasCrtNoMansLand(block, crtheader.gap, sizeof(crtheader), crtheader.size))
+                use = CRT_USE_NORMAL;
+        }
     }
+    return use;
 }
 
 size_t VisualLeakDetector::getCrtBlockSize(LPCVOID block, bool ucrt)
