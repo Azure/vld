@@ -3652,6 +3652,11 @@ CaptureContext::~CaptureContext() {
 
         pblockInfo->callStack.reset(callstack);
     }
+    else if (excluded && m_tls->newBlockWithoutGuard != NULL && m_tls->newBlockWithoutGuard != m_tls->blockWithoutGuard) {
+        // An excluded module moved a tracked block; the heap can hand the old
+        // address out again.
+        g_vld.unmapBlock(m_tls->heap, m_tls->blockWithoutGuard, m_tls->context);
+    }
 
     // Reset thread local flags and variables for the next allocation.
     Reset();

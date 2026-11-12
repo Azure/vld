@@ -901,6 +901,7 @@ set(VLD_CHAOS_TESTS
     chaos_report_hook_race
     chaos_long_frame
     chaos_hook_reenter
+    chaos_api_storm
 )
 
 function(set_chaos_output_dir TARGET_NAME)

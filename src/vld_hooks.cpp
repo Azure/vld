@@ -289,8 +289,17 @@ LPVOID VisualLeakDetector::_RtlReAllocateHeap (HANDLE heap, DWORD flags, LPVOID 
 
     // Reallocate the block.
     LPVOID newmem = RtlReAllocateHeap(heap, flags, mem, size);
-    if ((newmem == NULL) || !g_vld.enabled())
+    if (newmem == NULL)
         return newmem;
+    if (!g_vld.enabled()) {
+        if (newmem != mem && !g_DbgHelp.IsLockedByCurrentThread()) {
+            // The heap can hand the old address out again; forget it.
+            CAPTURE_CONTEXT();
+            context_.func = reinterpret_cast<UINT_PTR>(RtlReAllocateHeap);
+            g_vld.unmapBlock(heap, mem, context_);
+        }
+        return newmem;
+    }
 
     if (!g_DbgHelp.IsLockedByCurrentThread()) { // skip dbghelp.dll calls
         CAPTURE_CONTEXT();
@@ -320,8 +329,17 @@ LPVOID VisualLeakDetector::_HeapReAlloc (HANDLE heap, DWORD flags, LPVOID mem, S
 #else
     LPVOID newmem = HeapReAlloc(heap, flags, mem, size);
 #endif
-    if ((newmem == NULL) || !g_vld.enabled())
+    if (newmem == NULL)
         return newmem;
+    if (!g_vld.enabled()) {
+        if (newmem != mem && !g_DbgHelp.IsLockedByCurrentThread()) {
+            // The heap can hand the old address out again; forget it.
+            CAPTURE_CONTEXT();
+            context_.func = reinterpret_cast<UINT_PTR>(HeapReAlloc);
+            g_vld.unmapBlock(heap, mem, context_);
+        }
+        return newmem;
+    }
 
     if (!g_DbgHelp.IsLockedByCurrentThread()) { // skip dbghelp.dll calls
         CAPTURE_CONTEXT();
