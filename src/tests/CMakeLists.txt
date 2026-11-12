@@ -922,6 +922,7 @@ set(VLD_CHAOS_TESTS
     chaos_noaccess_leak
     chaos_aligned_new
     chaos_heaplock
+    chaos_heaplock_report
 )
 
 function(set_chaos_output_dir TARGET_NAME)
