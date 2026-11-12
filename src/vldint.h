@@ -127,6 +127,7 @@ typedef Map<LPCVOID, blockinfo_t*> BlockMap;
 struct heapinfo_t {
     BlockMap blockMap;   // Map of all blocks allocated from this heap.
     UINT32   flags;      // Heap status flags
+#define VLD_HEAP_DESTROYED 0x1 // Destroyed during a block walk; endBlockWalk unmaps it.
 };
 
 // HeapMaps map heaps (via their handles) to BlockMaps.
@@ -135,13 +136,19 @@ typedef Map<HANDLE, heapinfo_t*> HeapMap;
 // A block freed while its thread walks the block maps (see beginBlockWalk).
 struct deferredblock_t {
     BOOL operator < (const struct deferredblock_t& other) const { return info < other.info; }
-    HANDLE       heap;
+    heapinfo_t*  heapinfo;
     LPCVOID      block;
     blockinfo_t* info;
 };
+// A heap destroyed while its thread walks the block maps.
+struct deferredheap_t {
+    BOOL operator < (const struct deferredheap_t& other) const { return heapinfo < other.heapinfo; }
+    HANDLE       heap;
+    heapinfo_t*  heapinfo;
+};
 typedef Set<deferredblock_t> DeferredBlockSet;
 typedef Set<CallStack*> DeferredCallStackSet;
-typedef Set<HANDLE> DeferredHeapSet;
+typedef Set<deferredheap_t> DeferredHeapSet;
 typedef std::basic_string<wchar_t, std::char_traits<wchar_t>, vldallocator<wchar_t> > vldstring;
 
 // This structure stores information, primarily the virtual address range, about
@@ -358,6 +365,7 @@ private:
     VOID   markAllLeaksAsReported (heapinfo_t* heapinfo, DWORD threadId = (DWORD)-1);
     VOID   unmapBlock (HANDLE heap, LPCVOID mem, const context_t &context);
     VOID   unmapHeap (HANDLE heap);
+    VOID   deferUnmapHeap (HANDLE heap, heapinfo_t* heapinfo);
     VOID   beginBlockWalk ();
     VOID   endBlockWalk ();
     bool   isBlockWalkThread () const;

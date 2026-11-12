@@ -906,6 +906,7 @@ set(VLD_CHAOS_TESTS
     chaos_heap_churn
     chaos_api_storm
     chaos_aggregate_threads
+    chaos_hook_heap_ops
 )
 
 function(set_chaos_output_dir TARGET_NAME)

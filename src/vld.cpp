@@ -1551,8 +1551,9 @@ VOID VisualLeakDetector::mapBlock (HANDLE heap, LPCVOID mem, SIZE_T size, bool d
 
     // Insert the block's information into the block map.
     HeapMap::Iterator heapit = m_heapMap->find(heap);
-    if (heapit == m_heapMap->end()) {
-        // We haven't mapped this heap to a block map yet. Do it now.
+    if (heapit == m_heapMap->end() || ((*heapit).second->flags & VLD_HEAP_DESTROYED)) {
+        // We haven't mapped this heap to a block map yet, or it was destroyed
+        // during this block walk and the handle reused. Do it now.
         mapHeap(heap);
         heapit = m_heapMap->find(heap);
         assert(heapit != m_heapMap->end());
@@ -1572,7 +1573,7 @@ VOID VisualLeakDetector::mapBlock (HANDLE heap, LPCVOID mem, SIZE_T size, bool d
             // Replace the entry's information in place; endBlockWalk deletes
             // the old information.
             info->reported = true;
-            deferredblock_t deferred = { heap, mem, info };
+            deferredblock_t deferred = { (*heapit).second, mem, info };
             m_deferredBlocks->insert(deferred);
             const_cast<Pair<LPCVOID, blockinfo_t*>&>(*blockit).second = blockinfo;
             return;
@@ -1604,11 +1605,21 @@ VOID VisualLeakDetector::mapHeap (HANDLE heap)
 
     HeapMap::Iterator heapit = m_heapMap->insert(heap, heapinfo);
     if (heapit == m_heapMap->end()) {
+        heapit = m_heapMap->find(heap);
+        if (isBlockWalkThread()) {
+            // Replace the heap's information in place; endBlockWalk frees the
+            // old information.
+            heapinfo_t* oldinfo = (*heapit).second;
+            if (!(oldinfo->flags & VLD_HEAP_DESTROYED))
+                Report(L"WARNING: Visual Leak Detector detected a duplicate heap (" ADDRESSFORMAT L").\n", heap);
+            deferUnmapHeap(heap, oldinfo);
+            const_cast<Pair<HANDLE, heapinfo_t*>&>(*heapit).second = heapinfo;
+            return;
+        }
         // Somehow this heap has been created twice without being destroyed,
         // or at least it was destroyed without VLD's knowledge. Unmap the heap
         // from the existing heapinfo, and remap it to the new one.
         Report(L"WARNING: Visual Leak Detector detected a duplicate heap (" ADDRESSFORMAT L").\n", heap);
-        heapit = m_heapMap->find(heap);
         unmapHeap((*heapit).first);
         m_heapMap->insert(heap, heapinfo);
     }
@@ -1687,7 +1698,7 @@ VOID VisualLeakDetector::unmapBlock (HANDLE heap, LPCVOID mem, const context_t &
     if (isBlockWalkThread()) {
         // The walk skips it; endBlockWalk erases it.
         info->reported = true;
-        deferredblock_t deferred = { heap, mem, info };
+        deferredblock_t deferred = { (*heapit).second, mem, info };
         m_deferredBlocks->insert(deferred);
         return;
     }
@@ -1720,11 +1731,7 @@ VOID VisualLeakDetector::unmapHeap (HANDLE heap)
     heapinfo_t *heapinfo = (*heapit).second;
     BlockMap   *blockmap = &heapinfo->blockMap;
     if (isBlockWalkThread()) {
-        // The walk skips its blocks; endBlockWalk unmaps the heap.
-        for (BlockMap::Iterator blockit = blockmap->begin(); blockit != blockmap->end(); ++blockit) {
-            (*blockit).second->reported = true;
-        }
-        m_deferredHeaps->insert(heap);
+        deferUnmapHeap(heap, heapinfo);
         return;
     }
     for (BlockMap::Iterator blockit = blockmap->begin(); blockit != blockmap->end(); ++blockit) {
@@ -2902,6 +2909,21 @@ bool VisualLeakDetector::isBlockWalkThread () const
     return m_blockWalkDepth != 0 && m_blockWalkThreadId == GetCurrentThreadId();
 }
 
+// The walk skips the heap's blocks; endBlockWalk unmaps the heap, unless its
+// handle was mapped to new information since.
+VOID VisualLeakDetector::deferUnmapHeap (HANDLE heap, heapinfo_t* heapinfo)
+{
+    if (heapinfo->flags & VLD_HEAP_DESTROYED)
+        return;
+    heapinfo->flags |= VLD_HEAP_DESTROYED;
+    BlockMap* blockmap = &heapinfo->blockMap;
+    for (BlockMap::Iterator blockit = blockmap->begin(); blockit != blockmap->end(); ++blockit) {
+        (*blockit).second->reported = true;
+    }
+    deferredheap_t deferred = { heap, heapinfo };
+    m_deferredHeaps->insert(deferred);
+}
+
 VOID VisualLeakDetector::endBlockWalk ()
 {
     if (--m_blockWalkDepth != 0)
@@ -2912,13 +2934,10 @@ VOID VisualLeakDetector::endBlockWalk ()
         DeferredBlockSet::Iterator it = m_deferredBlocks->begin();
         deferredblock_t deferred = *it;
         m_deferredBlocks->erase(it);
-        HeapMap::Iterator heapit = m_heapMap->find(deferred.heap);
-        if (heapit != m_heapMap->end()) {
-            BlockMap* blockmap = &(*heapit).second->blockMap;
-            BlockMap::Iterator blockit = blockmap->find(deferred.block);
-            if (blockit != blockmap->end() && (*blockit).second == deferred.info)
-                blockmap->erase(blockit);
-        }
+        BlockMap* blockmap = &deferred.heapinfo->blockMap;
+        BlockMap::Iterator blockit = blockmap->find(deferred.block);
+        if (blockit != blockmap->end() && (*blockit).second == deferred.info)
+            blockmap->erase(blockit);
         delete deferred.info;
     }
     while (m_deferredCallStacks->begin() != m_deferredCallStacks->end()) {
@@ -2929,9 +2948,19 @@ VOID VisualLeakDetector::endBlockWalk ()
     }
     while (m_deferredHeaps->begin() != m_deferredHeaps->end()) {
         DeferredHeapSet::Iterator it = m_deferredHeaps->begin();
-        HANDLE heap = *it;
+        deferredheap_t deferred = *it;
         m_deferredHeaps->erase(it);
-        unmapHeap(heap);
+        HeapMap::Iterator heapit = m_heapMap->find(deferred.heap);
+        if (heapit != m_heapMap->end() && (*heapit).second == deferred.heapinfo) {
+            unmapHeap(deferred.heap);
+            continue;
+        }
+        BlockMap* blockmap = &deferred.heapinfo->blockMap;
+        for (BlockMap::Iterator blockit = blockmap->begin(); blockit != blockmap->end(); ++blockit) {
+            m_curAlloc -= (*blockit).second->size;
+            delete (*blockit).second;
+        }
+        delete deferred.heapinfo;
     }
 }
 
