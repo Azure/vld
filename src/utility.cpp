@@ -1299,6 +1299,7 @@ struct deferredreport_t {
     WCHAR* text;
     size_t length;
     size_t capacity;
+    size_t dropped;   // Messages lost because the queue could not grow.
 };
 static deferredreport_t* s_deferredReport = NULL;
 
@@ -1308,14 +1309,21 @@ static VOID DeferPrint (LPCWSTR messagew)
     deferredreport_t* report = s_deferredReport;
     if (report == NULL) {
         report = new deferredreport_t;
+        if (report == NULL)
+            return;
         report->text = NULL;
         report->length = 0;
         report->capacity = 0;
+        report->dropped = 0;
         s_deferredReport = report;
     }
     if (report->length + length > report->capacity) {
         size_t capacity = max(report->capacity * 2, report->length + length + 4096);
         WCHAR* text = new WCHAR[capacity];
+        if (text == NULL) {
+            report->dropped++;
+            return;
+        }
         if (report->length > 0)
             memcpy(text, report->text, report->length * sizeof(WCHAR));
         delete [] report->text;
@@ -1335,13 +1343,25 @@ deferredreport_t* TakeDeferredReport ()
 }
 
 // PrintDeferredReport - Prints and frees messages from TakeDeferredReport.
-//   Call without g_heapMapLock held.
+//   Call without g_heapMapLock held. Runs from HeapMapLock::Leave, which can
+//   be a destructor, so an exception thrown by a report hook is discarded.
 VOID PrintDeferredReport (deferredreport_t* report)
 {
     for (size_t offset = 0; offset < report->length; ) {
         LPWSTR messagew = report->text + offset;
         offset += wcslen(messagew) + 1;
-        Print(messagew);
+        try {
+            Print(messagew);
+        }
+        catch (...) {
+        }
+    }
+    if (report->dropped > 0) {
+        try {
+            Report(L"WARNING: Visual Leak Detector: %Iu report lines were lost: out of memory.\n", report->dropped);
+        }
+        catch (...) {
+        }
     }
     delete [] report->text;
     delete report;
