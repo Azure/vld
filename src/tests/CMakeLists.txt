@@ -923,6 +923,7 @@ set(VLD_CHAOS_TESTS
     chaos_aligned_new
     chaos_heaplock
     chaos_heaplock_report
+    chaos_cotaskmem
 )
 
 function(set_chaos_output_dir TARGET_NAME)
