@@ -331,6 +331,7 @@ VisualLeakDetector::VisualLeakDetector ()
     m_reportFile     = NULL;
     wcsncpy_s(m_reportFilePath, MAX_PATH, VLD_DEFAULT_REPORT_FILE_NAME, _TRUNCATE);
     m_status         = 0x0;
+    m_symsrvMissing  = FALSE;
 
     HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
     if (ntdll)
@@ -511,9 +512,11 @@ VisualLeakDetector::VisualLeakDetector ()
     set the DBGHELP_DBGOUT environment variable to a non-NULL value before calling the SymInitialize function.
     To log the information to a file, set the DBGHELP_LOG environment variable to the name of the log file to be used.
     */
-    g_DbgHelp.SymSetOptions(SYMOPT_DEBUG | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
+    g_DbgHelp.SymSetOptions(SYMOPT_DEBUG | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES |
+        (m_symsrvMissing ? SYMOPT_DISABLE_SYMSRV_AUTODETECT : 0));
 #else
-    g_DbgHelp.SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
+    g_DbgHelp.SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES |
+        (m_symsrvMissing ? SYMOPT_DISABLE_SYMSRV_AUTODETECT : 0));
 #endif
     DbgTrace(L"dbghelp32.dll %i: SymInitializeW\n", GetCurrentThreadId());
     if (!g_DbgHelp.SymInitializeW(g_currentProcess, symbolpath, FALSE)) {
@@ -1161,6 +1164,42 @@ LPWSTR VisualLeakDetector::buildSymbolSearchPath ()
             }
         }
         pos++;
+    }
+
+    // dbghelp loads symsrv.dll from its own directory each time it meets a
+    // symbol server element, or a directory it probes as a symbol store.
+    // Without symsrv.dll there those can never work, and every failing load
+    // waits for the thread that owns the loader while g_DbgHelp is held, which
+    // can deadlock with that thread. Drop the server elements here; the caller
+    // disables the store probing.
+    HMODULE dbghelp = NULL;
+    WCHAR symsrvpath[MAX_PATH] = { 0 };
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            (LPCWSTR)&::SymInitializeW, &dbghelp) &&
+        GetModuleFileNameW(dbghelp, symsrvpath, MAX_PATH) != 0) {
+        LPWSTR slash = wcsrchr(symsrvpath, L'\\');
+        if (slash != NULL && wcscpy_s(slash + 1, MAX_PATH - (slash + 1 - symsrvpath), L"symsrv.dll") == 0 &&
+            GetFileAttributesW(symsrvpath) == INVALID_FILE_ATTRIBUTES) {
+            m_symsrvMissing = TRUE;
+            LPWSTR write = path;
+            LPWSTR element = path;
+            while (*element != L'\0') {
+                LPWSTR end = wcschr(element, L';');
+                SIZE_T elementLength = (end != NULL) ? (SIZE_T)(end - element) : wcslen(element);
+                bool server = (_wcsnicmp(element, L"srv*", 4) == 0) || (_wcsnicmp(element, L"symsrv*", 7) == 0) ||
+                    (_wcsnicmp(element, L"cache*", 6) == 0);
+                if (!server && elementLength != 0) {
+                    memmove(write, element, elementLength * sizeof(WCHAR));
+                    write += elementLength;
+                    if (end != NULL)
+                        *write++ = L';';
+                }
+                element += elementLength;
+                if (*element == L';')
+                    element++;
+            }
+            *write = L'\0';
+        }
     }
 
     return path;

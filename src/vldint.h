@@ -420,6 +420,7 @@ private:
     WCHAR                m_ignoreModuleList [MAXIGNOREMODULELISTLENGTH]; // List of modules to be excluded from leak detection.
     WCHAR                m_ignoreFunctionsList [MAXIGNOREFUNCTIONLISTLENGTH]; // List of functions to be ignored in leak detection.
     HeapMap             *m_heapMap;           // Map of all active heaps in the process.
+    BOOL                 m_symsrvMissing;     // No symsrv.dll beside dbghelp.dll (see buildSymbolSearchPath).
     UINT32               m_blockWalkDepth;    // Nesting of block map walks on m_blockWalkThreadId (see beginBlockWalk).
     DWORD                m_blockWalkThreadId; // Thread walking the block maps, while m_blockWalkDepth > 0.
     DeferredBlockSet    *m_deferredBlocks;    // Blocks freed during the walk.
