@@ -433,6 +433,11 @@ VisualLeakDetector::VisualLeakDetector ()
     // Initialize remaining private data.
     m_heapMap         = new HeapMap;
     m_heapMap->reserve(HEAP_MAP_RESERVE);
+    m_blockWalkDepth  = 0;
+    m_blockWalkThreadId = 0;
+    m_deferredBlocks  = new DeferredBlockSet;
+    m_deferredCallStacks = new DeferredCallStackSet;
+    m_deferredHeaps   = new DeferredHeapSet;
     m_iMalloc         = NULL;
     m_requestCurr     = 1;
     m_totalAlloc      = 0;
@@ -796,6 +801,9 @@ VisualLeakDetector::~VisualLeakDetector ()
                 delete blockmap;
             }
             delete m_heapMap;
+            delete m_deferredBlocks;
+            delete m_deferredCallStacks;
+            delete m_deferredHeaps;
         }
         delete m_loadedModules;
         delete m_ignoreFunctions;
@@ -827,6 +835,9 @@ VisualLeakDetector::~VisualLeakDetector ()
     else {
         // VLD failed to load properly.
         delete m_heapMap;
+        delete m_deferredBlocks;
+        delete m_deferredCallStacks;
+        delete m_deferredHeaps;
         delete m_tlsMap;
         delete g_pReportHooks;
         g_pReportHooks = NULL;
@@ -1552,6 +1563,15 @@ VOID VisualLeakDetector::mapBlock (HANDLE heap, LPCVOID mem, SIZE_T size, bool d
         blockinfo_t* info = (*blockit).second;
         m_curAlloc -= info->size;
         Report(L"VLD: New allocation at already allocated address: 0x%p with size: %u and new size: %u\n", mem, info->size, size);
+        if (isBlockWalkThread()) {
+            // Replace the entry's information in place; endBlockWalk deletes
+            // the old information.
+            info->reported = true;
+            deferredblock_t deferred = { heap, mem, info };
+            m_deferredBlocks->insert(deferred);
+            const_cast<Pair<LPCVOID, blockinfo_t*>&>(*blockit).second = blockinfo;
+            return;
+        }
         delete info;
         blockmap->erase(blockit);
         blockmap->insert(mem, blockinfo);
@@ -1659,6 +1679,13 @@ VOID VisualLeakDetector::unmapBlock (HANDLE heap, LPCVOID mem, const context_t &
     // Free the blockinfo_t structure and erase it from the block map.
     blockinfo_t *info = (*blockit).second;
     m_curAlloc -= info->size;
+    if (isBlockWalkThread()) {
+        // The walk skips it; endBlockWalk erases it.
+        info->reported = true;
+        deferredblock_t deferred = { heap, mem, info };
+        m_deferredBlocks->insert(deferred);
+        return;
+    }
     delete info;
     blockmap->erase(blockit);
 }
@@ -1687,6 +1714,14 @@ VOID VisualLeakDetector::unmapHeap (HANDLE heap)
     // Free all of the blockinfo_t structures stored in the block map.
     heapinfo_t *heapinfo = (*heapit).second;
     BlockMap   *blockmap = &heapinfo->blockMap;
+    if (isBlockWalkThread()) {
+        // The walk skips its blocks; endBlockWalk unmaps the heap.
+        for (BlockMap::Iterator blockit = blockmap->begin(); blockit != blockmap->end(); ++blockit) {
+            (*blockit).second->reported = true;
+        }
+        m_deferredHeaps->insert(heap);
+        return;
+    }
     for (BlockMap::Iterator blockit = blockmap->begin(); blockit != blockmap->end(); ++blockit) {
         m_curAlloc -= (*blockit).second->size;
         delete (*blockit).second;
@@ -1762,7 +1797,10 @@ VOID VisualLeakDetector::remapBlock (HANDLE heap, LPCVOID mem, LPCVOID newmem, S
     blockinfo_t* info = (*blockit).second;
     if (info->callStack)
     {
-        info->callStack.reset();
+        if (isBlockWalkThread())
+            m_deferredCallStacks->insert(info->callStack.release());
+        else
+            info->callStack.reset();
     }
 
     if (m_totalAlloc < SIZE_MAX)
@@ -2013,6 +2051,19 @@ SIZE_T VisualLeakDetector::reportLeaks (heapinfo_t* heapinfo, bool &firstLeak, S
             }
         }
 
+        // A report hook may free the block, so read it before the first Report.
+#ifdef _DEBUG
+        SIZE_T crtRequest = 0;
+        if (info->debugCrtAlloc)
+            crtRequest = ((crtdbgblockheader_t*)block)->request;
+#endif
+        SIZE_T dumpSize = (m_maxDataDump < size) ? m_maxDataDump : size;
+        LPBYTE dumpData = NULL;
+        if (dumpSize != 0) {
+            dumpData = new BYTE[dumpSize];
+            memcpy(dumpData, address, dumpSize);
+        }
+
         // It looks like a real memory leak.
         if (firstLeak) { // A confusing way to only display this message once
             Report(L"WARNING: Visual Leak Detector detected memory leaks!\n");
@@ -2022,11 +2073,7 @@ SIZE_T VisualLeakDetector::reportLeaks (heapinfo_t* heapinfo, bool &firstLeak, S
         Report(L"---------- Block %Iu at " ADDRESSFORMAT L": %Iu bytes ----------\n", info->serialNumber, address, size);
 #ifdef _DEBUG
         if (info->debugCrtAlloc)
-        {
-            crtdbgblockheader_t* crtheader = (crtdbgblockheader_t*)block;
-            Report(L"  CRT Alloc ID: %Iu\n", crtheader->request);
-            assert(size == getCrtBlockSize(block, info->ucrt));
-        }
+            Report(L"  CRT Alloc ID: %Iu\n", crtRequest);
 #endif
         assert(info->callStack);
         if (m_options & VLD_OPT_AGGREGATE_DUPLICATES) {
@@ -2057,12 +2104,13 @@ SIZE_T VisualLeakDetector::reportLeaks (heapinfo_t* heapinfo, bool &firstLeak, S
         if (m_maxDataDump != 0) {
             Report(L"  Data:\n");
             if (m_options & VLD_OPT_UNICODE_REPORT) {
-                DumpMemoryW(address, (m_maxDataDump < size) ? m_maxDataDump : size);
+                DumpMemoryW(dumpData, dumpSize);
             }
             else {
-                DumpMemoryA(address, (m_maxDataDump < size) ? m_maxDataDump : size);
+                DumpMemoryA(dumpData, dumpSize);
             }
         }
+        delete [] dumpData;
         Report(L"\n\n");
     }
 
@@ -2832,6 +2880,56 @@ static volatile LONG g_noSymbolLoadThreadId = 0;
 extern "C" bool VldSymbolLoadForbidden(void)
 {
     return static_cast<DWORD>(InterlockedCompareExchange(&g_noSymbolLoadThreadId, 0, 0)) == GetCurrentThreadId();
+// While a thread walks the heap and block maps under g_heapMapLock, code it
+// runs can free or reallocate tracked blocks or destroy heaps on the same
+// thread: report hooks and dbghelp callbacks. Erasing map entries would break
+// the walk (Tree::erase moves the successor's contents) and deleting a block's
+// information would pull it from under the walk, so such changes are deferred
+// to the end of the outermost walk. Call with g_heapMapLock held.
+VOID VisualLeakDetector::beginBlockWalk ()
+{
+    if (m_blockWalkDepth++ == 0)
+        m_blockWalkThreadId = GetCurrentThreadId();
+}
+
+bool VisualLeakDetector::isBlockWalkThread () const
+{
+    return m_blockWalkDepth != 0 && m_blockWalkThreadId == GetCurrentThreadId();
+}
+
+VOID VisualLeakDetector::endBlockWalk ()
+{
+    if (--m_blockWalkDepth != 0)
+        return;
+    m_blockWalkThreadId = 0;
+
+    while (m_deferredBlocks->begin() != m_deferredBlocks->end()) {
+        DeferredBlockSet::Iterator it = m_deferredBlocks->begin();
+        deferredblock_t deferred = *it;
+        m_deferredBlocks->erase(it);
+        HeapMap::Iterator heapit = m_heapMap->find(deferred.heap);
+        if (heapit != m_heapMap->end()) {
+            BlockMap* blockmap = &(*heapit).second->blockMap;
+            BlockMap::Iterator blockit = blockmap->find(deferred.block);
+            if (blockit != blockmap->end() && (*blockit).second == deferred.info)
+                blockmap->erase(blockit);
+        }
+        delete deferred.info;
+    }
+    while (m_deferredCallStacks->begin() != m_deferredCallStacks->end()) {
+        DeferredCallStackSet::Iterator it = m_deferredCallStacks->begin();
+        CallStack* callStack = *it;
+        m_deferredCallStacks->erase(it);
+        delete callStack;
+    }
+    while (m_deferredHeaps->begin() != m_deferredHeaps->end()) {
+        DeferredHeapSet::Iterator it = m_deferredHeaps->begin();
+        HANDLE heap = *it;
+        m_deferredHeaps->erase(it);
+        unmapHeap(heap);
+    }
+}
+
 }
 
 // Holds g_heapMapLock, entered once the symbols of every module in the
@@ -2846,7 +2944,7 @@ class LeakSymbolsHeapMapLock
 {
 public:
     LeakSymbolsHeapMapLock(VisualLeakDetector& vld, bool loadSymbols, DWORD threadId = (DWORD)-1, HANDLE heap = NULL)
-        : m_nested(g_heapMapLock.IsOwnedByCurrentThread())
+        : m_vld(vld), m_nested(g_heapMapLock.IsOwnedByCurrentThread())
     {
         if (!m_nested) {
 #if defined(_M_ARM64)
@@ -2873,10 +2971,12 @@ public:
     }
 
     ~LeakSymbolsHeapMapLock()
+        m_vld.beginBlockWalk();
     {
         InterlockedExchange(&g_noSymbolLoadThreadId, m_previousNoSymbolLoadThreadId);
         if (!m_nested) {
             g_heapMapLock.Leave();
+        m_vld.endBlockWalk();
             g_leakQueryLock.Leave();
         }
     }
@@ -2885,6 +2985,7 @@ private:
     const bool m_nested;
     LONG m_previousNoSymbolLoadThreadId;
     LeakSymbolsHeapMapLock(const LeakSymbolsHeapMapLock&);
+    VisualLeakDetector& m_vld;
     LeakSymbolsHeapMapLock& operator=(const LeakSymbolsHeapMapLock&);
 };
 

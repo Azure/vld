@@ -131,6 +131,17 @@ struct heapinfo_t {
 
 // HeapMaps map heaps (via their handles) to BlockMaps.
 typedef Map<HANDLE, heapinfo_t*> HeapMap;
+
+// A block freed while its thread walks the block maps (see beginBlockWalk).
+struct deferredblock_t {
+    BOOL operator < (const struct deferredblock_t& other) const { return info < other.info; }
+    HANDLE       heap;
+    LPCVOID      block;
+    blockinfo_t* info;
+};
+typedef Set<deferredblock_t> DeferredBlockSet;
+typedef Set<CallStack*> DeferredCallStackSet;
+typedef Set<HANDLE> DeferredHeapSet;
 typedef std::basic_string<wchar_t, std::char_traits<wchar_t>, vldallocator<wchar_t> > vldstring;
 
 // This structure stores information, primarily the virtual address range, about
@@ -347,6 +358,9 @@ private:
     VOID   markAllLeaksAsReported (heapinfo_t* heapinfo, DWORD threadId = (DWORD)-1);
     VOID   unmapBlock (HANDLE heap, LPCVOID mem, const context_t &context);
     VOID   unmapHeap (HANDLE heap);
+    VOID   beginBlockWalk ();
+    VOID   endBlockWalk ();
+    bool   isBlockWalkThread () const;
     int    resolveStacks(heapinfo_t* heapinfo);
 
     // Static functions (callbacks)
@@ -398,6 +412,11 @@ private:
     WCHAR                m_ignoreModuleList [MAXIGNOREMODULELISTLENGTH]; // List of modules to be excluded from leak detection.
     WCHAR                m_ignoreFunctionsList [MAXIGNOREFUNCTIONLISTLENGTH]; // List of functions to be ignored in leak detection.
     HeapMap             *m_heapMap;           // Map of all active heaps in the process.
+    UINT32               m_blockWalkDepth;    // Nesting of block map walks on m_blockWalkThreadId (see beginBlockWalk).
+    DWORD                m_blockWalkThreadId; // Thread walking the block maps, while m_blockWalkDepth > 0.
+    DeferredBlockSet    *m_deferredBlocks;    // Blocks freed during the walk.
+    DeferredCallStackSet *m_deferredCallStacks; // Call stacks replaced during the walk.
+    DeferredHeapSet     *m_deferredHeaps;     // Heaps destroyed during the walk.
     IMalloc             *m_iMalloc;           // Pointer to the system implementation of IMalloc.
 
     SIZE_T               m_requestCurr;       // Current request number.

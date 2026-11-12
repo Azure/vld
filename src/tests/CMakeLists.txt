@@ -900,6 +900,7 @@ set(VLD_CHAOS_TESTS
     chaos_heapdestroy_deadlock
     chaos_report_hook_race
     chaos_long_frame
+    chaos_hook_reenter
 )
 
 function(set_chaos_output_dir TARGET_NAME)
