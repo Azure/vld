@@ -52,6 +52,12 @@ inline volatile LONG& ReportedCount()
     return count;
 }
 
+inline SIZE_T* ReportedSizes()
+{
+    static SIZE_T sizes[LEDGER_SIZE * 2];
+    return sizes;
+}
+
 inline int __cdecl CollectReportedBlock(int, wchar_t* message, int*)
 {
     const wchar_t* at = wcsstr(message, L"---------- Block ");
@@ -60,10 +66,14 @@ inline int __cdecl CollectReportedBlock(int, wchar_t* message, int*)
         at = wcsstr(at, L" at 0x");
         if (at != NULL)
         {
-            ULONG_PTR address = (ULONG_PTR)_wcstoui64(at + 6, NULL, 16);
+            wchar_t* end = NULL;
+            ULONG_PTR address = (ULONG_PTR)_wcstoui64(at + 6, &end, 16);
             LONG slot = InterlockedIncrement(&ReportedCount()) - 1;
             if (slot < LEDGER_SIZE * 2)
+            {
                 ReportedBlocks()[slot] = (void*)address;
+                ReportedSizes()[slot] = end != NULL && end[0] == L':' ? (SIZE_T)_wcstoui64(end + 1, NULL, 10) : 0;
+            }
         }
     }
     return 1;
@@ -167,6 +177,46 @@ inline int DescribeMissingLeaks()
     }
     sprintf_s(line, "%d blocks missing from the diagnostic report\n", missing);
     Write(line);
+    int extra = 0;
+    for (LONG j = 0; j < reported; j++)
+    {
+        if (used[j] || ++extra > 8)
+            continue;
+        const unsigned char* bytes = (const unsigned char*)ReportedBlocks()[j];
+        int length = sprintf_s(line, "unrecorded block in the report at %p (%Iu bytes):", bytes, ReportedSizes()[j]);
+        __try
+        {
+            for (int b = 0; b < 32; b++)
+                length += sprintf_s(line + length, _countof(line) - length, " %02X", bytes[b]);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            length += sprintf_s(line + length, _countof(line) - length, " (not readable)");
+        }
+        sprintf_s(line + length, _countof(line) - length, "\n");
+        Write(line);
+        for (int w = 0; w < 4; w++)
+        {
+            ULONG_PTR value = 0;
+            __try
+            {
+                value = ((const ULONG_PTR*)bytes)[w];
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                break;
+            }
+            HMODULE module = NULL;
+            wchar_t name[MAX_PATH];
+            if (value != 0 && GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)value, &module) &&
+                GetModuleFileNameW(module, name, MAX_PATH) != 0)
+            {
+                sprintf_s(line, "  word %d = %ls+0x%Ix\n", w, wcsrchr(name, L'\\') != NULL ? wcsrchr(name, L'\\') + 1 : name, value - (ULONG_PTR)module);
+                Write(line);
+            }
+        }
+        DescribeTrackedBlock(ReportedBlocks()[j]);
+    }
     return missing;
 }
 }
