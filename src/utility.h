@@ -202,10 +202,17 @@ public:
     bool IsOwnedByCurrentThread () { return m_lock.IsOwnedByCurrentThread(); }
     void Leave ()
     {
-        deferredreport_t* report = m_lock.IsOwnedOnceByCurrentThread() ? TakeDeferredReport() : NULL;
-        m_lock.Leave();
+        deferredreport_t* report = LeaveTakingReport();
         if (report != NULL)
             PrintDeferredReport(report);
+    }
+    // Leaves without printing; the caller prints the returned output once it
+    // holds no other VLD lock either.
+    deferredreport_t* LeaveTakingReport ()
+    {
+        deferredreport_t* report = m_lock.IsOwnedOnceByCurrentThread() ? TakeDeferredReport() : NULL;
+        m_lock.Leave();
+        return report;
     }
 
 private:

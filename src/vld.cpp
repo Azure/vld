@@ -3266,8 +3266,10 @@ public:
     {
         m_vld.endBlockWalk();
         if (!m_nested) {
-            g_heapMapLock.Leave();
+            deferredreport_t* report = g_heapMapLock.LeaveTakingReport();
             g_leakQueryLock.Leave();
+            if (report != NULL)
+                PrintDeferredReport(report);
         }
     }
 
