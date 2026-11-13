@@ -237,12 +237,12 @@ inline DWORD WINAPI RunThreadsTrampoline(LPVOID p)
     return arg->start->routine((LPVOID)arg->index);
 }
 
-inline void RunThreads(int count, LPTHREAD_START_ROUTINE routine, volatile LONG* stop = NULL, DWORD stopAfterMs = INFINITE)
+inline void RunThreads(int count, LPTHREAD_START_ROUTINE routine, volatile LONG* stop = NULL, DWORD stopAfterMs = INFINITE, bool together = true)
 {
     HANDLE threads[64];
     RunThreadsArg args[64];
     Check(count <= 64, "too many threads");
-    RunThreadsStart start = { routine, 0, CreateEventW(NULL, TRUE, FALSE, NULL) };
+    RunThreadsStart start = { routine, 0, CreateEventW(NULL, TRUE, !together, NULL) };
     Check(start.go != NULL, "CreateEvent failed");
     for (int i = 0; i < count; i++)
     {

@@ -165,7 +165,10 @@ int main()
     early = (BYTE*)CoTaskMemRealloc(early, 128);
     chaos::Check(early != NULL && early[0] == 0x3C && early[63] == 0x3C, "reallocating a block from before the spy lost its data");
     CoTaskMemFree(early);
-    chaos::RunThreads(THREADS, Worker);
+    // Workers start one by one: started together they contend for COM's spy
+    // lock at once, and the lock's debug record Windows then allocates inside
+    // the COM call is reported as a leak of that call.
+    chaos::RunThreads(THREADS, Worker, NULL, INFINITE, false);
     // Revoking waits for the spied blocks, and some are leaked.
     CoRevokeMallocSpy();
 
