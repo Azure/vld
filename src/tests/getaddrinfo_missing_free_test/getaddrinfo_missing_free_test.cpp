@@ -3,14 +3,14 @@
 //
 // This test runs in its own process so DLL loading state is clean.
 // It first warms up getaddrinfo (triggering system DLL one-time init),
-// then compares leak counts with and without freeaddrinfo.
+// then checks that VLD tracks the block getaddrinfo returns and counts it
+// as a leak of this thread when freeaddrinfo is not called.
 //
 // The vld.ini for this test has an empty IgnoreModulesList, so system DLL
-// false positives are visible. The test accounts for this by comparing
-// leak counts rather than checking for zero.
+// allocations are tracked too. Leak counts are not compared: the DNS client
+// allocates on this thread and on threads of its own at any time.
 
 #include <gtest/gtest.h>
-#include <climits>
 #include <WinSock2.h>
 #include <WS2tcpip.h>
 #include "vld.h"
@@ -41,8 +41,6 @@ class TestGetAddrInfoMissingFree : public ::testing::Test
 //   2. Baseline: VLD tracks the block getaddrinfo returns.
 //   3. Test: call getaddrinfo WITHOUT freeaddrinfo. VLD still tracks the
 //      block, as a leak of this thread.
-// Leak counts are not compared: the DNS client allocates on this thread and
-// on threads of its own at any time.
 typedef const wchar_t* (*AllocationCallstack_t)(void* alloc, BOOL showInternalFrames);
 
 static AllocationCallstack_t GetAllocationCallstack()
@@ -66,7 +64,7 @@ static struct addrinfo* ResolveLocalhost()
     return rc == 0 ? result : NULL;
 }
 
-TEST_F(TestGetAddrInfoMissingFree, MissingFreeAddrInfoProducesMoreLeaks)
+TEST_F(TestGetAddrInfoMissingFree, MissingFreeAddrInfoIsTrackedAsLeak)
 {
     AllocationCallstack_t callstack = GetAllocationCallstack();
     ASSERT_NE(static_cast<AllocationCallstack_t>(NULL), callstack);

@@ -212,9 +212,10 @@ VOID DumpMemoryW (LPCVOID address, SIZE_T size)
             BYTE byte = ((PBYTE)address)[byteIndex];
             FormatHexByte(byte, formatBuf);
             wcsncpy_s(hexDump + hexIndex, HEXDUMPLINELENGTH - hexIndex, formatBuf, 4);
-            if (((byteIndex % 2) == 0) && ((byteIndex + 1) < dumpLen)) {
-                // On every even byte, print one character.
-                WORD   word = ((PWORD)address)[byteIndex / 2];
+            if ((byteIndex % 2) == 0) {
+                // On every even byte, print one character. An odd size ends
+                // with a lone byte; the copy being dumped stops there.
+                WORD   word = ((byteIndex + 1) < size) ? ((PWORD)address)[byteIndex / 2] : (WORD)byte;
                 if ((word == 0x0000) || (word == 0x0020)) {
                     unidump[uniIndex] = L'.';
                 }

@@ -55,6 +55,25 @@ int main()
         chaos::Fail(message);
     }
 
+    chaos::SetPhase("a header that changes between queries");
+    void* changing = malloc(BLOCK_SIZE);
+    chaos::Check(changing != NULL, "malloc failed");
+    memset(changing, 0, BLOCK_SIZE);
+    FakeHeader* header = (FakeHeader*)changing;
+    header->use = 1;
+    header->size = BLOCK_SIZE - sizeof(FakeHeader) - 4;
+    memset(header->gap, 0xFD, sizeof(header->gap));
+    UINT before = VLDGetLeaksCount();
+    header->use = 0;
+    UINT after = VLDGetLeaksCount();
+    if (before != _countof(USES) + 1 || after != before)
+    {
+        char message[128];
+        sprintf_s(message, "counted %u leaks, then %u after the fake header changed; expected %d", before, after, (int)_countof(USES) + 1);
+        chaos::Fail(message);
+    }
+    free(changing);
+
     chaos::SetPhase("cleanup");
     for (int i = 0; i < _countof(USES); i++)
     {

@@ -133,7 +133,16 @@ steps:
 
 - task: PublishPipelineArtifact@1
   displayName: 'Publish ${{ parameters.arch }}${{ parameters.artifactSuffix }} build'
-  condition: succeededOrFailed()
+  condition: succeeded()
   inputs:
     targetPath: 'build_${{ parameters.arch }}'
     artifact: 'build_${{ parameters.arch }}${{ parameters.artifactSuffix }}'
+
+# Artifact names cannot be reused, so each failed attempt publishes under its
+# own name and "Rerun failed jobs" can still publish.
+- task: PublishPipelineArtifact@1
+  displayName: 'Publish ${{ parameters.arch }}${{ parameters.artifactSuffix }} failed build'
+  condition: failed()
+  inputs:
+    targetPath: 'build_${{ parameters.arch }}'
+    artifact: 'build_${{ parameters.arch }}${{ parameters.artifactSuffix }}_failed_attempt$(System.JobAttempt)'

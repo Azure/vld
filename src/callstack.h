@@ -38,6 +38,9 @@ template <typename Tk> class Set;
 #define MAX_SYMBOL_NAME_LENGTH  256 // Maximum symbol name length that we will allow. Longer names will be truncated.
 #define MAX_SYMBOL_NAME_SIZE    ((MAX_SYMBOL_NAME_LENGTH * sizeof(WCHAR)) - 1)
 
+// Number of safe stack walks that fell back to RtlCaptureStackBackTrace.
+extern volatile LONG g_safeStackWalkFallbacks;
+
 ////////////////////////////////////////////////////////////////////////////////
 //
 //  The CallStack Class
@@ -96,7 +99,8 @@ public:
     virtual DWORD getHashValue() const = 0;
     virtual VOID getStackTrace (UINT32 maxdepth, const context_t& context) = 0;
     bool isLeakSuppressed();
-    // False once the stack is resolved or known to be a CRT startup stack.
+    // False once the stack is resolved with all its symbols or known to be a
+    // CRT startup stack.
     bool needsSymbols() const;
 
     // Symbols of call stack frames are looked up by dbghelp only outside
@@ -122,6 +126,7 @@ protected:
 #define CALLSTACK_STATUS_INCOMPLETE    0x1 //   If set, the stack trace stored in this CallStack appears to be incomplete.
 #define CALLSTACK_STATUS_STARTUPCRT    0x2 //   If set, the stack trace is startup CRT.
 #define CALLSTACK_STATUS_NOTSTARTUPCRT 0x4 //   If set, the stack trace is not startup CRT.
+#define CALLSTACK_STATUS_PARTIAL       0x8 //   If set, m_resolved shows frames whose symbols were missing from the cache as addresses.
 
     // The chunk list is made of a linked list of Chunks.
     struct chunk_t {
@@ -142,15 +147,24 @@ protected:
     int                 m_resolvedCapacity;
     int                 m_resolvedLength;
 
+    // Earlier renderings of a stack resolved again; see resolve.
+    struct superseded_t {
+        WCHAR*        text;
+        superseded_t* next;
+    };
+    superseded_t*       m_superseded;
+    VOID freeSuperseded ();
+
     bool isInternalModule( const PWSTR filename ) const;
     UINT isCrtStartupFunction( LPCWSTR functionName ) const;
     bool isIgnoreFunction(LPCWSTR functionName) const;
     static LPCWSTR getFunctionName(SIZE_T programCounter, DWORD64& displacement64,
-        SYMBOL_INFO* functionInfo);
+        SYMBOL_INFO* functionInfo, bool& cacheMiss);
     static LPCWSTR getFunctionName(SIZE_T programCounter, DWORD64& displacement64,
         SYMBOL_INFO* functionInfo, CriticalSectionLocker<DbgHelp>& locker);
     static BOOL getLine(SIZE_T programCounter, DWORD& displacement, IMAGEHLP_LINEW64* sourceInfo,
-        LPWSTR fileName, DWORD fileNameSize);
+        LPWSTR fileName, DWORD fileNameSize, bool& cacheMiss);
+    bool areFramesCached() const;
     DWORD resolveFunction(SIZE_T programCounter, IMAGEHLP_LINEW64* sourceInfo, DWORD displacement,
         LPCWSTR functionName, LPWSTR stack_line, DWORD stackLineSize) const;
 

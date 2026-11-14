@@ -978,3 +978,55 @@ add_vld_test(chaos_longname_dll
 set_chaos_output_dir(chaos_longname_dll)
 set_target_properties(chaos_longname_dll PROPERTIES OUTPUT_NAME "chaos_longname_012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789end")
 add_dependencies(chaos_long_frame chaos_longname_dll)
+
+# ============================================================================
+# review74 - one test per PR #74 review comment, in their own output directory
+# with their own vld.ini.
+# ============================================================================
+set(VLD_REVIEW74_TESTS
+    review_symbol_cache_latch
+    review_last_error
+    review_report_file_fallback
+    review_proc_name_address
+    review_validate_heapfree
+    review_crt_noaccess_leak
+    review_report_options_race
+    review_unreadable_no_exception
+)
+
+# The tests share one directory, so one target copies their runtime files;
+# a copy per test would race in a parallel build.
+set(REVIEW74_DIR "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/review74")
+add_custom_target(review74_runtime
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${REVIEW74_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/review74/vld.ini"
+        "${REVIEW74_DIR}/vld.ini"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:vld>"
+        "${REVIEW74_DIR}/$<TARGET_FILE_NAME:vld>"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/setup/dbghelp/${DBGHELP_ARCH}/dbghelp.dll"
+        "${REVIEW74_DIR}/dbghelp.dll"
+    DEPENDS vld
+    COMMENT "Copying review74 vld.ini, VLD DLL, and dbghelp.dll"
+)
+
+foreach(REVIEW_TEST ${VLD_REVIEW74_TESTS})
+    add_vld_test(${REVIEW_TEST}
+        SOURCES review74/${REVIEW_TEST}.cpp
+        HEADERS review74/review_common.h chaos/chaos_common.h
+    )
+    set_target_properties(${REVIEW_TEST} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/review74"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin/Debug/review74"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin/Release/review74"
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/bin/RelWithDebInfo/review74"
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/bin/MinSizeRel/review74"
+    )
+    add_dependencies(${REVIEW_TEST} review74_runtime)
+    set_tests_properties(${REVIEW_TEST} PROPERTIES
+        TIMEOUT 150
+        FAIL_REGULAR_EXPRESSION "FAIL:|Visual Leak Detector detected [0-9]+ memory leak")
+endforeach()
+

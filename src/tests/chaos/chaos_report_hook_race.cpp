@@ -1,7 +1,7 @@
 // chaos_report_hook_race.cpp - report hooks installed and removed while other
 // threads print leak reports.
 //
-// VLDSetReportHook changes the hook set under VLD's options lock; every
+// VLDSetReportHook changes the hook set under g_reportHooksLock; every
 // printed report line walks that set. A leak report running concurrently with
 // hook installs/removals must neither crash nor lose the permanent hook.
 
@@ -13,6 +13,7 @@ namespace
 const DWORD RUN_MS = 3000;
 volatile LONG g_stop = 0;
 volatile LONG g_leakedLines = 0;
+volatile LONG g_permanentLines = 0;
 
 template <int N>
 int __cdecl Hook(int, wchar_t* message, int*)
@@ -28,7 +29,7 @@ int __cdecl PermanentHook(int, wchar_t* message, int*)
 {
     if (message != NULL && wcsstr(message, L"Leak Hash") != NULL)
     {
-        InterlockedIncrement(&g_leakedLines);
+        InterlockedIncrement(&g_permanentLines);
     }
     return 1;
 }
@@ -86,13 +87,17 @@ int main()
     chaos::SetPhase("hook install/remove racing VLDReportLeaks");
     chaos::RunThreads(6, Worker, &g_stop, RUN_MS + 2000);
 
+    chaos::SetPhase("permanent hook after churn");
+    InterlockedExchange(&g_permanentLines, 0);
+    VLDReportLeaks();
+    chaos::Check(InterlockedCompareExchange(&g_permanentLines, 0, 0) >= 4, "the permanent hook was lost during churn");
+
     chaos::SetPhase("cleanup");
     for (int i = 0; i < 4; i++)
     {
         free(leaks[i]);
     }
-    VLDSetReportHook(VLD_RPTHOOK_REMOVE, PermanentHook);
-    chaos::Check(InterlockedCompareExchange(&g_leakedLines, 0, 0) > 0, "no leak report reached the permanent hook");
+    chaos::Check(VLDSetReportHook(VLD_RPTHOOK_REMOVE, PermanentHook) == 0, "remove failed");
     chaos::Pass();
     return 0;
 }

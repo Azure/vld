@@ -460,6 +460,7 @@ private:
     size_t               m_moduleEventCount;
     size_t               m_moduleEventCapacity;
     CriticalSection      m_optionsLock;       // Serializes access to the heap and block maps.
+    CriticalSection      m_reportOptionsLock; // Serializes SetReportOptions.
     UINT32               m_options;           // Configuration options.
     IgnoreFunctionsSet   *m_ignoreFunctions;   // Contains information about all the functions that needs to be ignored.
 

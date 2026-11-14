@@ -3,10 +3,11 @@
 //
 // The heap frees the old block inside the real realloc, before VLD forgets
 // the old address, so another thread can be handed that address first. Movers
-// reallocate blocks that VLD does not track, or tracked ones while VLD is
-// disabled for the thread, through every reallocation API to a larger size
-// so they move; leakers keep every block they allocate. Each leaker's count
-// must match exactly.
+// reallocate blocks that VLD does not track, tracked ones while VLD is
+// disabled for the thread, and tracked ones with VLD enabled, through every
+// reallocation API to a larger size so they move; leakers keep every block
+// they allocate, spread over the whole run. Each leaker's count must match
+// exactly.
 
 #include "chaos_common.h"
 #include "vld.h"
@@ -74,16 +75,18 @@ DWORD WINAPI Mover(LPVOID p)
     while (!InterlockedCompareExchange(&g_stop, 0, 0))
     {
         Api api = (Api)random.Below(API_COUNT);
-        bool untracked = random.Below(2) == 0;
+        unsigned mode = random.Below(3);
+        bool untracked = mode == 0;
+        bool disabledMove = mode == 1;
         if (untracked)
             VLDDisable();
         void* block = Allocate(api);
         if (untracked)
             VLDRestore();
-        else
+        else if (disabledMove)
             VLDDisable();
         void* moved = Reallocate(api, block, 4096 + random.Below(4096));
-        if (!untracked)
+        if (disabledMove)
             VLDRestore();
         Free(api, moved != NULL ? moved : block);
     }
@@ -93,11 +96,16 @@ DWORD WINAPI Mover(LPVOID p)
 DWORD WINAPI LeakerThread(LPVOID p)
 {
     Leaker* leaker = (Leaker*)p;
+    ULONGLONG start = GetTickCount64();
     while (!InterlockedCompareExchange(&g_stop, 0, 0) && leaker->kept < MAX_KEPT)
     {
+        ULONGLONG elapsed = GetTickCount64() - start;
+        if ((ULONGLONG)leaker->kept * RUN_MS >= (ULONGLONG)MAX_KEPT * elapsed)
+        {
+            Sleep(1);
+            continue;
+        }
         leaker->blocks[leaker->kept++] = malloc(SIZE);
-        if ((leaker->kept & 15) == 0)
-            Sleep(0);
     }
     return 0;
 }

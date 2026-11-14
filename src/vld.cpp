@@ -452,6 +452,7 @@ VisualLeakDetector::VisualLeakDetector ()
     m_moduleEventCount    = 0;
     m_moduleEventCapacity = 0;
     m_optionsLock.Initialize();
+    m_reportOptionsLock.Initialize();
     m_modulesLock.Initialize();
     m_selfTestFile    = __FILE__;
     m_selfTestLine    = 0;
@@ -776,6 +777,11 @@ VisualLeakDetector::~VisualLeakDetector ()
                 Report(L"Largest number used: %Iu bytes.\n", m_maxAlloc);
                 Report(L"Total allocations: %Iu bytes.\n", m_totalAlloc);
             }
+            LONG fallbacks = InterlockedCompareExchange(&g_safeStackWalkFallbacks, 0, 0);
+            if (fallbacks != 0) {
+                Report(L"WARNING: Visual Leak Detector: %ld call stacks were captured with the fast method because the symbol handler was busy; their Leak Hash can differ from the same stack captured with the safe method.\n",
+                    fallbacks);
+            }
         }
 
 #if defined(_M_ARM64)
@@ -857,6 +863,7 @@ VisualLeakDetector::~VisualLeakDetector ()
     HeapDestroy(g_vldHeap);
 
     m_optionsLock.Delete();
+    m_reportOptionsLock.Delete();
     m_modulesLock.Delete();
     m_tlsLock.Delete();
     g_heapMapLock.Delete();
@@ -1518,6 +1525,8 @@ SIZE_T VisualLeakDetector::eraseDuplicates (const BlockMap::Iterator &element, S
 }
 
 // gettls - Obtains the thread local storage structure for the calling thread.
+//   Keeps the thread's last error, which TlsGetValue clears on success: the
+//   hooks call this between the application's calls.
 //
 //  Return Value:
 //
@@ -1526,6 +1535,7 @@ SIZE_T VisualLeakDetector::eraseDuplicates (const BlockMap::Iterator &element, S
 //
 tls_t* VisualLeakDetector::getTls ()
 {
+    DWORD lastError = GetLastError();
     // Get the pointer to this thread's thread local storage structure.
     tls_t* tls = (tls_t*)TlsGetValue(m_tlsIndex);
     assert(GetLastError() == ERROR_SUCCESS);
@@ -1555,6 +1565,7 @@ tls_t* VisualLeakDetector::getTls ()
         TlsSetValue(m_tlsIndex, tls);
     }
 
+    SetLastError(lastError);
     return tls;
 }
 
@@ -1739,17 +1750,30 @@ VOID VisualLeakDetector::unmapBlock (HANDLE heap, LPCVOID mem, const context_t &
             bool diff = other_heap != heap; // Check indeed if the other heap is different
             if (alloc_block && alloc_block->callStack && diff)
             {
+                // Printing needs dbghelp to name the frames, and the debugger
+                // break must come after it, so both happen without
+                // g_heapMapLock; another thread can free the block meanwhile,
+                // so what the message needs is copied first.
+                SIZE_T serialNumber = alloc_block->serialNumber;
+                SIZE_T size = alloc_block->size;
+                DWORD threadId = alloc_block->threadId;
+                CallStack* alloc_stack = CallStack::Create();
+                for (UINT32 frame = 0; frame < alloc_block->callStack->size(); frame++)
+                    alloc_stack->push_back((*alloc_block->callStack)[frame]);
+                cs.Leave();
+
                 Report(L"CRITICAL ERROR!: VLD reports that memory was allocated in one heap and freed in another.\nThis will result in a corrupted heap.\nAllocation Call stack.\n");
-                Report(L"---------- Block %Iu at " ADDRESSFORMAT L": %Iu bytes ----------\n", alloc_block->serialNumber, mem, alloc_block->size);
-                Report(L"  TID: %u\n", alloc_block->threadId);
+                Report(L"---------- Block %Iu at " ADDRESSFORMAT L": %Iu bytes ----------\n", serialNumber, mem, size);
+                Report(L"  TID: %u\n", threadId);
                 Report(L"  Call Stack:\n");
-                alloc_block->callStack->dump(m_options & VLD_OPT_TRACE_INTERNAL_FRAMES);
+                alloc_stack->dump(m_options & VLD_OPT_TRACE_INTERNAL_FRAMES);
+                delete alloc_stack;
 
                 // Now we need a way to print the current callstack at this point:
                 CallStack* stack_here = CallStack::Create();
                 stack_here->getStackTrace(m_maxTraceFrames, context);
                 Report(L"Deallocation Call stack.\n");
-                Report(L"---------- Block %Iu at " ADDRESSFORMAT L": %Iu bytes ----------\n", alloc_block->serialNumber, mem, alloc_block->size);
+                Report(L"---------- Block %Iu at " ADDRESSFORMAT L": %Iu bytes ----------\n", serialNumber, mem, size);
                 Report(L"  Call Stack:\n");
                 stack_here->dump(FALSE);
                 // Now it should be safe to delete our temporary callstack
@@ -2005,21 +2029,30 @@ VOID VisualLeakDetector::reportConfig ()
 
 // readTrackedBlock - Copies bytes of a tracked block. A reallocation frees the
 //   old block before VLD remaps it, so a walk under g_heapMapLock can meet a
-//   block whose memory is already gone.
+//   block whose memory is already gone, and an application can make a live
+//   block unreadable. ReadProcessMemory fails on such memory where a plain
+//   read would raise an exception, which the application's vectored handlers
+//   and a debugger would see first, while VLD holds its lock.
 //
 //  Return Value:
 //
-//    false if the block can no longer be read.
+//    false if the block cannot be read.
 //
 static bool readTrackedBlock (LPVOID dest, LPCVOID block, SIZE_T size)
 {
-    __try {
-        memcpy(dest, block, size);
-        return true;
-    }
-    __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+    SIZE_T read = 0;
+    return ReadProcessMemory(g_currentProcess, block, dest, size, &read) && read == size;
+}
+
+// isLiveUnreadableBlock - Tells a block that cannot be read because the
+//   application protected its pages, which is still allocated, from one whose
+//   memory is gone.
+static bool isLiveUnreadableBlock (LPCVOID block)
+{
+    MEMORY_BASIC_INFORMATION mbi;
+    if (VirtualQuery(block, &mbi, sizeof(mbi)) != sizeof(mbi))
         return false;
-    }
+    return mbi.State == MEM_COMMIT;
 }
 
 // hasCrtNoMansLand - Checks the no-man's land the debug CRT writes on both
@@ -2088,8 +2121,8 @@ bool VisualLeakDetector::isDebugCrtAlloc( LPCVOID block, blockinfo_t* info )
     }
 
     // A guessed block without a consistent header is a heap block that was
-    // allocated while a CRT allocation was in progress. A block that cannot
-    // be read is being freed, which getCrtBlockUse reports for CRT blocks.
+    // allocated while a CRT allocation was in progress. getCrtBlockUse tells
+    // a block that cannot be read apart.
     if (info->debugCrtAlloc && info->crtGuessed) {
         BYTE first;
         if (readTrackedBlock(&first, block, sizeof(first)) && !hasCrtHeader(block, info->size, info->ucrt))
@@ -2153,13 +2186,14 @@ SIZE_T VisualLeakDetector::getLeaksCount (heapinfo_t* heapinfo, DWORD threadId)
 
 int VisualLeakDetector::getCrtBlockUse(LPCVOID block, bool ucrt, bool guessed)
 {
-    // A block that can no longer be read is being freed.
+    // A block that cannot be read is being freed, unless the application made
+    // its pages inaccessible; then it is a leak like any other.
     int use;
     if (!ucrt)
     {
         crtdbgblockheader_t crtheader;
         if (!readTrackedBlock(&crtheader, block, sizeof(crtheader)))
-            return CRT_USE_FREE;
+            return isLiveUnreadableBlock(block) ? CRT_USE_NORMAL : CRT_USE_FREE;
         use = crtheader.use;
         if (guessed && (CRT_USE_TYPE(use) == CRT_USE_FREE || CRT_USE_TYPE(use) == CRT_USE_INTERNAL)) {
             if (!hasCrtNoMansLand(block, crtheader.gap, sizeof(crtheader), crtheader.size))
@@ -2170,7 +2204,7 @@ int VisualLeakDetector::getCrtBlockUse(LPCVOID block, bool ucrt, bool guessed)
     {
         crtdbgblockheaderucrt_t crtheader;
         if (!readTrackedBlock(&crtheader, block, sizeof(crtheader)))
-            return CRT_USE_FREE;
+            return isLiveUnreadableBlock(block) ? CRT_USE_NORMAL : CRT_USE_FREE;
         use = crtheader.use;
         if (guessed && (CRT_USE_TYPE(use) == CRT_USE_FREE || CRT_USE_TYPE(use) == CRT_USE_INTERNAL)) {
             if (!hasCrtNoMansLand(block, crtheader.gap, sizeof(crtheader), crtheader.size))
@@ -2239,6 +2273,11 @@ SIZE_T VisualLeakDetector::reportLeaks (heapinfo_t* heapinfo, bool &firstLeak, S
             // we'll include in the report.
             address = CRTDBGBLOCKDATA(block);
             size = getCrtBlockSize(block, info->ucrt);
+            if (size == 0 && info->size > (SIZE_T)((LPCBYTE)address - (LPCBYTE)block) + GAPSIZE) {
+                // The header cannot be read; the heap block's size tells the
+                // data's.
+                size = info->size - ((LPCBYTE)address - (LPCBYTE)block) - GAPSIZE;
+            }
         }
 
         if (m_options & VLD_OPT_SKIP_CRTSTARTUP_LEAKS) {
@@ -2248,15 +2287,18 @@ SIZE_T VisualLeakDetector::reportLeaks (heapinfo_t* heapinfo, bool &firstLeak, S
             }
         }
 
-        // A report hook may free the block, so read it before the first Report.
-        // A block that can no longer be read is being freed.
+        // A block that cannot be read is being freed, unless the application
+        // made its pages inaccessible.
 #ifdef _DEBUG
         SIZE_T crtRequest = 0;
+        bool crtHeaderRead = false;
         if (crtBlock) {
             crtdbgblockheader_t crtheader;
-            if (!readTrackedBlock(&crtheader, block, sizeof(crtheader)))
+            crtHeaderRead = readTrackedBlock(&crtheader, block, sizeof(crtheader));
+            if (crtHeaderRead)
+                crtRequest = crtheader.request;
+            else if (!isLiveUnreadableBlock(block))
                 continue;
-            crtRequest = crtheader.request;
         }
 #endif
         SIZE_T dumpSize = (m_maxDataDump < size) ? m_maxDataDump : size;
@@ -2278,8 +2320,10 @@ SIZE_T VisualLeakDetector::reportLeaks (heapinfo_t* heapinfo, bool &firstLeak, S
         SIZE_T blockLeaksCount = 1;
         Report(L"---------- Block %Iu at " ADDRESSFORMAT L": %Iu bytes ----------\n", info->serialNumber, address, size);
 #ifdef _DEBUG
-        if (crtBlock)
+        if (crtBlock && crtHeaderRead)
             Report(L"  CRT Alloc ID: %Iu\n", crtRequest);
+        else if (crtBlock)
+            Report(L"  CRT Alloc ID: (not readable)\n");
 #endif
         assert(info->callStack);
         if (m_options & VLD_OPT_AGGREGATE_DUPLICATES) {
@@ -2531,8 +2575,10 @@ static UINT_PTR exportOrdinal (HMODULE module, LPCSTR name)
 //
 static bool matchesProcName (HMODULE module, const patchentry_t* patchentry, LPCSTR procname)
 {
-    bool entryIsOrdinal = HIWORD(patchentry->importName) == 0;
-    bool requestIsOrdinal = HIWORD(procname) == 0;
+    // GetProcAddress's own test: a name is any value above 0xFFFF. HIWORD looks
+    // at bits 16-31 only, which are zero for some 64-bit addresses too.
+    bool entryIsOrdinal = IS_INTRESOURCE(patchentry->importName);
+    bool requestIsOrdinal = IS_INTRESOURCE(procname);
     if (entryIsOrdinal && requestIsOrdinal)
         return (UINT_PTR)patchentry->importName == (UINT_PTR)procname;
     if (!entryIsOrdinal && !requestIsOrdinal)
@@ -3156,7 +3202,8 @@ VOID VisualLeakDetector::collectLeakFrames (Set<UINT_PTR>& frames, DWORD threadI
 
 // While a thread walks the heap and block maps under g_heapMapLock, code it
 // runs can free or reallocate tracked blocks or destroy heaps on the same
-// thread: report hooks and dbghelp callbacks. Erasing map entries would break
+// thread: an application's vectored exception handler sees the exceptions
+// dbghelp raises and handles internally. Erasing map entries would break
 // the walk (Tree::erase moves the successor's contents) and deleting a block's
 // information would pull it from under the walk, so such changes are deferred
 // to the end of the outermost walk. Call with g_heapMapLock held.
@@ -3232,7 +3279,8 @@ VOID VisualLeakDetector::endBlockWalk ()
 // missing after that is shown as an address. g_leakQueryLock keeps a second
 // caller from holding g_heapMapLock while it waits for g_DbgHelp, which a
 // caching thread holds. A query from a thread that already owns
-// g_heapMapLock (e.g. a report hook) caches nothing and takes no lock.
+// g_heapMapLock (e.g. from a vectored exception handler) caches nothing and
+// takes no lock.
 class LeakSymbolsHeapMapLock
 {
 public:
@@ -3644,6 +3692,10 @@ void VisualLeakDetector::SetReportOptions(UINT32 option_mask, CONST WCHAR *filen
         return;
     }
 
+    // One setter at a time, so that the file installed last is the one
+    // m_reportFilePath names. No allocation hook takes this lock, so it can be
+    // held while files are opened and closed.
+    CriticalSectionLocker<> setter(m_reportOptionsLock);
     WCHAR path[MAX_PATH];
     UINT32 options;
     {
@@ -3735,6 +3787,7 @@ VOID VisualLeakDetector::setReportDestination(LPCWSTR path, UINT32 options)
     // to a file opened for binary writing.
     FILE* file = NULL;
     if (_wfopen_s(&file, path, isUnicode ? L"wb" : L"w") != 0 || file == NULL) {
+        SwapReportFile(NULL, ascii, TRUE, toStdout);
         Report(L"WARNING: Visual Leak Detector: Couldn't open report file for writing: %s\n"
             L"  The report will be sent to the debugger instead.\n", path);
         return;
@@ -3746,7 +3799,6 @@ VOID VisualLeakDetector::setReportDestination(LPCWSTR path, UINT32 options)
         WCHAR bom = BOM;
         fwrite(&bom, sizeof(WCHAR), 1, file);
     }
-    // Another thread may have set a file meanwhile.
     previous = SwapReportFile(file, isUnicode ? unicode : ascii, toDebugger, toStdout);
     if (previous != NULL)
         fclose(previous);
@@ -3890,6 +3942,14 @@ CaptureContext::CaptureContext(void* func, context_t& context, BOOL debug, BOOL 
 CaptureContext::~CaptureContext() {
     if (!m_bFirst)
         return;
+
+    // The hooked function's last error must reach its caller; the module and
+    // stack lookups below can change it.
+    struct LastErrorKeeper {
+        DWORD error;
+        LastErrorKeeper() : error(GetLastError()) {}
+        ~LastErrorKeeper() { SetLastError(error); }
+    } keeper;
 
 #if defined(_M_ARM64)
     // [ARM64 process-exit teardown hang fix] Mirror the allocation-hook guards
