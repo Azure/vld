@@ -33,6 +33,8 @@
 
 // Imported Global Variables
 extern ReportHookSet*   g_pReportHooks;
+extern CriticalSection  g_reportHooksLock;
+extern HeapMapLock      g_heapMapLock;
 extern VisualLeakDetector g_vld;
 extern ImageDirectoryEntries g_Ide;
 #if defined(_M_ARM64)
@@ -42,11 +44,22 @@ extern "C" bool VldArm64InTeardown(void);
 // Global variables.
 static BOOL         s_reportDelay = FALSE;     // If TRUE, we sleep for a bit after calling OutputDebugString to give the debugger time to catch up.
 static FILE        *s_reportFile = NULL;       // Pointer to the file, if any, to send the memory leak report to.
+static SRWLOCK      s_reportFileLock = SRWLOCK_INIT; // Shared while writing to s_reportFile; exclusive to replace it.
 static BOOL         s_reportToDebugger = TRUE; // If TRUE, a copy of the memory leak report will be sent to the debugger for display.
 static BOOL         s_reportToStdOut = TRUE;   // If TRUE, a copy of the memory leak report will be sent to standard output.
 static encoding_e   s_reportEncoding = ascii;  // Output encoding of the memory leak report.
 
 #define IS_ORDINAL(name) (((UINT_PTR)name & 0xFFFF) == ((UINT_PTR)name))
+
+// Formats one dump byte as "XX " without the CRT's printf (see Report).
+static void FormatHexByte(BYTE byte, WCHAR* out)
+{
+    static const WCHAR digits[] = L"0123456789ABCDEF";
+    out[0] = digits[byte >> 4];
+    out[1] = digits[byte & 0xF];
+    out[2] = L' ';
+    out[3] = L'\0';
+}
 
 #if defined(_M_ARM64)
 // On ARM64, kernel32's heap exports (HeapCreate/HeapAlloc/HeapReAlloc/HeapFree/
@@ -129,8 +142,7 @@ VOID DumpMemoryA (LPCVOID address, SIZE_T size)
         SIZE_T ascIndex = wordIndex + wordIndex / 8;         // 1 character per byte, plus a 1-character space after every 8 bytes.
         if (byteIndex < size) {
             BYTE byte = ((PBYTE)address)[byteIndex];
-            _snwprintf_s(formatBuf, BYTEFORMATBUFFERLENGTH, _TRUNCATE, L"%.2X ", byte);
-            formatBuf[3] = '\0';
+            FormatHexByte(byte, formatBuf);
             wcsncpy_s(hexDump + hexIndex, HEXDUMPLINELENGTH - hexIndex, formatBuf, 4);
             if (isgraph(byte)) {
                 ascDump[ascIndex] = (WCHAR)byte;
@@ -198,12 +210,12 @@ VOID DumpMemoryW (LPCVOID address, SIZE_T size)
         SIZE_T uniIndex = ((byteIndex / 2) % 8) + ((byteIndex / 2) % 8) / 8; // 1 character every other byte, plus a 1-character space after every 8 bytes.
         if (byteIndex < size) {
             BYTE byte = ((PBYTE)address)[byteIndex];
-            _snwprintf_s(formatBuf, BYTEFORMATBUFFERLENGTH, _TRUNCATE, L"%.2X ", byte);
-            formatBuf[BYTEFORMATBUFFERLENGTH - 1] = '\0';
+            FormatHexByte(byte, formatBuf);
             wcsncpy_s(hexDump + hexIndex, HEXDUMPLINELENGTH - hexIndex, formatBuf, 4);
-            if (((byteIndex % 2) == 0) && ((byteIndex + 1) < dumpLen)) {
-                // On every even byte, print one character.
-                WORD   word = ((PWORD)address)[byteIndex / 2];
+            if ((byteIndex % 2) == 0) {
+                // On every even byte, print one character. An odd size ends
+                // with a lone byte; the copy being dumped stops there.
+                WORD   word = ((byteIndex + 1) < size) ? ((PWORD)address)[byteIndex / 2] : (WORD)byte;
                 if ((word == 0x0000) || (word == 0x0020)) {
                     unidump[uniIndex] = L'.';
                 }
@@ -1017,7 +1029,7 @@ BOOL PatchImport (HMODULE importmodule, moduleentry_t *patchModule)
         {
             // we only process MAX_PATCH_ENTRY_COUNT, if we exceed it crash
             // if this abort is ever hit, it means that MAX_PATCH_ENTRY_COUNT should be bumped up
-            Report(L"MAX_PATCH_ENTRY_COUNT is set to %zu, but has been exceeded, MAX_PATCH_ENTRY_COUNT needs to be increased.\n", MAX_PATCH_ENTRY_COUNT);
+            Report(L"MAX_PATCH_ENTRY_COUNT is set to %Iu, but has been exceeded, MAX_PATCH_ENTRY_COUNT needs to be increased.\n", MAX_PATCH_ENTRY_COUNT);
             abort();
             break;
         }
@@ -1193,11 +1205,27 @@ BOOL PatchModule (HMODULE importmodule, moduleentry_t patchtable [], UINT tables
 
 int CallReportHook(int reportType, LPWSTR message, int* hook_retval)
 {
+    // Called outside the lock: other threads, or the hook itself, may install
+    // or remove hooks meanwhile.
+    VLD_REPORT_HOOK hooks[MAX_REPORT_HOOKS];
+    size_t count = 0;
+    // Messages printed before VLD creates the hook set (and its lock) or after
+    // it is gone have no hooks.
     if (g_pReportHooks == NULL)
         return 0;
-    for (ReportHookSet::Iterator it = g_pReportHooks->begin(); it != g_pReportHooks->end(); ++it)
     {
-        int result = (*it)(reportType, message, hook_retval);
+        CriticalSectionLocker<> cs(g_reportHooksLock);
+        if (g_pReportHooks == NULL)
+            return 0;
+        for (ReportHookSet::Iterator it = g_pReportHooks->begin();
+            it != g_pReportHooks->end() && count < MAX_REPORT_HOOKS; ++it)
+        {
+            hooks[count++] = *it;
+        }
+    }
+    for (size_t i = 0; i < count; i++)
+    {
+        int result = hooks[i](reportType, message, hook_retval);
         if (result) // handled
             return result;
     }
@@ -1216,19 +1244,18 @@ int CallReportHook(int reportType, LPWSTR message, int* hook_retval)
 //
 //    None.
 //
-VOID Print (LPWSTR messagew)
+static VOID PrintNow (LPWSTR messagew)
 {
-    if (NULL == messagew)
-        return;
-
     int hook_retval=0;
     if (!CallReportHook(0, messagew, &hook_retval))
     {
         if (s_reportEncoding == unicode) {
+            AcquireSRWLockShared(&s_reportFileLock);
             if (s_reportFile != NULL) {
                 // Send the report to the previously specified file.
                 fwrite(messagew, sizeof(WCHAR), wcslen(messagew), s_reportFile);
             }
+            ReleaseSRWLockShared(&s_reportFileLock);
 
             if ( s_reportToStdOut )
                 fputws(messagew, stdout);
@@ -1245,10 +1272,12 @@ VOID Print (LPWSTR messagew)
             }
             messagea[MAXMESSAGELENGTH] = '\0';
 
+            AcquireSRWLockShared(&s_reportFileLock);
             if (s_reportFile != NULL) {
                 // Send the report to the previously specified file.
                 fwrite(messagea, sizeof(CHAR), strlen(messagea), s_reportFile);
             }
+            ReleaseSRWLockShared(&s_reportFileLock);
 
             if ( s_reportToStdOut )
                 fputs(messagea, stdout);
@@ -1263,6 +1292,101 @@ VOID Print (LPWSTR messagew)
     if (s_reportToDebugger && (s_reportDelay)) {
         Sleep(10); // Workaround the Visual Studio 6 bug where debug strings are sometimes lost if they're sent too fast.
     }
+}
+
+// Messages queued by Print, each followed by its terminating null. Accessed
+// only by the thread that owns g_heapMapLock.
+struct deferredreport_t {
+    WCHAR* text;
+    size_t length;
+    size_t capacity;
+    size_t dropped;   // Messages lost because the queue could not grow.
+};
+static deferredreport_t* s_deferredReport = NULL;
+
+static VOID DeferPrint (LPCWSTR messagew)
+{
+    size_t length = wcslen(messagew) + 1;
+    deferredreport_t* report = s_deferredReport;
+    if (report == NULL) {
+        report = new deferredreport_t;
+        if (report == NULL)
+            return;
+        report->text = NULL;
+        report->length = 0;
+        report->capacity = 0;
+        report->dropped = 0;
+        s_deferredReport = report;
+    }
+    if (report->length + length > report->capacity) {
+        size_t capacity = max(report->capacity * 2, report->length + length + 4096);
+        WCHAR* text = new WCHAR[capacity];
+        if (text == NULL) {
+            report->dropped++;
+            return;
+        }
+        if (report->length > 0)
+            memcpy(text, report->text, report->length * sizeof(WCHAR));
+        delete [] report->text;
+        report->text = text;
+        report->capacity = capacity;
+    }
+    memcpy(report->text + report->length, messagew, length * sizeof(WCHAR));
+    report->length += length;
+}
+
+// TakeDeferredReport - Takes the queued messages. Call with g_heapMapLock held.
+deferredreport_t* TakeDeferredReport ()
+{
+    deferredreport_t* report = s_deferredReport;
+    s_deferredReport = NULL;
+    return report;
+}
+
+// PrintDeferredReport - Prints and frees messages from TakeDeferredReport.
+//   Call without g_heapMapLock held. Runs from HeapMapLock::Leave, which can
+//   be a destructor, so an exception thrown by a report hook is discarded.
+VOID PrintDeferredReport (deferredreport_t* report)
+{
+    for (size_t offset = 0; offset < report->length; ) {
+        LPWSTR messagew = report->text + offset;
+        offset += wcslen(messagew) + 1;
+        try {
+            Print(messagew);
+        }
+        catch (...) {
+        }
+    }
+    if (report->dropped > 0) {
+        try {
+            Report(L"WARNING: Visual Leak Detector: %Iu report lines were lost: out of memory.\n", report->dropped);
+        }
+        catch (...) {
+        }
+    }
+    delete [] report->text;
+    delete report;
+}
+
+// Print - Sends a message to the report hooks, the debugger, stdout and/or the
+//   report file. A thread that owns g_heapMapLock queues it instead, to be
+//   printed when it releases the lock (see HeapMapLock).
+//
+//  - messagew (IN): The message.
+//
+//  Return Value:
+//
+//    None.
+//
+VOID Print (LPWSTR messagew)
+{
+    if (NULL == messagew)
+        return;
+    if (g_heapMapLock.IsOwnedByCurrentThread()) {
+        DeferPrint(messagew);
+        return;
+    }
+    PrintNow(messagew);
 }
 
 // Report - Sends a printf-style formatted message to the debugger for display
@@ -1280,13 +1404,25 @@ VOID Print (LPWSTR messagew)
 //
 //    None.
 //
+// VLD formats report lines while holding g_heapMapLock. The CRT's printf frees
+// a work buffer when done, and the debug CRT's free takes the CRT heap lock,
+// which VLD's own CRT holds while its heap calls go through VLD's hooks (and
+// so wait for g_heapMapLock). ntdll's formatter uses no heap and no locks.
+typedef int (__cdecl *VsnwprintfFunc)(wchar_t*, size_t, const wchar_t*, va_list);
+static const VsnwprintfFunc s_ntdllVsnwprintf =
+    (VsnwprintfFunc)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "_vsnwprintf");
+
 VOID Report (LPCWSTR format, ...)
 {
     va_list args;
     WCHAR   messagew [MAXREPORTLENGTH + 1];
 
     va_start(args, format);
-    int result = _vsnwprintf_s(messagew, MAXREPORTLENGTH + 1, _TRUNCATE, format, args);
+    int result;
+    if (s_ntdllVsnwprintf != NULL)
+        result = s_ntdllVsnwprintf(messagew, MAXREPORTLENGTH, format, args);
+    else
+        result = _vsnwprintf_s(messagew, MAXREPORTLENGTH + 1, _TRUNCATE, format, args);
     va_end(args);
     messagew[MAXREPORTLENGTH] = L'\0';
 
@@ -1456,50 +1592,38 @@ VOID RestoreModule (HMODULE importmodule, moduleentry_t patchtable [], UINT tabl
     }
 }
 
-// SetReportEncoding - Sets the output encoding of report messages to either
-//   ASCII (the default) or Unicode.
+// SwapReportFile - Sets the file, if any, to which report messages are sent,
+//   its encoding, and whether they are copied to the debugger and stdout.
+//   Waits for writes to the previous file to finish, so the caller can close
+//   it. Writes happen under s_reportFileLock, so they must not allocate: the
+//   allocation could wait for a lock held by a thread that waits here.
 //
-//  - encoding (IN): Specifies either "ascii" or "unicode".
+//  - file (IN): Pointer to an open file, or NULL.
 //
-//  Return Value:
+//  - encoding (IN): The file's encoding, "ascii" or "unicode". Ignored if file
+//      is NULL.
 //
-//    None.
-//
-VOID SetReportEncoding (encoding_e encoding)
-{
-    switch (encoding) {
-    case ascii:
-    case unicode:
-        s_reportEncoding = encoding;
-        break;
-
-    default:
-        assert(FALSE);
-    }
-}
-
-// SetReportFile - Sets a destination file to which all report messages should
-//   be sent. If this function is not called to set a destination file, then
-//   report messages will be sent to the debugger instead of to a file.
-//
-//  - file (IN): Pointer to an open file, to which future report messages should
-//      be sent.
-//
-//  - copydebugger (IN): If true, in addition to sending report messages to
-//      the specified file, a copy of each message will also be sent to the
+//  - copydebugger (IN): If true, a copy of each message is also sent to the
 //      debugger.
 //
+//  - tostdout (IN): If true, a copy of each message is also sent to stdout.
+//
 //  Return Value:
 //
-//    None.
+//    The previous file, or NULL.
 //
-VOID SetReportFile (FILE *file, BOOL copydebugger, BOOL tostdout)
+FILE* SwapReportFile (FILE *file, encoding_e encoding, BOOL copydebugger, BOOL tostdout)
 {
+    AcquireSRWLockExclusive(&s_reportFileLock);
+    FILE* previous = s_reportFile;
     s_reportFile = file;
+    if (file != NULL)
+        s_reportEncoding = encoding;
     s_reportToDebugger = copydebugger;
     s_reportToStdOut = tostdout;
+    ReleaseSRWLockExclusive(&s_reportFileLock);
+    return previous;
 }
-
 // AppendString - Appends the specified source string to the specified destination
 //   string. Allocates additional space so that the destination string "grows"
 //   as new strings are appended to it. This is accomplished by deleting the

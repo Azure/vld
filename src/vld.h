@@ -302,7 +302,11 @@ __declspec(dllimport) VLD_BOOL VLDGetModulesList(wchar_t *modules, VLD_UINT size
 __declspec(dllimport) void VLDSetReportOptions(VLD_UINT option_mask, const wchar_t *filename);
 
 // VLDSetReportHook - Installs or uninstalls a client-defined reporting function by hooking it
-//  into the C run-time debug reporting process (debug version only).
+//  into the C run-time debug reporting process (debug version only). Hooks get leak reports
+//  on the reporting thread after VLD releases its internal locks, so a hook may allocate and
+//  call VLD then. Warnings VLD prints while it loads module symbols (for example about a
+//  module without symbols) still reach hooks with VLD's internal locks held; a hook must
+//  not call VLD for those.
 //
 // mode: The action to take: VLD_RPTHOOK_INSTALL or VLD_RPTHOOK_REMOVE.
 //
@@ -310,7 +314,8 @@ __declspec(dllimport) void VLDSetReportOptions(VLD_UINT option_mask, const wchar
 //
 //  Return Value:
 //
-//    int: 0 if success.
+//    int: 0 if success, -1 if VLD is off, the mode is not valid, or 64 hooks are already
+//    installed.
 //
 __declspec(dllimport) int VLDSetReportHook(int mode,  VLD_REPORT_HOOK pfnNewHook);
 

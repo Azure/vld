@@ -35,6 +35,16 @@ steps:
           exit 1
         }
 
+- task: PowerShell@2
+  displayName: 'Agent OS and CPU'
+  inputs:
+    targetType: 'inline'
+    script: |
+      $os = Get-CimInstance Win32_OperatingSystem
+      $ubr = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').UBR
+      Write-Host "OS: $($os.Caption) $($os.Version).$ubr $($os.OSArchitecture)"
+      Get-CimInstance Win32_Processor | ForEach-Object { Write-Host "CPU: $($_.Name) ($($_.Manufacturer)) cores=$($_.NumberOfCores) lp=$($_.NumberOfLogicalProcessors)" }
+
 # Discover Visual Studio and setup build variables
 - task: PowerShell@2
   displayName: 'Discover Visual Studio (${{ parameters.arch }})'
@@ -118,9 +128,21 @@ steps:
     inputs:
       script: '"$(ctestPath)" -C "${{ parameters.configuration }}" --output-on-failure'
       workingDirectory: 'build_${{ parameters.arch }}'
+    env:
+      CHAOS_DUMP_DIR: '$(Build.SourcesDirectory)\build_${{ parameters.arch }}\chaos_dumps'
 
 - task: PublishPipelineArtifact@1
   displayName: 'Publish ${{ parameters.arch }}${{ parameters.artifactSuffix }} build'
+  condition: succeeded()
   inputs:
     targetPath: 'build_${{ parameters.arch }}'
     artifact: 'build_${{ parameters.arch }}${{ parameters.artifactSuffix }}'
+
+# Artifact names cannot be reused, so each failed attempt publishes under its
+# own name and "Rerun failed jobs" can still publish.
+- task: PublishPipelineArtifact@1
+  displayName: 'Publish ${{ parameters.arch }}${{ parameters.artifactSuffix }} failed build'
+  condition: failed()
+  inputs:
+    targetPath: 'build_${{ parameters.arch }}'
+    artifact: 'build_${{ parameters.arch }}${{ parameters.artifactSuffix }}_failed_attempt$(System.JobAttempt)'

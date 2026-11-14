@@ -506,6 +506,47 @@ add_custom_command(TARGET no_protect_to_read_test POST_BUILD
 )
 
 # ============================================================================
+# g_heapMapLock deadlock regression test
+#
+# VLD must not resolve symbols (dbghelp) while holding g_heapMapLock: a
+# deferred symbol load that needs the loader lock deadlocks against a thread
+# in DLL_THREAD_ATTACH whose allocation waits for g_heapMapLock. The test makes
+# that ordering deterministic and fails via a watchdog instead of hanging.
+# ============================================================================
+add_vld_test(heapmaplock_deadlock_dll
+    IS_DLL
+    SOURCES heapmaplock_deadlock_test/heapmaplock_deadlock_dll.cpp
+)
+add_vld_test(heapmaplock_deadlock_test
+    SOURCES heapmaplock_deadlock_test/heapmaplock_deadlock_test.cpp
+)
+add_dependencies(heapmaplock_deadlock_test heapmaplock_deadlock_dll)
+
+foreach(HEAPMAPLOCK_TARGET heapmaplock_deadlock_test heapmaplock_deadlock_dll)
+    set_target_properties(${HEAPMAPLOCK_TARGET} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/heapmaplock_deadlock_test"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin/Debug/heapmaplock_deadlock_test"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin/Release/heapmaplock_deadlock_test"
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/bin/RelWithDebInfo/heapmaplock_deadlock_test"
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/bin/MinSizeRel/heapmaplock_deadlock_test"
+    )
+endforeach()
+
+add_custom_command(TARGET heapmaplock_deadlock_test POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/heapmaplock_deadlock_test/vld.ini"
+        "$<TARGET_FILE_DIR:heapmaplock_deadlock_test>/vld.ini"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:vld>"
+        "$<TARGET_FILE_DIR:heapmaplock_deadlock_test>/$<TARGET_FILE_NAME:vld>"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/setup/dbghelp/${DBGHELP_ARCH}/dbghelp.dll"
+        "$<TARGET_FILE_DIR:heapmaplock_deadlock_test>/dbghelp.dll"
+    COMMENT "Copying heapmaplock_deadlock_test vld.ini, VLD DLL, and dbghelp.dll"
+)
+set_property(TEST heapmaplock_deadlock_test PROPERTY TIMEOUT 60)
+
+# ============================================================================
 # Deep Callstack Test - Tests for excessively long stack traces (PR #37)
 # ============================================================================
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/deep_callstack_test/deep_callstack_test.cpp)
@@ -846,3 +887,146 @@ if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/ignore_modules_getaddrinfo_test/ignore_mod
         COMMENT "Copying getaddrinfo_missing_free_test vld.ini, VLD DLL, and dbghelp.dll"
     )
 endif()
+
+# ============================================================================
+# Chaos tests
+#
+# Stress and race tests that try to make VLD hang, crash or misreport. Each
+# test prints "FAIL: ..." (a watchdog turns hangs into failures) and must exit
+# with code 0 and no leaks in VLD's exit report. They share one output
+# directory, vld.ini and the chaos_helper_dll helper.
+# ============================================================================
+set(VLD_CHAOS_TESTS
+    chaos_heapdestroy_deadlock
+    chaos_report_hook_race
+    chaos_long_frame
+    chaos_hook_reenter
+    chaos_thread_churn
+    chaos_crt_matrix
+    chaos_heap_churn
+    chaos_api_storm
+    chaos_aggregate_threads
+    chaos_hook_heap_ops
+    chaos_heap_flags
+    chaos_exit_pressure
+    chaos_report_options
+    chaos_realloc_reuse
+    chaos_fake_crt_header
+    chaos_crt_odd_apis
+    chaos_unload_report
+    chaos_alloc_throw
+    chaos_fibers
+    chaos_option_extremes
+    chaos_many_leaks
+    chaos_proc_ordinal
+    chaos_noaccess_leak
+    chaos_aligned_new
+    chaos_heaplock
+    chaos_heaplock_report
+    chaos_cotaskmem
+    chaos_crt_alloc_hook
+    chaos_new_handler
+    chaos_malloc_spy
+)
+
+function(set_chaos_output_dir TARGET_NAME)
+    set_target_properties(${TARGET_NAME} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/chaos"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin/Debug/chaos"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin/Release/chaos"
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/bin/RelWithDebInfo/chaos"
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/bin/MinSizeRel/chaos"
+    )
+endfunction()
+
+add_vld_test(chaos_helper_dll
+    IS_DLL
+    SOURCES chaos/chaos_helper_dll.cpp
+)
+set_chaos_output_dir(chaos_helper_dll)
+add_custom_command(TARGET chaos_helper_dll POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/chaos/vld.ini"
+        "$<TARGET_FILE_DIR:chaos_helper_dll>/vld.ini"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:vld>"
+        "$<TARGET_FILE_DIR:chaos_helper_dll>/$<TARGET_FILE_NAME:vld>"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/setup/dbghelp/${DBGHELP_ARCH}/dbghelp.dll"
+        "$<TARGET_FILE_DIR:chaos_helper_dll>/dbghelp.dll"
+    COMMENT "Copying chaos vld.ini, VLD DLL, and dbghelp.dll"
+)
+
+foreach(CHAOS_TEST ${VLD_CHAOS_TESTS})
+    add_vld_test(${CHAOS_TEST}
+        SOURCES chaos/${CHAOS_TEST}.cpp
+        HEADERS chaos/chaos_common.h
+    )
+    add_dependencies(${CHAOS_TEST} chaos_helper_dll)
+    set_chaos_output_dir(${CHAOS_TEST})
+    set_tests_properties(${CHAOS_TEST} PROPERTIES
+        TIMEOUT 30
+        FAIL_REGULAR_EXPRESSION "FAIL:|Visual Leak Detector detected [0-9]+ memory leak")
+endforeach()
+
+# A file name long enough that, with a long function name and source path,
+# a leak report line exceeds MAXREPORTLENGTH.
+add_vld_test(chaos_longname_dll
+    IS_DLL
+    SOURCES chaos/chaos_longname_dll_source_file_name_source_file_name_source_file_name_source_file_name_source_file_name_end.cpp
+)
+set_chaos_output_dir(chaos_longname_dll)
+set_target_properties(chaos_longname_dll PROPERTIES OUTPUT_NAME "chaos_longname_012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789end")
+add_dependencies(chaos_long_frame chaos_longname_dll)
+
+# ============================================================================
+# review74 - one test per PR #74 review comment, in their own output directory
+# with their own vld.ini.
+# ============================================================================
+set(VLD_REVIEW74_TESTS
+    review_symbol_cache_latch
+    review_last_error
+    review_report_file_fallback
+    review_proc_name_address
+    review_validate_heapfree
+    review_crt_noaccess_leak
+    review_report_options_race
+    review_unreadable_no_exception
+)
+
+# The tests share one directory, so one target copies their runtime files;
+# a copy per test would race in a parallel build.
+set(REVIEW74_DIR "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/review74")
+add_custom_target(review74_runtime
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${REVIEW74_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/review74/vld.ini"
+        "${REVIEW74_DIR}/vld.ini"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:vld>"
+        "${REVIEW74_DIR}/$<TARGET_FILE_NAME:vld>"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/setup/dbghelp/${DBGHELP_ARCH}/dbghelp.dll"
+        "${REVIEW74_DIR}/dbghelp.dll"
+    DEPENDS vld
+    COMMENT "Copying review74 vld.ini, VLD DLL, and dbghelp.dll"
+)
+
+foreach(REVIEW_TEST ${VLD_REVIEW74_TESTS})
+    add_vld_test(${REVIEW_TEST}
+        SOURCES review74/${REVIEW_TEST}.cpp
+        HEADERS review74/review_common.h chaos/chaos_common.h
+    )
+    set_target_properties(${REVIEW_TEST} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/review74"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin/Debug/review74"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin/Release/review74"
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/bin/RelWithDebInfo/review74"
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/bin/MinSizeRel/review74"
+    )
+    add_dependencies(${REVIEW_TEST} review74_runtime)
+    set_tests_properties(${REVIEW_TEST} PROPERTIES
+        TIMEOUT 150
+        FAIL_REGULAR_EXPRESSION "FAIL:|Visual Leak Detector detected [0-9]+ memory leak")
+endforeach()
+

@@ -116,6 +116,7 @@ struct blockinfo_t {
     bool       reported;
     bool       debugCrtAlloc;
     bool       ucrt;
+    bool       crtGuessed;     // debugCrtAlloc was guessed from the block's first bytes.
 };
 
 // BlockMaps map memory blocks (via their addresses) to blockinfo_t structures.
@@ -127,10 +128,28 @@ typedef Map<LPCVOID, blockinfo_t*> BlockMap;
 struct heapinfo_t {
     BlockMap blockMap;   // Map of all blocks allocated from this heap.
     UINT32   flags;      // Heap status flags
+#define VLD_HEAP_DESTROYED 0x1 // Destroyed during a block walk; endBlockWalk unmaps it.
 };
 
 // HeapMaps map heaps (via their handles) to BlockMaps.
 typedef Map<HANDLE, heapinfo_t*> HeapMap;
+
+// A block freed while its thread walks the block maps (see beginBlockWalk).
+struct deferredblock_t {
+    BOOL operator < (const struct deferredblock_t& other) const { return info < other.info; }
+    heapinfo_t*  heapinfo;
+    LPCVOID      block;
+    blockinfo_t* info;
+};
+// A heap destroyed while its thread walks the block maps.
+struct deferredheap_t {
+    BOOL operator < (const struct deferredheap_t& other) const { return heapinfo < other.heapinfo; }
+    HANDLE       heap;
+    heapinfo_t*  heapinfo;
+};
+typedef Set<deferredblock_t> DeferredBlockSet;
+typedef Set<CallStack*> DeferredCallStackSet;
+typedef Set<deferredheap_t> DeferredHeapSet;
 typedef std::basic_string<wchar_t, std::char_traits<wchar_t>, vldallocator<wchar_t> > vldstring;
 
 // This structure stores information, primarily the virtual address range, about
@@ -160,12 +179,21 @@ struct moduleinfo_t {
 // ModuleSets store information about modules loaded in the process.
 typedef Set<moduleinfo_t> ModuleSet;
 
+// A module load or unload seen by the loader notification while a refresh of
+// the module set is in progress; the refresh replays these on its new set.
+struct moduleevent_t {
+    bool         loaded;
+    moduleinfo_t info;
+};
+
 typedef Set<VLD_REPORT_HOOK> ReportHookSet;
+#define MAX_REPORT_HOOKS 64
 
 struct functioninfo_t {
     BOOL operator < (const struct functioninfo_t& other) const {
 
-        if (lstrcmpW(name, other.name) < 0) {
+        // Ordinal: lstrcmpW may allocate NLS data while VLD counts leaks.
+        if (wcscmp(name, other.name) < 0) {
             return TRUE;
         } else {
             return FALSE;
@@ -186,12 +214,14 @@ struct tls_t {
 #define VLD_TLS_DISABLED 0x2 	  //   If set, memory leak detection is disabled for the current thread.
 #define VLD_TLS_ENABLED  0x4 	  //   If set, memory leak detection is enabled for the current thread.
 #define VLD_TLS_UCRT     0x8      //   If set, the current allocation is a UCRT allocation.
+#define VLD_TLS_DBGHELP_TIMEDOUT 0x10 // If set, the last wait for g_DbgHelp on this thread timed out.
     UINT32	    oldFlags;         // Thread-local status old flags
     DWORD 	    threadId;         // Thread ID of the thread that owns this TLS structure.
     HANDLE      heap;
     LPVOID      blockWithoutGuard; // Store pointer to block.
     LPVOID      newBlockWithoutGuard;
     SIZE_T      size;
+    SIZE_T      blockSerial;      // Serial number mapped at blockWithoutGuard before a reallocation, 0 if none.
 };
 
 // Allocation state:
@@ -207,7 +237,7 @@ class CaptureContext {
 public:
     CaptureContext(void* func, context_t& context, BOOL debug = FALSE, BOOL ucrt = FALSE);
     ~CaptureContext();
-    __forceinline void Set(HANDLE heap, LPVOID mem, LPVOID newmem, SIZE_T size);
+    __forceinline void Set(HANDLE heap, LPVOID mem, LPVOID newmem, SIZE_T size, SIZE_T serial = 0);
 private:
     // Disallow certain operations
     CaptureContext();
@@ -215,8 +245,10 @@ private:
     CaptureContext& operator=(const CaptureContext&);
 private:
     BOOL IsExcludedModule();
+    BOOL IsExcludedModule(UINT_PTR fp);
     BOOL IsCrtModuleWithNoReporting(HMODULE hModule);
     BOOL ShouldReportLeaksForModule(HMODULE hModule);
+    void Commit(BOOL excluded, bool nested);
     void Reset();
 private:
     tls_t *m_tls;
@@ -319,29 +351,40 @@ private:
     ////////////////////////////////////////////////////////////////////////////////
     VOID   attachToLoadedModules (ModuleSet *newmodules);
     UINT32 getModuleState(ModuleSet::Iterator& it, UINT32 &moduleFlags);
+    VOID recordModuleEvent(bool loaded, const moduleinfo_t& info);
+    static VOID applyModuleEvent(ModuleSet* modules, const moduleevent_t& event);
     LPWSTR buildSymbolSearchPath();
     BOOL GetIniFilePath(LPTSTR lpPath, SIZE_T cchPath);
     VOID   configure ();
     BOOL   enabled ();
-    SIZE_T eraseDuplicates (const BlockMap::Iterator &element, Set<blockinfo_t*> &aggregatedLeak);
+    SIZE_T eraseDuplicates (const BlockMap::Iterator &element, Set<blockinfo_t*> &aggregatedLeak, DWORD threadId);
     tls_t* getTls ();
     VOID   mapBlock (HANDLE heap, LPCVOID mem, SIZE_T size, bool crtalloc, bool ucrt, DWORD threadId, blockinfo_t* &pblockInfo);
     VOID   mapHeap (HANDLE heap);
     VOID   remapBlock (HANDLE heap, LPCVOID mem, LPCVOID newmem, SIZE_T size,
-        bool crtalloc, bool ucrt, DWORD threadId, blockinfo_t* &pblockInfo, const context_t &context);
+        bool crtalloc, bool ucrt, DWORD threadId, blockinfo_t* &pblockInfo, SIZE_T serial, const context_t &context);
+    SIZE_T getBlockSerial (HANDLE heap, LPCVOID mem);
+    VOID   unmapMovedBlock (HANDLE heap, LPCVOID mem, SIZE_T serial, const context_t &context);
 public:
     VOID   PatchCurrentModule(HMODULE module);
 private:
     VOID   reportConfig ();
     static bool   isDebugCrtAlloc(LPCVOID block, blockinfo_t* info);
+    static bool   hasCrtHeader (LPCVOID block, SIZE_T size, bool ucrt);
     SIZE_T reportHeapLeaks (HANDLE heap);
-    static int    getCrtBlockUse (LPCVOID block, bool ucrt);
+    static int    getCrtBlockUse (LPCVOID block, bool ucrt, bool guessed);
     static size_t getCrtBlockSize(LPCVOID block, bool ucrt);
     SIZE_T getLeaksCount (heapinfo_t* heapinfo, DWORD threadId = (DWORD)-1);
+    VOID   collectLeakFrames (Set<UINT_PTR>& frames, DWORD threadId, HANDLE heap = NULL);
+    friend class LeakSymbolsHeapMapLock;
     SIZE_T reportLeaks(heapinfo_t* heapinfo, bool &firstLeak, Set<blockinfo_t*> &aggregatedLeaks, DWORD threadId = (DWORD)-1);
     VOID   markAllLeaksAsReported (heapinfo_t* heapinfo, DWORD threadId = (DWORD)-1);
     VOID   unmapBlock (HANDLE heap, LPCVOID mem, const context_t &context);
     VOID   unmapHeap (HANDLE heap);
+    VOID   deferUnmapHeap (HANDLE heap, heapinfo_t* heapinfo);
+    VOID   beginBlockWalk ();
+    VOID   endBlockWalk ();
+    bool   isBlockWalkThread () const;
     int    resolveStacks(heapinfo_t* heapinfo);
 
     // Static functions (callbacks)
@@ -354,7 +397,7 @@ private:
     static bool isFunctionIgnored(LPCWSTR functionName);
     blockinfo_t* findAllocedBlock(LPCVOID, __out HANDLE& heap);
     blockinfo_t* getAllocationBlockInfo(void* alloc);
-    void setupReporting();
+    void setReportDestination(LPCWSTR path, UINT32 options);
     void checkInternalMemoryLeaks();
     bool waitForAllVLDThreads();
 
@@ -393,6 +436,12 @@ private:
     WCHAR                m_ignoreModuleList [MAXIGNOREMODULELISTLENGTH]; // List of modules to be excluded from leak detection.
     WCHAR                m_ignoreFunctionsList [MAXIGNOREFUNCTIONLISTLENGTH]; // List of functions to be ignored in leak detection.
     HeapMap             *m_heapMap;           // Map of all active heaps in the process.
+    BOOL                 m_symsrvMissing;     // No symsrv.dll beside dbghelp.dll (see buildSymbolSearchPath).
+    UINT32               m_blockWalkDepth;    // Nesting of block map walks on m_blockWalkThreadId (see beginBlockWalk).
+    DWORD                m_blockWalkThreadId; // Thread walking the block maps, while m_blockWalkDepth > 0.
+    DeferredBlockSet    *m_deferredBlocks;    // Blocks freed during the walk.
+    DeferredCallStackSet *m_deferredCallStacks; // Call stacks replaced during the walk.
+    DeferredHeapSet     *m_deferredHeaps;     // Heaps destroyed during the walk.
     IMalloc             *m_iMalloc;           // Pointer to the system implementation of IMalloc.
 
     SIZE_T               m_requestCurr;       // Current request number.
@@ -403,7 +452,15 @@ private:
     SIZE_T               m_maxDataDump;       // Maximum number of user-data bytes to dump for each leaked block.
     UINT32               m_maxTraceFrames;    // Maximum number of frames per stack trace for each leaked block.
     CriticalSection      m_modulesLock;       // Protects accesses to the "loaded modules" ModuleSet.
+    // Loads and unloads seen while RefreshModules builds a new module set,
+    // in order. Protected by m_modulesLock.
+    size_t               m_refreshDepth;
+    bool                 m_moduleEventsLost;
+    moduleevent_t       *m_moduleEvents;
+    size_t               m_moduleEventCount;
+    size_t               m_moduleEventCapacity;
     CriticalSection      m_optionsLock;       // Serializes access to the heap and block maps.
+    CriticalSection      m_reportOptionsLock; // Serializes SetReportOptions.
     UINT32               m_options;           // Configuration options.
     IgnoreFunctionsSet   *m_ignoreFunctions;   // Contains information about all the functions that needs to be ignored.
 
@@ -412,7 +469,6 @@ private:
     static patchentry_t  m_ntdllImportPatch [];
     static patchentry_t  m_ole32Patch [];
     static moduleentry_t m_patchTable [58];   // Table of imports patched for attaching VLD to other modules.
-    FILE                *m_reportFile;        // File where the memory leak report may be sent to.
     WCHAR                m_reportFilePath [MAX_PATH]; // Full path and name of file to send memory leak report to.
     const char          *m_selfTestFile;      // Filename where the memory leak self-test block is leaked.
     int                  m_selfTestLine;      // Line number where the memory leak self-test block is leaked.

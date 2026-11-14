@@ -3,11 +3,12 @@
 //
 // This test runs in its own process so DLL loading state is clean.
 // It first warms up getaddrinfo (triggering system DLL one-time init),
-// then compares leak counts with and without freeaddrinfo.
+// then checks that VLD tracks the block getaddrinfo returns and counts it
+// as a leak of this thread when freeaddrinfo is not called.
 //
 // The vld.ini for this test has an empty IgnoreModulesList, so system DLL
-// false positives are visible. The test accounts for this by comparing
-// leak counts rather than checking for zero.
+// allocations are tracked too. Leak counts are not compared: the DNS client
+// allocates on this thread and on threads of its own at any time.
 
 #include <gtest/gtest.h>
 #include <WinSock2.h>
@@ -37,66 +38,62 @@ class TestGetAddrInfoMissingFree : public ::testing::Test
 //
 // Strategy:
 //   1. Warm up: call getaddrinfo+freeaddrinfo to trigger system DLL loading.
-//      Mark all one-time init leaks as reported.
-//   2. Baseline: call getaddrinfo+freeaddrinfo again. Since DLLs are already
-//      loaded, this should produce 0 new leaks.
-//   3. Test: call getaddrinfo WITHOUT freeaddrinfo. VLD should track the
-//      unreleased addrinfo allocation, producing more leaks than baseline.
-TEST_F(TestGetAddrInfoMissingFree, MissingFreeAddrInfoProducesMoreLeaks)
+//   2. Baseline: VLD tracks the block getaddrinfo returns.
+//   3. Test: call getaddrinfo WITHOUT freeaddrinfo. VLD still tracks the
+//      block, as a leak of this thread.
+typedef const wchar_t* (*AllocationCallstack_t)(void* alloc, BOOL showInternalFrames);
+
+static AllocationCallstack_t GetAllocationCallstack()
 {
+    HMODULE vld = NULL;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        (LPCWSTR)&VLDMarkAllLeaksAsReported, &vld);
+    return vld != NULL ? (AllocationCallstack_t)GetProcAddress(vld, "VldInternalGetAllocationCallstack") : NULL;
+}
+
+static struct addrinfo* ResolveLocalhost()
+{
+    struct addrinfo hints;
+    struct addrinfo* result = NULL;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    int rc = getaddrinfo("localhost", "80", &hints, &result);
+    EXPECT_EQ(0, rc);
+    return rc == 0 ? result : NULL;
+}
+
+TEST_F(TestGetAddrInfoMissingFree, MissingFreeAddrInfoIsTrackedAsLeak)
+{
+    AllocationCallstack_t callstack = GetAllocationCallstack();
+    ASSERT_NE(static_cast<AllocationCallstack_t>(NULL), callstack);
+
     // Step 1: warm up - trigger system DLL loading and mark those leaks.
-    {
-        struct addrinfo hints;
-        struct addrinfo* warmup = NULL;
-        memset(&hints, 0, sizeof(hints));
-        hints.ai_family = AF_INET;
-        hints.ai_socktype = SOCK_STREAM;
-        hints.ai_protocol = IPPROTO_TCP;
-        int rc = getaddrinfo("localhost", "80", &hints, &warmup);
-        if (rc == 0 && warmup != NULL)
-            freeaddrinfo(warmup);
-    }
+    struct addrinfo* warmup = ResolveLocalhost();
+    if (warmup != NULL)
+        freeaddrinfo(warmup);
     VLDMarkAllLeaksAsReported();
 
-    // Step 2: baseline - getaddrinfo WITH freeaddrinfo after DLLs loaded.
-    int leaks_with_free;
+    // Step 2: baseline - VLD tracks the block getaddrinfo returns.
+    for (int round = 0; round < 3; round++)
     {
-        struct addrinfo hints;
-        struct addrinfo* result = NULL;
-        memset(&hints, 0, sizeof(hints));
-        hints.ai_family = AF_INET;
-        hints.ai_socktype = SOCK_STREAM;
-        hints.ai_protocol = IPPROTO_TCP;
-        int rc = getaddrinfo("localhost", "80", &hints, &result);
-        ASSERT_EQ(0, rc);
+        struct addrinfo* result = ResolveLocalhost();
         ASSERT_NE(static_cast<struct addrinfo*>(NULL), result);
+        EXPECT_NE(static_cast<const wchar_t*>(NULL), callstack(result, FALSE))
+            << "VLD does not track the block getaddrinfo returned.";
         freeaddrinfo(result);
-        leaks_with_free = static_cast<int>(VLDGetLeaksCount());
+        VLDMarkAllLeaksAsReported();
     }
-    VLDMarkAllLeaksAsReported();
 
     // Step 3: test - getaddrinfo WITHOUT freeaddrinfo.
-    int leaks_without_free;
-    {
-        struct addrinfo hints;
-        struct addrinfo* leaked_result = NULL;
-        memset(&hints, 0, sizeof(hints));
-        hints.ai_family = AF_INET;
-        hints.ai_socktype = SOCK_STREAM;
-        hints.ai_protocol = IPPROTO_TCP;
-        int rc = getaddrinfo("localhost", "80", &hints, &leaked_result);
-        ASSERT_EQ(0, rc);
-        ASSERT_NE(static_cast<struct addrinfo*>(NULL), leaked_result);
-        // Intentionally NOT calling freeaddrinfo(leaked_result).
-        leaks_without_free = static_cast<int>(VLDGetLeaksCount());
-    }
-
-    EXPECT_GT(leaks_without_free, leaks_with_free)
-        << "Expected more leaks when freeaddrinfo is NOT called. "
-        << "Leaks with freeaddrinfo: " << leaks_with_free
-        << ", leaks without freeaddrinfo: " << leaks_without_free
-        << ". VLD should detect the missing freeaddrinfo as an "
-        << "additional tracked allocation.";
+    struct addrinfo* leaked_result = ResolveLocalhost();
+    ASSERT_NE(static_cast<struct addrinfo*>(NULL), leaked_result);
+    // Intentionally NOT calling freeaddrinfo(leaked_result).
+    EXPECT_NE(static_cast<const wchar_t*>(NULL), callstack(leaked_result, FALSE))
+        << "VLD should detect the missing freeaddrinfo: it does not track the block getaddrinfo returned.";
+    EXPECT_GT(VLDGetThreadLeaksCount(GetCurrentThreadId()), 0u)
+        << "VLD should count the block getaddrinfo returned as a leak of this thread.";
 
     VLDMarkAllLeaksAsReported();
 }

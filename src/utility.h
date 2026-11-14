@@ -32,12 +32,13 @@ Applications should never include this header."
 #include <cstdio>
 #include <windows.h>
 #include <intrin.h>
+#include "criticalsection.h"
 
 #ifdef _WIN64
-#define ADDRESSFORMAT       L"0x%.16X"   // Format string for 64-bit addresses
+#define ADDRESSFORMAT       L"0x%.16IX"  // Format string for 64-bit addresses
 #define ADDRESSCPPFORMAT    L"0x{:016X}" // Format string for 64-bit addresses
 #else
-#define ADDRESSFORMAT       L"0x%.8X"    // Format string for 32-bit addresses
+#define ADDRESSFORMAT       L"0x%.8IX"   // Format string for 32-bit addresses
 #define ADDRESSCPPFORMAT    L"0x{:08X}"  // Format string for 32-bit addresses
 #endif // _WIN64
 #define BOM             0xFEFF     // Unicode byte-order mark.
@@ -172,6 +173,7 @@ LPVOID Arm64LookupKernelbaseHeapProc (LPCSTR importname);
 VOID DumpMemoryA (LPCVOID address, SIZE_T length);
 VOID DumpMemoryW (LPCVOID address, SIZE_T length);
 BOOL FindImport (HMODULE importmodule, HMODULE exportmodule, LPCSTR exportmodulename, LPCSTR importname);
+LPVOID FindRealCode (LPVOID pCode);
 BOOL FindImportByExportAddress (HMODULE importmodule, LPCSTR exportmodulename, LPCVOID exportAddress);
 BOOL FindPatch (HMODULE importmodule, moduleentry_t* module);
 VOID InsertReportDelay ();
@@ -180,6 +182,42 @@ BOOL PatchImport (HMODULE importmodule, moduleentry_t *module);
 BOOL PatchModule (HMODULE importmodule, moduleentry_t patchtable [], UINT tablesize);
 VOID Print (LPWSTR message);
 VOID Report (LPCWSTR format, ...);
+
+// Report output that a thread produces while it owns g_heapMapLock; see Print.
+struct deferredreport_t;
+deferredreport_t* TakeDeferredReport ();
+VOID PrintDeferredReport (deferredreport_t* report);
+
+// The lock of VLD's heap and block maps, which every allocation hook takes.
+// Printing can allocate from the process heap (report hooks, the CRT,
+// OutputDebugStringW), which an application thread can hold with HeapLock
+// while its allocation waits for this lock. So output produced under the lock
+// is queued and printed once the outermost hold is released.
+class HeapMapLock
+{
+public:
+    void Initialize () { m_lock.Initialize(); }
+    void Delete () { m_lock.Delete(); }
+    void Enter () { m_lock.Enter(); }
+    bool IsOwnedByCurrentThread () { return m_lock.IsOwnedByCurrentThread(); }
+    void Leave ()
+    {
+        deferredreport_t* report = LeaveTakingReport();
+        if (report != NULL)
+            PrintDeferredReport(report);
+    }
+    // Leaves without printing; the caller prints the returned output once it
+    // holds no other VLD lock either.
+    deferredreport_t* LeaveTakingReport ()
+    {
+        deferredreport_t* report = m_lock.IsOwnedOnceByCurrentThread() ? TakeDeferredReport() : NULL;
+        m_lock.Leave();
+        return report;
+    }
+
+private:
+    CriticalSection m_lock;
+};
 #ifndef NDEBUG
 #define DbgPrint(x)     Print(x)
 #define DbgReport(...)  Report(__VA_ARGS__)
@@ -191,8 +229,7 @@ VOID Report (LPCWSTR format, ...);
 #endif
 VOID RestoreImport (HMODULE importmodule, moduleentry_t* module);
 VOID RestoreModule (HMODULE importmodule, moduleentry_t patchtable [], UINT tablesize);
-VOID SetReportEncoding (encoding_e encoding);
-VOID SetReportFile (FILE *file, BOOL copydebugger, BOOL copytostdout);
+FILE* SwapReportFile (FILE *file, encoding_e encoding, BOOL copydebugger, BOOL copytostdout);
 LPWSTR AppendString (LPWSTR dest, LPCWSTR source);
 BOOL StrToBool (LPCWSTR s);
 void ConvertModulePathToAscii( LPCWSTR modulename, LPSTR * modulenamea );

@@ -3,6 +3,9 @@
 
 #include "stdafx.h"
 #include "Tests.h"
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <wchar.h>
 // This hooks vld into this app
 #include "vld.h"
 
@@ -17,7 +20,21 @@ enum CorruptionType
 
 int __cdecl ReportHook(int /*reportHook*/, wchar_t *message, int* /*returnValue*/)
 {
+    static bool deallocationStack = false;
     fwprintf(stderr, L"%s", message);
+    // Exit once VLD dumps the deallocation call stack (its first frame), before
+    // the mismatched free reaches the heap: corrupting it can raise an exception
+    // with the heap lock held, and gtest's SEH handling then deadlocks starting
+    // a thread that needs that lock.
+    if (wcsstr(message, L"Deallocation Call stack.") != NULL)
+    {
+        deallocationStack = true;
+    }
+    else if (deallocationStack && wcschr(message, L'!') != NULL)
+    {
+        fflush(stderr);
+        TerminateProcess(GetCurrentProcess(), 3);
+    }
     return 1;
 }
 
@@ -56,7 +73,7 @@ TEST(CorruptionDeathTest, HeapMismatch)
         VLDSetReportHook(VLD_RPTHOOK_INSTALL, ReportHook);
         TestCorruption(eHeapMismatch);
         VLDSetReportHook(VLD_RPTHOOK_REMOVE, ReportHook);
-    }, IgnoreExitCode, "CRITICAL ERROR!: VLD reports that memory was allocated in one heap and freed in another.");
+    }, testing::ExitedWithCode(3), "CRITICAL ERROR!: VLD reports that memory was allocated in one heap and freed in another.");
 }
 
 int main(int argc, char **argv) {

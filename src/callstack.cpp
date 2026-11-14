@@ -39,7 +39,7 @@
 // Imported global variables.
 extern HANDLE             g_currentProcess;
 extern HANDLE             g_currentThread;
-extern CriticalSection    g_heapMapLock;
+extern HeapMapLock    g_heapMapLock;
 extern VisualLeakDetector g_vld;
 extern DbgHelp g_DbgHelp;
 
@@ -49,6 +49,150 @@ extern DbgHelp g_DbgHelp;
 // in that context, so we emit address-only frames instead (x64 parity).
 extern "C" bool VldArm64InTeardownReport(void);
 #endif
+
+// Symbols of call stack frames. dbghelp allocates from the process heap, so it
+// must not run under g_heapMapLock: an application thread that holds the
+// process heap lock (HeapLock) and allocates waits for g_heapMapLock in VLD's
+// hooks. Leak counting and reporting cache the symbols of the leaks' frames
+// before they take g_heapMapLock, and a thread that owns g_heapMapLock reads
+// symbols only from the cache, showing a frame missing from it as an address.
+struct cachedsymbol_t {
+    DWORD64 displacement64;
+    BOOL    foundLine;
+    DWORD   lineNumber;
+    DWORD   lineDisplacement;
+    WCHAR*  functionName;
+    WCHAR*  fileName;
+};
+typedef Map<UINT_PTR, cachedsymbol_t*> SymbolCache;
+static SymbolCache* g_symbolCache = NULL;
+// Counts clears, so that symbols looked up before a clear are not cached.
+static ULONG g_symbolCacheGeneration = 0;
+// Guards g_symbolCache and g_symbolCacheGeneration. Held only for map
+// operations and copies, never while another lock is taken.
+CriticalSection g_symbolCacheLock;
+
+static WCHAR* duplicateString(LPCWSTR source)
+{
+    size_t length = wcslen(source) + 1;
+    WCHAR* copy = new WCHAR[length];
+    if (copy != NULL)
+        wcscpy_s(copy, length, source);
+    return copy;
+}
+
+static bool usesSymbolCacheOnly()
+{
+    return g_heapMapLock.IsOwnedByCurrentThread();
+}
+
+// cacheSymbols - Looks up the symbols of the program counters that are not in
+//   the cache yet and adds them. Call without g_heapMapLock held.
+//
+//  - programCounters (IN): Program counters of call stack frames.
+//
+//  Return Value:
+//
+//    None.
+//
+VOID CallStack::cacheSymbols (const Set<UINT_PTR>& programCounters)
+{
+    BYTE symbolBuffer[sizeof(SYMBOL_INFO) + MAX_SYMBOL_NAME_SIZE];
+    for (Set<UINT_PTR>::Iterator it = programCounters.begin(); it != programCounters.end(); ++it) {
+        UINT_PTR programCounter = *it;
+        ULONG generation;
+        {
+            CriticalSectionLocker<> cs(g_symbolCacheLock);
+            if (g_symbolCache != NULL && g_symbolCache->find(programCounter) != g_symbolCache->end())
+                continue;
+            generation = g_symbolCacheGeneration;
+        }
+
+        // VLD's new returns NULL when its heap is exhausted; a symbol that
+        // cannot be cached is shown as an address.
+        cachedsymbol_t* symbol = new cachedsymbol_t;
+        if (symbol == NULL)
+            return;
+        IMAGEHLP_LINE64 sourceInfo = { 0 };
+        sourceInfo.SizeOfStruct = sizeof(IMAGEHLP_LINE64);
+        {
+            CriticalSectionLocker<DbgHelp> locker(g_DbgHelp);
+            symbol->functionName = duplicateString(getFunctionName(programCounter, symbol->displacement64,
+                (SYMBOL_INFO*)symbolBuffer, locker));
+            symbol->lineDisplacement = 0;
+            symbol->foundLine = FALSE;
+#if defined(_M_ARM64)
+            if (!VldArm64InTeardownReport())
+#endif
+            symbol->foundLine = g_DbgHelp.SymGetLineFromAddrW64(g_currentProcess, programCounter,
+                &symbol->lineDisplacement, &sourceInfo, locker);
+            symbol->lineNumber = symbol->foundLine ? sourceInfo.LineNumber : 0;
+            symbol->fileName = (symbol->foundLine && sourceInfo.FileName != NULL) ?
+                duplicateString(sourceInfo.FileName) : NULL;
+            if (symbol->fileName == NULL)
+                symbol->foundLine = FALSE;
+        }
+
+        CriticalSectionLocker<> cs(g_symbolCacheLock);
+        if (symbol->functionName != NULL && generation == g_symbolCacheGeneration) {
+            if (g_symbolCache == NULL)
+                g_symbolCache = new SymbolCache;
+            if (g_symbolCache != NULL && g_symbolCache->find(programCounter) == g_symbolCache->end()) {
+                g_symbolCache->insert(programCounter, symbol);
+                continue;
+            }
+        }
+        cs.Leave();
+        delete [] symbol->functionName;
+        delete [] symbol->fileName;
+        delete symbol;
+    }
+}
+
+// areSymbolsCached - Checks that the cache has every program counter.
+//
+//  - programCounters (IN): Program counters of call stack frames.
+//
+//  Return Value:
+//
+//    Returns true if every program counter is in the cache.
+//
+bool CallStack::areSymbolsCached (const Set<UINT_PTR>& programCounters)
+{
+    CriticalSectionLocker<> cs(g_symbolCacheLock);
+    for (Set<UINT_PTR>::Iterator it = programCounters.begin(); it != programCounters.end(); ++it) {
+        if (g_symbolCache == NULL || g_symbolCache->find(*it) == g_symbolCache->end())
+            return false;
+    }
+    return true;
+}
+
+// clearSymbolCache - Empties the cache, whose symbols can be stale once modules
+//   unload and others load at their addresses.
+//
+//  Return Value:
+//
+//    None.
+//
+VOID CallStack::clearSymbolCache ()
+{
+    SymbolCache* cache;
+    {
+        CriticalSectionLocker<> cs(g_symbolCacheLock);
+        cache = g_symbolCache;
+        g_symbolCache = NULL;
+        g_symbolCacheGeneration++;
+    }
+    if (cache == NULL)
+        return;
+    for (SymbolCache::Iterator it = cache->begin(); it != cache->end(); ++it) {
+        cachedsymbol_t* symbol = (*it).second;
+        delete [] symbol->functionName;
+        delete [] symbol->fileName;
+        delete symbol;
+    }
+    delete cache;
+}
 
 // Helper function to compare the begin of a string with a substring
 //
@@ -82,6 +226,7 @@ CallStack::CallStack ()
     m_resolved   = NULL;
     m_resolvedCapacity   = 0;
     m_resolvedLength = 0;
+    m_superseded = NULL;
 }
 
 // Destructor - Frees all memory allocated to the CallStack.
@@ -98,10 +243,21 @@ CallStack::~CallStack ()
     }
 
     delete [] m_resolved;
+    freeSuperseded();
 
     m_resolved = NULL;
     m_resolvedCapacity = 0;
     m_resolvedLength = 0;
+}
+
+VOID CallStack::freeSuperseded ()
+{
+    while (m_superseded != NULL) {
+        superseded_t* next = m_superseded->next;
+        delete [] m_superseded->text;
+        delete m_superseded;
+        m_superseded = next;
+    }
 }
 
 CallStack* CallStack::Create()
@@ -206,12 +362,80 @@ VOID CallStack::clear ()
         delete [] m_resolved;
         m_resolved = NULL;
     }
+    freeSuperseded();
+    m_status &= ~CALLSTACK_STATUS_PARTIAL;
     m_resolvedCapacity = 0;
     m_resolvedLength = 0;
 }
 
+// getFunctionName - Names the function of a program counter from the symbol
+//   cache. If the cache does not have it, asks dbghelp, or uses the address on
+//   a thread that owns g_heapMapLock and sets cacheMiss.
 LPCWSTR CallStack::getFunctionName(SIZE_T programCounter, DWORD64& displacement64,
-    SYMBOL_INFO* functionInfo, CriticalSectionLocker<DbgHelp>& locker) const
+    SYMBOL_INFO* functionInfo, bool& cacheMiss)
+{
+    displacement64 = 0;
+    {
+        CriticalSectionLocker<> cs(g_symbolCacheLock);
+        if (g_symbolCache != NULL) {
+            SymbolCache::Iterator it = g_symbolCache->find(programCounter);
+            if (it != g_symbolCache->end()) {
+                displacement64 = (*it).second->displacement64;
+                wcsncpy_s(functionInfo->Name, MAX_SYMBOL_NAME_LENGTH, (*it).second->functionName, _TRUNCATE);
+                return functionInfo->Name;
+            }
+        }
+    }
+    if (!usesSymbolCacheOnly()) {
+        CriticalSectionLocker<DbgHelp> locker(g_DbgHelp);
+        return getFunctionName(programCounter, displacement64, functionInfo, locker);
+    }
+    cacheMiss = true;
+    auto result = fmt::format_to_n(functionInfo->Name, MAX_SYMBOL_NAME_LENGTH - 1, L"" ADDRESSCPPFORMAT, programCounter);
+    *result.out = L'\0';
+    return functionInfo->Name;
+}
+
+// getLine - Finds the source line of a program counter in the symbol cache. If
+//   the cache does not have it, asks dbghelp, except on a thread that owns
+//   g_heapMapLock, which sets cacheMiss. sourceInfo->FileName points to
+//   fileName on success.
+BOOL CallStack::getLine(SIZE_T programCounter, DWORD& displacement, IMAGEHLP_LINEW64* sourceInfo,
+    LPWSTR fileName, DWORD fileNameSize, bool& cacheMiss)
+{
+    {
+        CriticalSectionLocker<> cs(g_symbolCacheLock);
+        if (g_symbolCache != NULL) {
+            SymbolCache::Iterator it = g_symbolCache->find(programCounter);
+            if (it != g_symbolCache->end()) {
+                if (!(*it).second->foundLine)
+                    return FALSE;
+                wcsncpy_s(fileName, fileNameSize, (*it).second->fileName, _TRUNCATE);
+                sourceInfo->FileName = fileName;
+                sourceInfo->LineNumber = (*it).second->lineNumber;
+                displacement = (*it).second->lineDisplacement;
+                return TRUE;
+            }
+        }
+    }
+    if (usesSymbolCacheOnly()) {
+        cacheMiss = true;
+        return FALSE;
+    }
+#if defined(_M_ARM64)
+    if (VldArm64InTeardownReport())
+        return FALSE;
+#endif
+    CriticalSectionLocker<DbgHelp> locker(g_DbgHelp);
+    if (!g_DbgHelp.SymGetLineFromAddrW64(g_currentProcess, programCounter, &displacement, sourceInfo, locker))
+        return FALSE;
+    wcsncpy_s(fileName, fileNameSize, sourceInfo->FileName, _TRUNCATE);
+    sourceInfo->FileName = fileName;
+    return TRUE;
+}
+
+LPCWSTR CallStack::getFunctionName(SIZE_T programCounter, DWORD64& displacement64,
+    SYMBOL_INFO* functionInfo, CriticalSectionLocker<DbgHelp>& locker)
 {
     // Initialize structures passed to the symbol handler.
     functionInfo->SizeOfStruct = sizeof(SYMBOL_INFO);
@@ -306,7 +530,11 @@ DWORD CallStack::resolveFunction(SIZE_T programCounter, IMAGEHLP_LINEW64* source
                 moduleName, functionName, displacement);
         }
     }
-    DWORD NumChars = static_cast<DWORD>(result.size);
+    // format_to_n returns the untruncated size. A truncated line still ends
+    // with a newline so that the next frame starts a line of its own.
+    DWORD NumChars = static_cast<DWORD>(result.out - stack_line);
+    if (result.size > NumChars && NumChars > 0)
+        stack_line[NumChars - 1] = L'\n';
     stack_line[NumChars] = L'\0';
     return NumChars;
 }
@@ -332,11 +560,11 @@ bool CallStack::isLeakSuppressed()
         return false;
     }
 
-    IMAGEHLP_LINE64  sourceInfo = { 0 };
-    sourceInfo.SizeOfStruct = sizeof(IMAGEHLP_LINE64);
-
     BYTE symbolBuffer[sizeof(SYMBOL_INFO) + MAX_SYMBOL_NAME_SIZE] = { 0 };
-    CriticalSectionLocker<DbgHelp> locker(g_DbgHelp);
+    // A frame missing from the symbol cache is named by its address, which can
+    // hide a CRT startup or ignored function: such an answer holds for this
+    // query only, and the stack is examined again next time.
+    bool cacheMiss = false;
 
     // Iterate through each frame in the call stack.
     for (UINT32 frame = 0; frame < m_size; frame++) {
@@ -352,13 +580,13 @@ bool CallStack::isLeakSuppressed()
         }
 
         DWORD64 displacement64;
-        LPCWSTR functionName = getFunctionName(programCounter, displacement64, (SYMBOL_INFO*)&symbolBuffer, locker);
+        LPCWSTR functionName = getFunctionName(programCounter, displacement64, (SYMBOL_INFO*)&symbolBuffer, cacheMiss);
 
-        m_status |= isCrtStartupFunction(functionName);
-        if (m_status & CALLSTACK_STATUS_STARTUPCRT) {
-            return true;
-        } else if (m_status & CALLSTACK_STATUS_NOTSTARTUPCRT) {
-            return false;
+        UINT startup = isCrtStartupFunction(functionName);
+        if (startup != 0) {
+            if (!cacheMiss)
+                m_status |= startup;
+            return (startup & CALLSTACK_STATUS_STARTUPCRT) != 0;
         }
 
         if (isIgnoreFunction(functionName)) {
@@ -366,7 +594,8 @@ bool CallStack::isLeakSuppressed()
         }
     }
 
-    m_status |= CALLSTACK_STATUS_NOTSTARTUPCRT;
+    if (!cacheMiss)
+        m_status |= CALLSTACK_STATUS_NOTSTARTUPCRT;
     return false;
 }
 
@@ -386,9 +615,7 @@ bool CallStack::isLeakSuppressed()
 //
 void CallStack::dump(BOOL showInternalFrames)
 {
-    if (!m_resolved) {
-        resolve(showInternalFrames);
-    }
+    resolve(showInternalFrames);
 
     // The stack was reoslved already
     if (m_resolved) {
@@ -417,7 +644,12 @@ int CallStack::resolve(BOOL showInternalFrames)
         // already resolved, no need to do it again
         // resolving twice may report an incorrect module for the stack frames
         // if the memory was leaked in a dynamic library that was already unloaded.
-        return 0;
+        // A stack resolved while some of its symbols were missing from the
+        // cache is resolved again once the cache has them all. The earlier
+        // text lives as long as the CallStack: GetAllocationResolveResults
+        // has handed it out.
+        if (!(m_status & CALLSTACK_STATUS_PARTIAL) || !areFramesCached())
+            return 0;
     }
 
     if (m_status & CALLSTACK_STATUS_STARTUPCRT) {
@@ -439,22 +671,33 @@ int CallStack::resolve(BOOL showInternalFrames)
 
     bool skipStartupLeaks = !!(g_vld.GetOptions() & VLD_OPT_SKIP_CRTSTARTUP_LEAKS);
 
-    // Use static here to increase performance, and avoid heap allocs.
-    // It's thread safe because of g_heapMapLock lock.
-    static WCHAR stack_line[MAXREPORTLENGTH + 1] = L"";
+    // Not static: a ValidateHeapFree report resolves outside g_heapMapLock.
+    struct ScratchBuffers {
+        WCHAR* stackLine;
+        WCHAR* fileName;
+        ScratchBuffers() : stackLine(new WCHAR[MAXREPORTLENGTH + 1]), fileName(new WCHAR[MAX_PATH * 4]) {}
+        ~ScratchBuffers() { delete [] stackLine; delete [] fileName; }
+    } scratch;
+    if (scratch.stackLine == NULL || scratch.fileName == NULL)
+        return 0;
+    WCHAR* stack_line = scratch.stackLine;
+    const size_t stackLineLength = MAXREPORTLENGTH + 1;
+    WCHAR* fileName = scratch.fileName;
+    const size_t fileNameLength = MAX_PATH * 4;
+    stack_line[0] = L'\0';
     bool isPrevFrameInternal = false;
     DWORD NumChars = 0;
-    CriticalSectionLocker<DbgHelp> locker(g_DbgHelp);
 
-    const size_t max_line_length = MAXREPORTLENGTH + 1;
-    m_resolvedCapacity = m_size * max_line_length;
-    const size_t allocedBytes = m_resolvedCapacity * sizeof(WCHAR);
-    m_resolved = new WCHAR[m_resolvedCapacity];
-    if (m_resolved) {
-        ZeroMemory(m_resolved, allocedBytes);
-    }
+    const int textCapacity = m_size * (MAXREPORTLENGTH + 1);
+    WCHAR* text = new WCHAR[textCapacity];
+    if (text == NULL)
+        return 0;
+    ZeroMemory(text, textCapacity * sizeof(WCHAR));
+    int textLength = 0;
 
     // Iterate through each frame in the call stack.
+    bool cacheMiss = false;
+    UINT startup = m_status & (CALLSTACK_STATUS_STARTUPCRT | CALLSTACK_STATUS_NOTSTARTUPCRT);
     for (UINT32 frame = 0; frame < m_size; frame++)
     {
         // Try to get the source file and line number associated with
@@ -465,31 +708,24 @@ int CallStack::resolve(BOOL showInternalFrames)
 
         DWORD64 displacement64;
         BYTE symbolBuffer[sizeof(SYMBOL_INFO) + MAX_SYMBOL_NAME_SIZE];
-        LPCWSTR functionName = getFunctionName(programCounter, displacement64, (SYMBOL_INFO*)&symbolBuffer, locker);
+        LPCWSTR functionName = getFunctionName(programCounter, displacement64, (SYMBOL_INFO*)&symbolBuffer, cacheMiss);
 
         if (skipStartupLeaks) {
-            if (!(m_status & (CALLSTACK_STATUS_STARTUPCRT | CALLSTACK_STATUS_NOTSTARTUPCRT))) {
-                m_status |= isCrtStartupFunction(functionName);
+            if (startup == 0) {
+                startup = isCrtStartupFunction(functionName);
+                // Kept only if it was decided with every symbol at hand; see
+                // isLeakSuppressed.
+                if (!cacheMiss)
+                    m_status |= startup;
             }
-            if (m_status & CALLSTACK_STATUS_STARTUPCRT) {
-                delete[] m_resolved;
-                m_resolved = NULL;
-                m_resolvedCapacity = 0;
-                m_resolvedLength = 0;
+            if (startup & CALLSTACK_STATUS_STARTUPCRT) {
+                delete[] text;
                 return 0;
             }
         }
 
-        // It turns out that calls to SymGetLineFromAddrW64 may free the very memory we are scrutinizing here
-        // in this method. If this is the case, m_Resolved will be null after SymGetLineFromAddrW64 returns.
-        // When that happens there is nothing we can do except crash.
         DWORD            displacement = 0;
-        DbgTrace(L"dbghelp32.dll %i: SymGetLineFromAddrW64\n", GetCurrentThreadId());
-        BOOL foundline = FALSE;
-#if defined(_M_ARM64)
-        if (!VldArm64InTeardownReport())
-#endif
-        foundline = g_DbgHelp.SymGetLineFromAddrW64(g_currentProcess, programCounter, &displacement, &sourceInfo, locker);
+        BOOL foundline = getLine(programCounter, displacement, &sourceInfo, fileName, fileNameLength, cacheMiss);
 
         bool isFrameInternal = false;
         if (foundline && !showInternalFrames) {
@@ -501,27 +737,42 @@ int CallStack::resolve(BOOL showInternalFrames)
 
         // show one allocation function for context
         if (NumChars > 0 && !isFrameInternal && isPrevFrameInternal) {
-            m_resolvedLength += NumChars;
-            if (m_resolved) {
-                wcsncat_s(m_resolved, m_resolvedCapacity, stack_line, NumChars);
-            }
+            textLength += NumChars;
+            wcsncat_s(text, textCapacity, stack_line, NumChars);
         }
         isPrevFrameInternal = isFrameInternal;
 
         if (!foundline)
             displacement = (DWORD)displacement64;
         NumChars = resolveFunction( programCounter, foundline ? &sourceInfo : NULL,
-            displacement, functionName, stack_line, _countof( stack_line ));
+            displacement, functionName, stack_line, stackLineLength);
 
         if (NumChars > 0 && !isFrameInternal) {
-            m_resolvedLength += NumChars;
-            if (m_resolved) {
-                wcsncat_s(m_resolved, m_resolvedCapacity, stack_line, NumChars);
-            }
+            textLength += NumChars;
+            wcsncat_s(text, textCapacity, stack_line, NumChars);
         }
     } // end for loop
 
-    m_status |= CALLSTACK_STATUS_NOTSTARTUPCRT;
+    if (m_resolved != NULL) {
+        superseded_t* superseded = new superseded_t;
+        if (superseded == NULL) {
+            delete [] text;
+            return unresolvedFunctionsCount;
+        }
+        superseded->text = m_resolved;
+        superseded->next = m_superseded;
+        m_superseded = superseded;
+    }
+    m_resolved = text;
+    m_resolvedCapacity = textCapacity;
+    m_resolvedLength = textLength;
+    if (cacheMiss) {
+        m_status |= CALLSTACK_STATUS_PARTIAL;
+    }
+    else {
+        m_status &= ~CALLSTACK_STATUS_PARTIAL;
+        m_status |= CALLSTACK_STATUS_NOTSTARTUPCRT;
+    }
     return unresolvedFunctionsCount;
 }
 
@@ -529,6 +780,24 @@ const WCHAR* CallStack::getResolvedCallstack( BOOL showinternalframes )
 {
     resolve(showinternalframes);
     return m_resolved;
+}
+
+bool CallStack::needsSymbols() const
+{
+    return (m_resolved == NULL || (m_status & CALLSTACK_STATUS_PARTIAL)) && !(m_status & CALLSTACK_STATUS_STARTUPCRT);
+}
+
+// areFramesCached - Checks that the symbol cache has every frame.
+bool CallStack::areFramesCached() const
+{
+    CriticalSectionLocker<> cs(g_symbolCacheLock);
+    if (g_symbolCache == NULL)
+        return false;
+    for (UINT32 frame = 0; frame < m_size; frame++) {
+        if (g_symbolCache->find((*this)[frame]) == g_symbolCache->end())
+            return false;
+    }
+    return true;
 }
 
 // push_back - Pushes a frame's program counter onto the CallStack. Pushes are
@@ -762,12 +1031,17 @@ VOID FastCallStack::getStackTrace (UINT32 maxdepth, const context_t& context)
         framePointer = (UINT_PTR*)*framePointer;
     }
 #elif defined(_M_X64)*/
+    m_hashValue = captureBackTrace(maxdepth, context);
+//#endif
+}
+
+ULONG CallStack::captureBackTrace (UINT32 maxdepth, const context_t& context)
+{
     UINT32 maxframes = min(62, maxdepth + 10);
-    UINT_PTR* myFrames = new UINT_PTR[maxframes];
-    ZeroMemory(myFrames, sizeof(UINT_PTR) * maxframes);
+    UINT_PTR myFrames [62] = {};
     ULONG BackTraceHash;
     maxframes = RtlCaptureStackBackTrace(0, maxframes, reinterpret_cast<PVOID*>(myFrames), &BackTraceHash);
-    m_hashValue = BackTraceHash;
+    UINT32  count = 0;
     UINT32  startIndex = 0;
     
     // Find the frame matching context.fp to skip VLD internal frames
@@ -786,8 +1060,44 @@ VOID FastCallStack::getStackTrace (UINT32 maxdepth, const context_t& context)
         push_back(myFrames[count]);
         count++;
     }
-    delete [] myFrames;
-//#endif
+    return BackTraceHash;
+}
+
+// Longest wait for g_DbgHelp, in milliseconds.
+static const ULONGLONG DBGHELP_WAIT_MS = 100;
+
+volatile LONG g_safeStackWalkFallbacks = 0;
+
+// enterDbgHelp - Enters g_DbgHelp, giving up after DBGHELP_WAIT_MS. The caller
+//   can hold a heap lock (HeapLock) that the owner of g_DbgHelp waits for,
+//   since dbghelp allocates from the process heap; waiting forever would
+//   deadlock. After a timeout the thread only tries the lock once until it
+//   gets it again, so a deadlock costs one wait rather than one per allocation.
+//
+//  Return Value:
+//
+//    Returns true if g_DbgHelp was entered, false if the caller must capture
+//    the stack without dbghelp.
+//
+bool CallStack::enterDbgHelp ()
+{
+    // StackWalk64 can allocate from the process heap.
+    if (g_heapMapLock.IsOwnedByCurrentThread())
+        return false;
+    tls_t* tls = g_vld.getTls();
+    bool entered = g_DbgHelp.TryEnter();
+    if (!entered && (tls->flags & VLD_TLS_DBGHELP_TIMEDOUT) == 0) {
+        ULONGLONG deadline = GetTickCount64() + DBGHELP_WAIT_MS;
+        while (!entered && GetTickCount64() < deadline) {
+            Sleep(1);
+            entered = g_DbgHelp.TryEnter();
+        }
+        if (!entered)
+            tls->flags |= VLD_TLS_DBGHELP_TIMEDOUT;
+    }
+    if (entered)
+        tls->flags &= ~VLD_TLS_DBGHELP_TIMEDOUT;
+    return entered;
 }
 
 // getStackTrace - Traces the stack as far back as possible, or until 'maxdepth'
@@ -824,6 +1134,15 @@ VOID SafeCallStack::getStackTrace (UINT32 maxdepth, const context_t& context)
         return;
     }
 
+    // Not under g_heapMapLock: a thread holding g_DbgHelp can be loading a DLL
+    // for dbghelp, waiting for a loader owner that waits for g_heapMapLock.
+    if (!enterDbgHelp()) {
+        InterlockedIncrement(&g_safeStackWalkFallbacks);
+        captureBackTrace(maxdepth, context);
+        return;
+    }
+    CriticalSectionLocker<DbgHelp> locker(g_DbgHelp, CriticalSectionLocker<DbgHelp>::Adopt());
+
     count++;
     push_back(CONTEXT_IPREG(context));
 
@@ -847,9 +1166,6 @@ VOID SafeCallStack::getStackTrace (UINT32 maxdepth, const context_t& context)
     frame.AddrFrame.Offset    = CONTEXT_BPREG(currentContext);
     frame.AddrFrame.Mode      = AddrModeFlat;
     frame.Virtual             = TRUE;
-
-    CriticalSectionLocker<> cs(g_heapMapLock);
-    CriticalSectionLocker<DbgHelp> locker(g_DbgHelp);
 
     // Walk the stack.
     while (count < maxdepth) {

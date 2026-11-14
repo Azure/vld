@@ -13,7 +13,12 @@ public:
 	{
 		m_ownerThreadId = 0;
 		__try {
-			InitializeCriticalSection(&m_critRegion);
+			// Without debug info: Windows otherwise allocates it from the process
+			// heap the first time the section is contended, which deadlocks when
+			// another thread holds the heap lock (HeapLock) and waits for this
+			// section.
+			if (!InitializeCriticalSectionEx(&m_critRegion, 0, CRITICAL_SECTION_NO_DEBUG_INFO))
+				InitializeCriticalSection(&m_critRegion);
 		} __except (GetExceptionCode() == STATUS_NO_MEMORY ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
 			assert(FALSE);
 		}
@@ -35,6 +40,18 @@ public:
 	bool IsLockedByCurrentThread()
 	{
 		return m_ownerThreadId == GetCurrentThreadId();
+	}
+
+	// Unlike IsLockedByCurrentThread, stays true after a nested Leave.
+	bool IsOwnedByCurrentThread()
+	{
+		return (DWORD)(ULONG_PTR)m_critRegion.OwningThread == GetCurrentThreadId();
+	}
+
+	// True if the next Leave releases the section.
+	bool IsOwnedOnceByCurrentThread()
+	{
+		return IsOwnedByCurrentThread() && m_critRegion.RecursionCount == 1;
 	}
 
 	// try enter the section
@@ -69,6 +86,14 @@ public:
 		, m_critSect(cs)
 	{
 		m_critSect.Enter();
+	}
+
+	// Takes over a lock the caller has already entered.
+	struct Adopt {};
+	CriticalSectionLocker(T& cs, Adopt)
+		: m_leave(false)
+		, m_critSect(cs)
+	{
 	}
 
 	~CriticalSectionLocker()
